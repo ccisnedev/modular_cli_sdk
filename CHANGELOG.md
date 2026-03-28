@@ -4,7 +4,9 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
-## 0.1.0
+## 0.1.0 — 2026-03-27
+
+First stable release. Published on [pub.dev](https://pub.dev/packages/modular_cli_sdk).
 
 ### Added
 

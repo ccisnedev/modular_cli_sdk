@@ -1,4 +1,7 @@
-# Architecture — modular_cli_sdk
+# Architecture — modular_cli_sdk v0.1.0
+
+> Published on [pub.dev](https://pub.dev/packages/modular_cli_sdk).
+> See also: [API reference](https://pub.dev/documentation/modular_cli_sdk/latest/), [roadmap](roadmap.md).
 
 ## Stack
 
@@ -70,3 +73,7 @@ Both respect `--quiet` (suppresses `writeMessage()` but not `writeObject()`).
 | 6 | Conflict | State machine transition rejected |
 | 7 | Validation failed | Input does not satisfy business rules |
 | 64 | Invalid usage | Unknown command or bad syntax |
+
+## What's next
+
+See the [roadmap](roadmap.md) for planned features (declarative flags, schema export, shell completions, config persistence).
