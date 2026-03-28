@@ -6,66 +6,14 @@
 Command-centric SDK for building modular CLIs with Dart.
 Define `Command` classes (input → validate → execute → output), connect them to CLI routes, and get automatic output formatting with JSON and plain text modes.
 
-Published on [pub.dev](https://pub.dev/packages/modular_cli_sdk). Ready to use.
-
 > Also see: [modular_api](https://pub.dev/packages/modular_api) — the HTTP counterpart with the same architecture.
 
 ---
 
 ## Quick start
 
-### 1. Add the dependency
-
-```bash
-dart pub add modular_cli_sdk
-```
-
-### 2. Define a Command
-
 ```dart
 import 'package:cli_router/cli_router.dart';
-import 'package:modular_cli_sdk/modular_cli_sdk.dart';
-
-class HelloInput extends Input {
-  final String name;
-  HelloInput({required this.name});
-
-  factory HelloInput.fromCliRequest(CliRequest req) =>
-      HelloInput(name: req.flagString('name') ?? 'World');
-
-  @override
-  Map<String, dynamic> toJson() => {'name': name};
-}
-
-class HelloOutput extends Output {
-  final String greeting;
-  HelloOutput({required this.greeting});
-
-  @override
-  Map<String, dynamic> toJson() => {'greeting': greeting};
-
-  @override
-  int get exitCode => ExitCode.ok;
-}
-
-class HelloCommand implements Command<HelloInput, HelloOutput> {
-  @override
-  final HelloInput input;
-  HelloCommand(this.input);
-
-  @override
-  String? validate() => null;
-
-  @override
-  Future<HelloOutput> execute() async =>
-      HelloOutput(greeting: 'Hello, ${input.name}!');
-}
-```
-
-### 3. Wire it up
-
-```dart
-import 'dart:io';
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 
 void main(List<String> args) async {
@@ -83,8 +31,6 @@ void main(List<String> args) async {
   exit(code);
 }
 ```
-
-### 4. Run it
 
 ```bash
 dart run bin/main.dart greetings hello --name World
@@ -125,7 +71,9 @@ dependencies:
   modular_cli_sdk: ^0.1.0
 ```
 
-> Requires Dart SDK `^3.8.1`.
+```bash
+dart pub add modular_cli_sdk
+```
 
 ---
 
