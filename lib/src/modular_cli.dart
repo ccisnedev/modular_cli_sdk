@@ -2,7 +2,10 @@ import 'dart:io' as io;
 
 import 'package:cli_router/cli_router.dart';
 
+import 'command.dart';
+import 'input.dart';
 import 'module_builder.dart';
+import 'output.dart';
 
 /// Entry point for a modular CLI application.
 ///
@@ -12,10 +15,20 @@ import 'module_builder.dart';
 ///
 /// ```dart
 /// final cli = ModularCli();
+///
+/// // Root-level commands (no module prefix)
+/// cli.command<VersionInput, VersionOutput>(
+///   'version',
+///   (req) => VersionCommand(VersionInput.fromCliRequest(req)),
+///   description: 'Print version info',
+/// );
+///
+/// // Module-scoped commands
 /// cli.module('greetings', (m) {
 ///   m.command('hello', (req) => GreetCommand(GreetInput.fromCliRequest(req)),
 ///     description: 'Say hello');
 /// });
+///
 /// final exitCode = await cli.run(args);
 /// ```
 class ModularCli {
@@ -32,6 +45,25 @@ class ModularCli {
     final builder = ModuleBuilder(moduleName: name, router: moduleRouter);
     build(builder);
     _root.mount(name, moduleRouter);
+    return this;
+  }
+
+  /// Register a root-level command (no module prefix).
+  ///
+  /// [route] becomes a top-level segment: `route [--flags]`.
+  /// The command passes through the full [Command] lifecycle:
+  /// input → validate → execute → format via [CliOutput].
+  ///
+  /// Root commands have dispatch priority over mounted modules
+  /// (inherent to `cli_router`'s two-phase dispatch).
+  ModularCli command<I extends Input, O extends Output>(
+    String route,
+    Command<I, O> Function(CliRequest req) commandFactory, {
+    String? description,
+  }) {
+    // Reuse ModuleBuilder lifecycle — moduleName is unused at runtime.
+    final builder = ModuleBuilder(moduleName: '', router: _root);
+    builder.command<I, O>(route, commandFactory, description: description);
     return this;
   }
 

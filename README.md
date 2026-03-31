@@ -19,6 +19,14 @@ import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 void main(List<String> args) async {
   final cli = ModularCli();
 
+  // Root-level commands (no module prefix)
+  cli.command<VersionInput, VersionOutput>(
+    'version',
+    (req) => VersionCommand(VersionInput.fromCliRequest(req)),
+    description: 'Print version info',
+  );
+
+  // Module-scoped commands
   cli.module('greetings', (m) {
     m.command<HelloInput, HelloOutput>(
       'hello',
@@ -33,6 +41,12 @@ void main(List<String> args) async {
 ```
 
 ```bash
+dart run bin/main.dart version
+# version: 0.2.0
+
+dart run bin/main.dart version --json
+# {"version": "0.2.0"}
+
 dart run bin/main.dart greetings hello --name World
 # greeting: Hello, World!
 
@@ -40,7 +54,7 @@ dart run bin/main.dart greetings hello --name World --json
 # {"greeting": "Hello, World!"}
 ```
 
-See [`example/`](example/) for a full working example with two modules (greetings + math).
+See [`example/`](example/) for a full working example with root commands and two modules (greetings + math).
 
 ---
 
@@ -50,6 +64,7 @@ See [`example/`](example/) for a full working example with two modules (greeting
 - `Input` / `Output` — typed DTOs for command I/O
 - `CommandException` — structured errors with code, message, exit code, and retryable flag
 - `ModularCli` + `ModuleBuilder` — module registration and routing
+- Root commands — register commands without a module prefix via `cli.command()`
 - `--json` global flag — machine-readable JSON output
 - `--quiet` global flag — suppress informational messages
 - TTY detection — automatic format selection
@@ -68,7 +83,7 @@ Or add it manually to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  modular_cli_sdk: ^0.1.0
+  modular_cli_sdk: ^0.2.0
 ```
 
 ```bash

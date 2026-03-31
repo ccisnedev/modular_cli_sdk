@@ -316,4 +316,105 @@ void main() {
       expect(log, ['A-before', 'B-before', 'B-after', 'A-after']);
     });
   });
+
+  group('Root commands', () {
+    /// Builds a CLI with both root commands and mounted modules,
+    /// exercising the full coexistence scenario.
+    ModularCli buildRootTestCli() {
+      final cli = ModularCli();
+
+      cli.command<_GreetInput, _GreetOutput>(
+        'ping',
+        (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
+        description: 'Root-level ping',
+      );
+
+      cli.command<_RequiredInput, _EchoOutput>(
+        'validate-me',
+        (req) => _ValidatingCommand(_RequiredInput.fromCliRequest(req)),
+        description: 'Root command with validation',
+      );
+
+      cli.module('greetings', (m) {
+        m.command<_GreetInput, _GreetOutput>(
+          'hello',
+          (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
+          description: 'Say hello (module)',
+        );
+      });
+
+      return cli;
+    }
+
+    test('should execute a root command and return exit code 0', () async {
+      /// A root command registered via `cli.command()` must follow
+      /// the full Command lifecycle and return a successful exit code.
+      final cli = buildRootTestCli();
+      final code = await cli.run(
+        ['ping', '--name', 'Root'],
+        stdout: stdoutSink,
+        stderr: stderrSink,
+      );
+
+      expect(code, ExitCode.ok);
+      expect(stdoutSink.output, contains('Root'));
+    });
+
+    test('should produce valid JSON from root command with --json', () async {
+      /// Root commands honor the `--json` global flag via the same
+      /// CliOutput pipeline used by module commands.
+      final cli = buildRootTestCli();
+      final code = await cli.run(
+        ['ping', '--name', 'JsonRoot', '--json'],
+        stdout: stdoutSink,
+        stderr: stderrSink,
+      );
+
+      expect(code, ExitCode.ok);
+      final parsed = jsonDecode(stdoutSink.output);
+      expect(parsed['greeting'], 'Hello, JsonRoot!');
+    });
+
+    test('should resolve root and module commands without conflict', () async {
+      /// Root commands and mounted modules coexist: `ping` resolves at
+      /// root level while `greetings hello` resolves in the module.
+      final cli = buildRootTestCli();
+
+      final rootCode = await cli.run(
+        ['ping', '--name', 'A'],
+        stdout: stdoutSink,
+        stderr: stderrSink,
+      );
+      expect(rootCode, ExitCode.ok);
+      expect(stdoutSink.output, contains('Hello, A!'));
+
+      stdoutSink = _MemorySink();
+      stderrSink = _MemorySink();
+
+      final moduleCode = await cli.run(
+        ['greetings', 'hello', '--name', 'B'],
+        stdout: stdoutSink,
+        stderr: stderrSink,
+      );
+      expect(moduleCode, ExitCode.ok);
+      expect(stdoutSink.output, contains('Hello, B!'));
+    });
+
+    test(
+      'should return exit code 7 when root command validation fails',
+      () async {
+        /// Root commands pass through the same validate() step.
+        /// Missing required input triggers VALIDATION_FAILED with exit 7.
+        final cli = buildRootTestCli();
+        final code = await cli.run(
+          ['validate-me'],
+          stdout: stdoutSink,
+          stderr: stderrSink,
+        );
+
+        expect(code, ExitCode.validationFailed);
+        expect(stderrSink.output, contains('value is required'));
+      },
+    );
+  });
 }
