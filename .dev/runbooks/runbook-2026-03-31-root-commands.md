@@ -1,15 +1,15 @@
 ---
-status: issued
+status: ready
 repo_mode: mono
 module: modular_cli_sdk
 stop_at: ready
 issue_number: 3
 issue_url: https://github.com/macss-dev/modular_cli_sdk/issues/3
-branch_name: null
+branch_name: feature/3-root-commands
 created: 2026-03-31
 feature_slug: root-commands
 feature_name: Root-level command registration for ModularCli
-skip_review: false
+skip_review: true
 ---
 
 # RUNBOOK – Root-level command registration for ModularCli
