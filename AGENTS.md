@@ -12,7 +12,8 @@ cli_router                  — routing engine (routes, GNU flags, middleware)
 modular_cli_sdk             — SDK/framework
        ↓
 ModularCli                  — entry point that orchestrates modules
-  └── ModuleBuilder         — registers Commands in a module
+  ├── command<I, O>()       — registers root-level commands (no prefix)
+  └── module() → ModuleBuilder — registers commands in a named module
         └── Command<I, O>   — unit of work (Input → validate → execute → Output)
 ```
 
@@ -41,6 +42,21 @@ ModularCli                  — entry point that orchestrates modules
 ```
 
 ## Patterns
+
+### Root commands
+
+```dart
+final cli = ModularCli();
+cli.command<VersionInput, VersionOutput>(
+  'version',
+  (req) => VersionCommand(VersionInput.fromCliRequest(req)),
+  description: 'Print version info',
+);
+await cli.run(args);
+```
+
+Root commands follow the same `Command<I, O>` lifecycle as module commands.
+They have dispatch priority over mounted modules.
 
 ### Creating a module
 
@@ -116,6 +132,8 @@ throw CommandException(
 dart pub get
 dart analyze
 dart test
+dart run example/example.dart version
+dart run example/example.dart version --json
 dart run example/example.dart greetings hello --name World
 ```
 
@@ -123,5 +141,6 @@ dart run example/example.dart greetings hello --name World
 
 - Input/Output follow the same pattern as `modular_api`'s `Input`/`Output`
 - Commands never write to stdout directly — they return data
+- Root commands for standalone operations (`version`, `init`, `doctor`)
 - One Command per use case, one module per domain noun
 - Use `extends` (not `implements`) for Input and Output subclasses
