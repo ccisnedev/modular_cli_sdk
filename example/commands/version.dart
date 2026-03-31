@@ -39,6 +39,5 @@ class VersionCommand implements Command<VersionInput, VersionOutput> {
   String? validate() => null;
 
   @override
-  Future<VersionOutput> execute() async =>
-      VersionOutput(version: '0.2.0');
+  Future<VersionOutput> execute() async => VersionOutput(version: '0.2.0');
 }
