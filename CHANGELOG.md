@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.2.0
+
+### Added
+
+- `ModularCli.command<I, O>()` — register root-level commands without a module prefix
+- Root commands reuse the full `Command<I, O>` lifecycle (validate → execute → format)
+- Root commands honor `--json`, `--quiet`, `CommandException`, and semantic exit codes
+- Example `version` root command in `example/commands/version.dart`
+- 4 new integration tests for root commands
+
 ## 0.1.0
 
 ### Added
