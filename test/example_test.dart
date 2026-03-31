@@ -4,6 +4,11 @@ import '../example/example.dart' show runExample;
 
 void main() {
   group('Example', () {
+    test('should run version and return exit code 0', () async {
+      final code = await runExample(['version']);
+      expect(code, 0);
+    });
+
     test('should run greetings hello and return exit code 0', () async {
       final code = await runExample(['greetings', 'hello', '--name', 'World']);
       expect(code, 0);
