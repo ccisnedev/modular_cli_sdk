@@ -331,8 +331,7 @@ void main() {
 
       cli.command<_RequiredInput, _EchoOutput>(
         'validate-me',
-        (req) =>
-            _ValidatingCommand(_RequiredInput.fromCliRequest(req)),
+        (req) => _ValidatingCommand(_RequiredInput.fromCliRequest(req)),
         description: 'Root command with validation',
       );
 
@@ -347,68 +346,59 @@ void main() {
       return cli;
     }
 
-    test(
-      'should execute a root command and return exit code 0',
-      () async {
-        /// A root command registered via `cli.command()` must follow
-        /// the full Command lifecycle and return a successful exit code.
-        final cli = buildRootTestCli();
-        final code = await cli.run(
-          ['ping', '--name', 'Root'],
-          stdout: stdoutSink,
-          stderr: stderrSink,
-        );
+    test('should execute a root command and return exit code 0', () async {
+      /// A root command registered via `cli.command()` must follow
+      /// the full Command lifecycle and return a successful exit code.
+      final cli = buildRootTestCli();
+      final code = await cli.run(
+        ['ping', '--name', 'Root'],
+        stdout: stdoutSink,
+        stderr: stderrSink,
+      );
 
-        expect(code, ExitCode.ok);
-        expect(stdoutSink.output, contains('Root'));
-      },
-    );
+      expect(code, ExitCode.ok);
+      expect(stdoutSink.output, contains('Root'));
+    });
 
-    test(
-      'should produce valid JSON from root command with --json',
-      () async {
-        /// Root commands honor the `--json` global flag via the same
-        /// CliOutput pipeline used by module commands.
-        final cli = buildRootTestCli();
-        final code = await cli.run(
-          ['ping', '--name', 'JsonRoot', '--json'],
-          stdout: stdoutSink,
-          stderr: stderrSink,
-        );
+    test('should produce valid JSON from root command with --json', () async {
+      /// Root commands honor the `--json` global flag via the same
+      /// CliOutput pipeline used by module commands.
+      final cli = buildRootTestCli();
+      final code = await cli.run(
+        ['ping', '--name', 'JsonRoot', '--json'],
+        stdout: stdoutSink,
+        stderr: stderrSink,
+      );
 
-        expect(code, ExitCode.ok);
-        final parsed = jsonDecode(stdoutSink.output);
-        expect(parsed['greeting'], 'Hello, JsonRoot!');
-      },
-    );
+      expect(code, ExitCode.ok);
+      final parsed = jsonDecode(stdoutSink.output);
+      expect(parsed['greeting'], 'Hello, JsonRoot!');
+    });
 
-    test(
-      'should resolve root and module commands without conflict',
-      () async {
-        /// Root commands and mounted modules coexist: `ping` resolves at
-        /// root level while `greetings hello` resolves in the module.
-        final cli = buildRootTestCli();
+    test('should resolve root and module commands without conflict', () async {
+      /// Root commands and mounted modules coexist: `ping` resolves at
+      /// root level while `greetings hello` resolves in the module.
+      final cli = buildRootTestCli();
 
-        final rootCode = await cli.run(
-          ['ping', '--name', 'A'],
-          stdout: stdoutSink,
-          stderr: stderrSink,
-        );
-        expect(rootCode, ExitCode.ok);
-        expect(stdoutSink.output, contains('Hello, A!'));
+      final rootCode = await cli.run(
+        ['ping', '--name', 'A'],
+        stdout: stdoutSink,
+        stderr: stderrSink,
+      );
+      expect(rootCode, ExitCode.ok);
+      expect(stdoutSink.output, contains('Hello, A!'));
 
-        stdoutSink = _MemorySink();
-        stderrSink = _MemorySink();
+      stdoutSink = _MemorySink();
+      stderrSink = _MemorySink();
 
-        final moduleCode = await cli.run(
-          ['greetings', 'hello', '--name', 'B'],
-          stdout: stdoutSink,
-          stderr: stderrSink,
-        );
-        expect(moduleCode, ExitCode.ok);
-        expect(stdoutSink.output, contains('Hello, B!'));
-      },
-    );
+      final moduleCode = await cli.run(
+        ['greetings', 'hello', '--name', 'B'],
+        stdout: stdoutSink,
+        stderr: stderrSink,
+      );
+      expect(moduleCode, ExitCode.ok);
+      expect(stdoutSink.output, contains('Hello, B!'));
+    });
 
     test(
       'should return exit code 7 when root command validation fails',
