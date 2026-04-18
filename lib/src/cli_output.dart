@@ -11,7 +11,10 @@ import 'command_exception.dart';
 /// and the framework delegates formatting to the active [CliOutput].
 abstract class CliOutput {
   /// Write a single object (key-value payload).
-  void writeObject(Map<String, dynamic> object);
+  ///
+  /// If [textOverride] is non-null and this is a text-mode output,
+  /// use it directly instead of formatting the [object] map.
+  void writeObject(Map<String, dynamic> object, {String? textOverride});
 
   /// Write a list of homogeneous objects (tabular data).
   void writeTable(List<Map<String, dynamic>> rows, {List<String>? columns});

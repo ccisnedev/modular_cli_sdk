@@ -20,7 +20,11 @@ class TextCliOutput implements CliOutput {
   final bool isQuiet;
 
   @override
-  void writeObject(Map<String, dynamic> object) {
+  void writeObject(Map<String, dynamic> object, {String? textOverride}) {
+    if (textOverride != null) {
+      stdout.writeln(textOverride);
+      return;
+    }
     for (final entry in object.entries) {
       stdout.writeln('${entry.key}: ${entry.value}');
     }

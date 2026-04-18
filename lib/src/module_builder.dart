@@ -90,7 +90,10 @@ class ModuleBuilder {
       }
 
       final commandOutput = await cmd.execute();
-      cliOutput.writeObject(commandOutput.toJson());
+      cliOutput.writeObject(
+        commandOutput.toJson(),
+        textOverride: commandOutput.toText(),
+      );
       return commandOutput.exitCode;
     } on CommandException catch (e) {
       cliOutput.writeError(e);

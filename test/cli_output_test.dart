@@ -193,5 +193,15 @@ void main() {
       expect(stderrSink.output, contains('field'));
       expect(stderrSink.output, contains('required'));
     });
+
+    test('should use textOverride when provided', () {
+      buildOutput().writeObject({'key': 'value'}, textOverride: 'CUSTOM TEXT');
+      expect(stdoutSink.output.trim(), equals('CUSTOM TEXT'));
+    });
+
+    test('should iterate toJson when textOverride is null', () {
+      buildOutput().writeObject({'key': 'value'}, textOverride: null);
+      expect(stdoutSink.output, contains('key: value'));
+    });
   });
 }
