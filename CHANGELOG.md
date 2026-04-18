@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.2.1
+
+### Added
+
+- `Output.toText()` — override for custom text formatting ([#5](https://github.com/macss-dev/modular_cli_sdk/issues/5))
+  - When non-null, `TextCliOutput` uses this value directly instead of iterating `toJson()` fields
+  - JSON mode is unaffected — it always uses `toJson()`
+  - Non-breaking: defaults to `null`, preserving existing behavior
+
 ## 0.2.0
 
 ### Added

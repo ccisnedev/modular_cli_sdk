@@ -31,4 +31,28 @@ abstract class Output {
 
   /// Field metadata for future schema export.  Returns `null` by default.
   List<dynamic>? get schemaFields => null;
+
+  /// Override for custom text formatting.
+  ///
+  /// When non-null, [TextCliOutput] uses this value directly instead of
+  /// iterating [toJson] fields as `key: value` pairs.
+  ///
+  /// JSON mode is unaffected — it always uses [toJson].
+  ///
+  /// ```dart
+  /// class TuiOutput extends Output {
+  ///   final String diagram;
+  ///   TuiOutput({required this.diagram});
+  ///
+  ///   @override
+  ///   Map<String, dynamic> toJson() => {'diagram': diagram};
+  ///
+  ///   @override
+  ///   String? toText() => diagram; // Show only diagram, no "diagram:" prefix
+  ///
+  ///   @override
+  ///   int get exitCode => 0;
+  /// }
+  /// ```
+  String? toText() => null;
 }

@@ -13,6 +13,21 @@ class _TestOutput extends Output {
   int get exitCode => ExitCode.ok;
 }
 
+/// Output with custom toText() override.
+class _CustomTextOutput extends Output {
+  final String diagram;
+  _CustomTextOutput({required this.diagram});
+
+  @override
+  Map<String, dynamic> toJson() => {'diagram': diagram};
+
+  @override
+  int get exitCode => ExitCode.ok;
+
+  @override
+  String? toText() => diagram;
+}
+
 void main() {
   group('Output', () {
     test('should require toJson() and exitCode implementations', () {
@@ -30,6 +45,22 @@ void main() {
       final output = _TestOutput(greeting: 'Hello, World!');
       expect(output.toJson(), {'greeting': 'Hello, World!'});
       expect(output.exitCode, 0);
+    });
+
+    test('default toText() returns null', () {
+      final output = _TestOutput(greeting: 'Hello');
+      expect(output.toText(), isNull);
+    });
+
+    test('toText() can be overridden to return custom text', () {
+      final output = _CustomTextOutput(diagram: 'MY DIAGRAM');
+      expect(output.toText(), equals('MY DIAGRAM'));
+    });
+
+    test('toText() override does not affect toJson()', () {
+      final output = _CustomTextOutput(diagram: 'MY DIAGRAM');
+      expect(output.toJson(), {'diagram': 'MY DIAGRAM'});
+      expect(output.toText(), 'MY DIAGRAM');
     });
   });
 }

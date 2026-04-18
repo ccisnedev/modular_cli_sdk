@@ -23,7 +23,8 @@ class JsonCliOutput implements CliOutput {
   static const _encoder = JsonEncoder.withIndent('  ');
 
   @override
-  void writeObject(Map<String, dynamic> object) {
+  void writeObject(Map<String, dynamic> object, {String? textOverride}) {
+    // JSON mode ignores textOverride — always serialize the full object.
     stdout.writeln(_encoder.convert(object));
   }
 
