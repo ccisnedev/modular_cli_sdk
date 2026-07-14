@@ -1,3 +1,5 @@
+import 'cli_param.dart';
+
 /// Inbound DTO that a [Command] receives.
 ///
 /// Symmetric with `Input` in modular_api — but deserializes from CLI
@@ -27,6 +29,8 @@ abstract class Input {
   /// Serialize the input payload to a JSON-encodable map.
   Map<String, dynamic> toJson();
 
-  /// Field metadata for future schema export.  Returns `null` by default.
-  List<dynamic>? get schemaFields => null;
+  /// The command's declared parameter contract.  Returns `null` by default —
+  /// an Input that declares none is not enforced and is described in help by
+  /// its route and description alone.
+  List<CliParam>? get schemaFields => null;
 }
