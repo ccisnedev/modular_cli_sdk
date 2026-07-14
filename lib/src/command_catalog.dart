@@ -9,8 +9,14 @@ class CommandContract {
     this.description,
   });
 
-  /// Full route as invoked, mount prefix included: `math add`.
+  /// Full route as registered, mount prefix and positionals included:
+  /// `records show <id>`.
   final String route;
+
+  /// The route without its positional placeholders — the tokens a user types to
+  /// name the command: `records show`. This is how a command is *named*, as
+  /// opposed to how it is *invoked*, and it is what help is asked about.
+  String get name => route.replaceAll(RegExp(r'\s*<[^>]+>'), '').trim();
 
   /// Module the command belongs to; empty for a root command.
   final String module;
@@ -62,6 +68,16 @@ class CommandCatalog {
   CommandContract? forRoute(String route) {
     for (final contract in _contracts) {
       if (contract.route == route) return contract;
+    }
+    return null;
+  }
+
+  /// The contract a user *names*: matched on the route without its positional
+  /// placeholders, so `show` finds `show <id>`. Asking a command how it is used
+  /// must not require already supplying the argument being asked about.
+  CommandContract? forName(String name) {
+    for (final contract in _contracts) {
+      if (contract.name == name) return contract;
     }
     return null;
   }

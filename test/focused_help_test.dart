@@ -161,6 +161,34 @@ void main() {
       expect(result.stdout, contains('Record id'));
       expect(result.stdout, contains('required'));
     });
+
+    // Asking a command how it is used must not require already knowing: the
+    // router cannot match `show <id>` without the positional, so `show --help`
+    // fell to the error path — you had to supply the very argument you were
+    // asking about.
+    test('its positional need not be supplied to ask for its contract',
+        () async {
+      final result = await _run(['show', '--help']);
+
+      expect(result.exitCode, equals(ExitCode.ok));
+      expect(result.stderr, isEmpty);
+      expect(result.stdout, contains('show <id>'));
+      expect(result.stdout, contains('Record id'));
+      expect(
+        result.stdout,
+        isNot(contains('Multiply two numbers')),
+        reason: 'it must focus on the command, not fall back to the catalog',
+      );
+    });
+
+    test('`help <command>` names it without its positional too', () async {
+      final result = await _run(['help', 'show']);
+
+      expect(result.exitCode, equals(ExitCode.ok));
+      expect(result.stdout, contains('show <id>'));
+      expect(result.stdout, contains('Record id'));
+      expect(result.stdout, isNot(contains('Multiply two numbers')));
+    });
   });
 
   group('<module> --help shows the whole module', () {
