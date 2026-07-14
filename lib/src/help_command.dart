@@ -73,8 +73,10 @@ class HelpOutput extends Output {
 
   String get _focusName => focus.join(' ');
 
+  /// Matched on the command's *name* — the route without its positionals — so
+  /// `help show` finds `show <id>` without the caller supplying an id.
   CommandContract? get _focusedCommand =>
-      focus.isEmpty ? null : catalog.forRoute(_focusName);
+      focus.isEmpty ? null : catalog.forName(_focusName);
 
   /// Null when help was not asked about a module.
   List<CommandContract>? get _focusedModuleCommands {
