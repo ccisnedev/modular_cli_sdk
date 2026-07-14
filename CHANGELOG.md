@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.3.2
+
+### Fixed
+
+- **A command can now declare that it accepts no options, and be enforced.** `params` defaulted to `const []`, so declaring an empty contract was the same value as declaring none: a zero-argument command was indistinguishable from an undeclared one and its arguments went unchecked — `init --host foo` ran, silently doing nothing the flag implied. `params` is now nullable (`null` = declares nothing, unenforced, as before; `[]` = declares no options, and any option is rejected)
+
+### Changed
+
+- `ModularCli.command` / `ModuleBuilder.command` take `List<CliParam>? params` (was `List<CliParam> params = const []`). Source-compatible: omitting `params` behaves exactly as before
+- `CommandContract.params` is `List<CliParam>?`, with `isDeclared` and `declaredParams` for the two readings
+
 ## 0.3.1
 
 ### Fixed
