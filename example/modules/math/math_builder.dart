@@ -8,11 +8,13 @@ void buildMathModule(ModuleBuilder m) {
     'add',
     (req) => AddCommand(AddInput.fromCliRequest(req)),
     description: 'Add two numbers',
+    params: AddInput.params,
   );
 
   m.command<AddInput, AddOutput>(
     'multiply',
     (req) => MultiplyCommand(AddInput.fromCliRequest(req)),
     description: 'Multiply two numbers',
+    params: AddInput.params,
   );
 }

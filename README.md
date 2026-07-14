@@ -26,12 +26,13 @@ void main(List<String> args) async {
     description: 'Print version info',
   );
 
-  // Module-scoped commands
+  // Module-scoped commands, declaring their contract
   cli.module('greetings', (m) {
     m.command<HelloInput, HelloOutput>(
       'hello',
       (req) => HelloCommand(HelloInput.fromCliRequest(req)),
       description: 'Say hello to someone',
+      params: HelloInput.params,
     );
   });
 
@@ -58,9 +59,68 @@ See [`example/`](example/) for a full working example with root commands and two
 
 ---
 
+## Help and the command contract
+
+Each command declares its parameters once, on its `Input`. The SDK introspects
+its own command registry to render help — the CLI counterpart of the OpenAPI
+document `modular_api` generates from its registered use cases.
+
+```dart
+class HelloInput extends Input {
+  final String name;
+  HelloInput({required this.name});
+
+  static final params = [
+    CliParam.string('name', abbr: 'n', defaultValue: 'World',
+        description: 'Who to greet'),
+  ];
+
+  factory HelloInput.fromCliRequest(CliRequest req) =>
+      HelloInput(name: req.flagString('name')!); // already resolved and defaulted
+
+  @override
+  List<CliParam> get schemaFields => params;
+
+  @override
+  Map<String, dynamic> toJson() => {'name': name};
+}
+```
+
+**Declaring is parsing.** The same declaration that help renders is the one the
+framework enforces before your `Input` reads a flag: it resolves `-n` to
+`--name`, applies the declared default, coerces `--a abc` to a validation error
+instead of a silent `0`, rejects an option nobody declared, and checks
+`allowed` values. Help therefore cannot describe a contract the CLI does not
+actually apply. A command that declares no `params` keeps parsing its arguments
+by hand and is neither described nor enforced.
+
+Help is a **success**, not an error:
+
+```bash
+mycli                      # no args  → command list on stdout, exit 0
+mycli help                 #          → same
+mycli --help               #  or -h   → same
+mycli greetings hello -h   #          → only that command's contract, exit 0
+mycli greetings --help     #          → every command in the module, exit 0
+mycli help --json          #          → the full contract catalog (help.json), exit 0
+
+mycli bogus                # unknown  → error + catalog on stderr, exit 64
+mycli math add --b 7       # rejected → error + that command's usage on stderr, exit 7
+```
+
+`help --json` is the machine-readable twin of the text help: every command with
+its route, description and parameters (name, aliases, type, required, default,
+allowed), plus the global options.
+
+A `help` command you register yourself always wins over the built-in one.
+
+---
+
 ## Features
 
 - `Command<I, O>` — pure business logic, no I/O concerns
+- `CliParam` — a command's declared contract: renders help *and* enforces parsing
+- Native help — `help`, no args, `--help`/`-h` on stdout with exit 0; `help --json` for machines
 - `Input` / `Output` — typed DTOs for command I/O
 - `CommandException` — structured errors with code, message, exit code, and retryable flag
 - `ModularCli` + `ModuleBuilder` — module registration and routing
@@ -83,7 +143,7 @@ Or add it manually to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  modular_cli_sdk: ^0.2.0
+  modular_cli_sdk: ^0.3.0
 ```
 
 ```bash

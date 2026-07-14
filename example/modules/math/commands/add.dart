@@ -8,8 +8,28 @@ class AddInput extends Input {
   final int b;
   AddInput({required this.a, required this.b});
 
+  /// Declared once, enforced by the framework: a missing or non-numeric
+  /// operand is now a validation failure, not a silent zero.
+  static final params = [
+    CliParam.integer(
+      'a',
+      abbr: 'a',
+      required: true,
+      description: 'First operand',
+    ),
+    CliParam.integer(
+      'b',
+      abbr: 'b',
+      required: true,
+      description: 'Second operand',
+    ),
+  ];
+
   factory AddInput.fromCliRequest(CliRequest req) =>
-      AddInput(a: req.flagInt('a') ?? 0, b: req.flagInt('b') ?? 0);
+      AddInput(a: req.flagInt('a')!, b: req.flagInt('b')!);
+
+  @override
+  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {'a': a, 'b': b};

@@ -7,5 +7,6 @@ void buildGreetingsModule(ModuleBuilder m) {
     'hello',
     (req) => HelloCommand(HelloInput.fromCliRequest(req)),
     description: 'Say hello to someone',
+    params: HelloInput.params,
   );
 }
