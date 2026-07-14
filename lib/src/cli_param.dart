@@ -20,7 +20,10 @@ enum CliParamType { string, integer, number, boolean }
 ///
 /// The declaration is the single source of truth: the framework renders help
 /// from it *and* enforces it at parse time, so help can never describe a
-/// contract the command does not actually apply.
+/// contract the command does not actually apply. For that reason a facet the
+/// runtime cannot honour is not declarable: `cli_router` keeps flags in a map
+/// keyed by name, so a repeated flag overwrites the previous one and there is
+/// no repeatable parameter to describe.
 ///
 /// ```dart
 /// class AddInput extends Input {
@@ -39,7 +42,6 @@ class CliParam {
     this.required = false,
     this.defaultValue,
     this.allowed,
-    this.repeatable = false,
     this.description,
   }) {
     if (required && defaultValue != null) {
@@ -67,9 +69,6 @@ class CliParam {
   /// When set, any value outside this list is rejected.
   final List<String>? allowed;
 
-  /// Whether repeating the parameter collects every occurrence.
-  final bool repeatable;
-
   final String? description;
 
   /// An option carrying a value: `--count 3`.
@@ -79,7 +78,6 @@ class CliParam {
     bool required = false,
     String? defaultValue,
     List<String>? allowed,
-    bool repeatable = false,
     String? description,
   }) => CliParam._(
     name: name,
@@ -89,7 +87,6 @@ class CliParam {
     required: required,
     defaultValue: defaultValue,
     allowed: allowed,
-    repeatable: repeatable,
     description: description,
   );
 
@@ -99,7 +96,6 @@ class CliParam {
     String? abbr,
     bool required = false,
     int? defaultValue,
-    bool repeatable = false,
     String? description,
   }) => CliParam._(
     name: name,
@@ -108,7 +104,6 @@ class CliParam {
     abbr: abbr,
     required: required,
     defaultValue: defaultValue,
-    repeatable: repeatable,
     description: description,
   );
 
@@ -118,7 +113,6 @@ class CliParam {
     String? abbr,
     bool required = false,
     double? defaultValue,
-    bool repeatable = false,
     String? description,
   }) => CliParam._(
     name: name,
@@ -127,7 +121,6 @@ class CliParam {
     abbr: abbr,
     required: required,
     defaultValue: defaultValue,
-    repeatable: repeatable,
     description: description,
   );
 
@@ -231,7 +224,6 @@ class CliParam {
     'required': required,
     if (defaultValue != null) 'default': defaultValue,
     if (allowed != null) 'allowed': allowed,
-    if (repeatable) 'repeatable': true,
     if (description != null) 'description': description,
   };
 }
