@@ -155,6 +155,45 @@ void main() {
     });
   });
 
+  // A CLI may register a route for the bare invocation — a dashboard, a status
+  // screen, a banner. The empty invocation is then NOT a help request: it is
+  // that route. Rewriting it into `help` unconditionally silently replaced a
+  // real root command (found by integrating this SDK into a CLI that has one).
+  group('a registered root route owns the empty invocation', () {
+    ModularCli buildCliWithRoot() => _buildCli()
+      ..command<_VersionInput, _VersionOutput>(
+        '',
+        (req) => _VersionCommand(_VersionInput()),
+        description: 'Show the dashboard',
+      );
+
+    test('the bare invocation runs the root command, not the help', () async {
+      final result = await _run(const [], cli: buildCliWithRoot());
+
+      expect(result.exitCode, equals(ExitCode.ok));
+      expect(result.stderr, isEmpty);
+      expect(result.stdout, contains('1.0.0'),
+          reason: 'the root command should have run');
+      expect(result.stdout, isNot(contains('Global options')),
+          reason: 'the empty invocation was hijacked by the help command');
+    });
+
+    test('`help` still reaches the help when a root route exists', () async {
+      final result = await _run(const ['help'], cli: buildCliWithRoot());
+
+      expect(result.exitCode, equals(ExitCode.ok));
+      expect(result.stdout, contains('Global options'));
+    });
+
+    test('a CLI with no root route still gets help on the bare invocation',
+        () async {
+      final result = await _run(const []);
+
+      expect(result.exitCode, equals(ExitCode.ok));
+      expect(result.stdout, contains('Global options'));
+    });
+  });
+
   group('developer intent wins', () {
     test(
       'a help command registered by the developer overrides the auto one',
