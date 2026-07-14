@@ -95,7 +95,13 @@ class ModuleBuilder {
         return ExitCode.ok;
       }
 
-      return _executeCommand(req, commandFactory, output, params);
+      return _executeCommand(
+        req,
+        commandFactory,
+        output,
+        contract,
+        showsContractOnRejection: !isJsonMode,
+      );
     }, description: description);
   }
 
@@ -104,23 +110,27 @@ class ModuleBuilder {
     CliRequest req,
     Command<I, O> Function(CliRequest) commandFactory,
     CliOutput cliOutput,
-    List<CliParam> params,
-  ) async {
+    CommandContract contract, {
+    required bool showsContractOnRejection,
+  }) async {
     try {
       // The declared contract is applied before the Input reads a single flag,
       // so help and runtime can never describe different commands.
-      final cmd = commandFactory(applyDeclaredContract(req, params));
+      final cmd = commandFactory(applyDeclaredContract(req, contract.params));
 
       final validationError = cmd.validate();
       if (validationError != null) {
-        cliOutput.writeError(
+        return _reject(
           CommandException(
             code: 'VALIDATION_FAILED',
             message: validationError,
             exitCode: ExitCode.validationFailed,
           ),
+          req,
+          cliOutput,
+          contract,
+          showsContractOnRejection: showsContractOnRejection,
         );
-        return ExitCode.validationFailed;
       }
 
       final commandOutput = await cmd.execute();
@@ -130,8 +140,32 @@ class ModuleBuilder {
       );
       return commandOutput.exitCode;
     } on CommandException catch (e) {
-      cliOutput.writeError(e);
-      return e.exitCode;
+      return _reject(
+        e,
+        req,
+        cliOutput,
+        contract,
+        showsContractOnRejection: showsContractOnRejection,
+      );
     }
+  }
+
+  /// A rejected invocation is answered with the contract it failed to honour —
+  /// the user was one flag away from succeeding.
+  int _reject(
+    CommandException error,
+    CliRequest req,
+    CliOutput cliOutput,
+    CommandContract contract, {
+    required bool showsContractOnRejection,
+  }) {
+    cliOutput.writeError(error);
+    if (showsContractOnRejection &&
+        error.exitCode == ExitCode.validationFailed) {
+      req.stderr
+        ..writeln()
+        ..writeln(HelpRenderer(_catalog).renderCommand(contract));
+    }
+    return error.exitCode;
   }
 }
