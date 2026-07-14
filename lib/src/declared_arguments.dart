@@ -3,9 +3,7 @@ import 'package:cli_router/cli_router.dart';
 import 'cli_param.dart';
 import 'command_exception.dart';
 import 'exit_codes.dart';
-
-/// Flags the framework handles for every command, whatever it declares.
-const _globalFlagNames = {'json', 'quiet', 'q', 'help', 'h'};
+import 'global_options.dart';
 
 /// Applies a command's declared contract to the invocation that arrived.
 ///
@@ -23,7 +21,7 @@ CliRequest applyDeclaredContract(CliRequest req, List<CliParam> params) {
 
   final resolvedFlags = <String, String?>{
     for (final entry in req.flags.entries)
-      if (_globalFlagNames.contains(entry.key)) entry.key: entry.value,
+      if (globalOptionNames.contains(entry.key)) entry.key: entry.value,
   };
 
   for (final param in params) {
@@ -58,7 +56,7 @@ void _rejectUndeclaredFlags(Iterable<String> flagNames, List<CliParam> params) {
     for (final param in params) ...[param.name, ...param.aliases],
   };
   for (final flagName in flagNames) {
-    if (declared.contains(flagName) || _globalFlagNames.contains(flagName)) {
+    if (declared.contains(flagName) || globalOptionNames.contains(flagName)) {
       continue;
     }
     throw CommandException(
