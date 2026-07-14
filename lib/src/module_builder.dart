@@ -7,6 +7,7 @@ import 'cli_param.dart';
 import 'command.dart';
 import 'command_catalog.dart';
 import 'command_exception.dart';
+import 'declared_arguments.dart';
 import 'exit_codes.dart';
 import 'input.dart';
 import 'output.dart';
@@ -84,7 +85,7 @@ class ModuleBuilder {
               isQuiet: isQuiet,
             );
 
-      return _executeCommand(req, commandFactory, output);
+      return _executeCommand(req, commandFactory, output, params);
     }, description: description);
   }
 
@@ -93,9 +94,12 @@ class ModuleBuilder {
     CliRequest req,
     Command<I, O> Function(CliRequest) commandFactory,
     CliOutput cliOutput,
+    List<CliParam> params,
   ) async {
     try {
-      final cmd = commandFactory(req);
+      // The declared contract is applied before the Input reads a single flag,
+      // so help and runtime can never describe different commands.
+      final cmd = commandFactory(applyDeclaredContract(req, params));
 
       final validationError = cmd.validate();
       if (validationError != null) {
