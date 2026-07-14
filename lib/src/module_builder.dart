@@ -9,6 +9,7 @@ import 'command_catalog.dart';
 import 'command_exception.dart';
 import 'declared_arguments.dart';
 import 'exit_codes.dart';
+import 'help_renderer.dart';
 import 'input.dart';
 import 'output.dart';
 
@@ -60,14 +61,13 @@ class ModuleBuilder {
     String? description,
     List<CliParam> params = const [],
   }) {
-    _catalog.register(
-      CommandContract(
-        route: moduleName.isEmpty ? route : '$moduleName $route',
-        module: moduleName,
-        description: description,
-        params: params,
-      ),
+    final contract = CommandContract(
+      route: moduleName.isEmpty ? route : '$moduleName $route',
+      module: moduleName,
+      description: description,
+      params: params,
     );
+    _catalog.register(contract);
 
     _router.cmd(route, (req) async {
       final isJsonMode = req.flagBool('json');
@@ -84,6 +84,16 @@ class ModuleBuilder {
               stderr: req.stderr,
               isQuiet: isQuiet,
             );
+
+      // Asked for the contract, not for the work: help before enforcement, so
+      // `--help` on an incomplete invocation helps instead of failing.
+      if (req.flagBool('help', aliases: const ['h'])) {
+        output.writeObject(
+          contract.toJson(),
+          textOverride: HelpRenderer(_catalog).renderCommand(contract),
+        );
+        return ExitCode.ok;
+      }
 
       return _executeCommand(req, commandFactory, output, params);
     }, description: description);
