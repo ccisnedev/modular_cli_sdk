@@ -53,13 +53,16 @@ class ModuleBuilder {
   ///   The factory is responsible for constructing both Input and Command.
   /// [description] — one-line help text shown in `printHelp`.
   /// [params] — the command's declared contract, usually the `params` of its
-  ///   [Input]. Declaring it publishes the command in help and enforces the
-  ///   parameters at parse time; omitting it leaves both behaviours off.
+  ///   [Input]. Declaring it publishes the command's parameters in help and
+  ///   enforces them at parse time; **omitting** it leaves both behaviours off.
+  ///
+  ///   `params: const []` is a declaration, not an omission: it says the command
+  ///   accepts **no option at all**, and any option passed to it is rejected.
   void command<I extends Input, O extends Output>(
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
     String? description,
-    List<CliParam> params = const [],
+    List<CliParam>? params,
   }) {
     final contract = CommandContract(
       route: moduleName.isEmpty ? route : '$moduleName $route',
