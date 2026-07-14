@@ -120,15 +120,22 @@ class ModularCli {
     );
   }
 
-  /// Rewrites into the `help` command the two help requests no route can serve:
-  /// the empty invocation, and a `--help` / `-h` that names no command or names
-  /// a module (`cli_router` stops looking for a route at the first flag, and a
+  /// Rewrites into the `help` command the help requests no route can serve: the
+  /// empty invocation, and a `--help` / `-h` that names no command or names a
+  /// module (`cli_router` stops looking for a route at the first flag, and a
   /// module is a mount, not a route).
+  ///
+  /// The empty invocation is only a help request when nothing claims it. A CLI
+  /// may register a root route — a dashboard, a status screen, a banner — and
+  /// then bare `<cli>` *is* that route; taking it for help would silently
+  /// replace a real command.
   ///
   /// `<command> --help` is left alone: the command's own wrapper answers it, so
   /// an unknown command with `--help` still reaches the error path.
   List<String> _routeHelpRequest(List<String> args) {
-    if (args.isEmpty) return const ['help'];
+    if (args.isEmpty) {
+      return _catalog.forRoute('') != null ? args : const ['help'];
+    }
     if (!args.any((arg) => arg == '--help' || arg == '-h')) return args;
 
     final routeTokens = args.takeWhile((arg) => !arg.startsWith('-')).toList();
