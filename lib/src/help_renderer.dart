@@ -58,11 +58,20 @@ class HelpRenderer {
   String _descriptionSuffixOf(CommandContract contract) =>
       contract.description == null ? '' : '  ${contract.description}';
 
+  /// How the root route is named in the listing: it has no token to type, so it
+  /// is named by the only way it can be invoked — with nothing at all. Without
+  /// this it rendered as a description hanging off a blank column.
+  static const String rootRouteLabel = '(no arguments)';
+
+  String _listingNameOf(CommandContract contract) =>
+      contract.route.isEmpty ? rootRouteLabel : contract.route;
+
   List<String> _commandLines(List<CommandContract> contracts) {
-    final width = _widestOf(contracts.map((c) => c.route));
+    final names = {for (final c in contracts) c: _listingNameOf(c)};
+    final width = _widestOf(names.values);
     return [
       for (final contract in contracts)
-        '  ${contract.route.padRight(width)}  ${contract.description ?? ''}'
+        '  ${names[contract]!.padRight(width)}  ${contract.description ?? ''}'
             .trimRight(),
     ];
   }
