@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.3.1
+
+### Fixed
+
+- **A registered root route owns the empty invocation.** `ModularCli` rewrote bare `<cli>` into `help` unconditionally, on the assumption that no route can serve the empty invocation. A CLI that registers one — a dashboard, a status screen, a banner — had that command silently replaced by the help. The rewrite now applies only when nothing claims the empty route; a CLI without a root route is unaffected
+
 ## 0.3.0
 
 ### Added
