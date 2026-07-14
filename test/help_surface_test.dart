@@ -185,6 +185,20 @@ void main() {
       expect(result.stdout, contains('Global options'));
     });
 
+    /// The root route has no name to type, so the listing rendered it as an
+    /// orphan description hanging off a blank column. It is a real command and
+    /// must be listed — named by how it is actually invoked.
+    test('the listing names the root route by how it is invoked', () async {
+      final result = await _run(const ['help'], cli: buildCliWithRoot());
+
+      expect(result.stdout, contains('(no arguments)'));
+      expect(
+        result.stdout.split('\n'),
+        isNot(contains(matches(RegExp(r'^\s+Show the dashboard')))),
+        reason: 'a description with no command in front of it',
+      );
+    });
+
     test('a CLI with no root route still gets help on the bare invocation',
         () async {
       final result = await _run(const []);
