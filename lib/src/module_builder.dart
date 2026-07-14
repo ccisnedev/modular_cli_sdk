@@ -3,7 +3,9 @@ import 'package:cli_router/cli_router.dart';
 import 'cli_output.dart';
 import 'cli_output_json.dart';
 import 'cli_output_text.dart';
+import 'cli_param.dart';
 import 'command.dart';
+import 'command_catalog.dart';
 import 'command_exception.dart';
 import 'exit_codes.dart';
 import 'input.dart';
@@ -29,13 +31,18 @@ import 'output.dart';
 /// });
 /// ```
 class ModuleBuilder {
-  ModuleBuilder({required this.moduleName, required CliRouter router})
-    : _router = router;
+  ModuleBuilder({
+    required this.moduleName,
+    required CliRouter router,
+    required CommandCatalog catalog,
+  }) : _router = router,
+       _catalog = catalog;
 
   /// Name of the module (used as the mount prefix).
   final String moduleName;
 
   final CliRouter _router;
+  final CommandCatalog _catalog;
 
   /// Register a command within this module.
   ///
@@ -43,11 +50,24 @@ class ModuleBuilder {
   /// [commandFactory] — builds a fully-initialized Command from a CliRequest.
   ///   The factory is responsible for constructing both Input and Command.
   /// [description] — one-line help text shown in `printHelp`.
+  /// [params] — the command's declared contract, usually the `params` of its
+  ///   [Input]. Declaring it publishes the command in help and enforces the
+  ///   parameters at parse time; omitting it leaves both behaviours off.
   void command<I extends Input, O extends Output>(
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
     String? description,
+    List<CliParam> params = const [],
   }) {
+    _catalog.register(
+      CommandContract(
+        route: moduleName.isEmpty ? route : '$moduleName $route',
+        module: moduleName,
+        description: description,
+        params: params,
+      ),
+    );
+
     _router.cmd(route, (req) async {
       final isJsonMode = req.flagBool('json');
       final isQuiet = req.flagBool('quiet', aliases: const ['q']);
