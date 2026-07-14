@@ -2,7 +2,9 @@ import 'dart:io' as io;
 
 import 'package:cli_router/cli_router.dart';
 
+import 'cli_param.dart';
 import 'command.dart';
+import 'command_catalog.dart';
 import 'input.dart';
 import 'module_builder.dart';
 import 'output.dart';
@@ -35,6 +37,11 @@ class ModularCli {
   ModularCli();
 
   final CliRouter _root = CliRouter();
+  final CommandCatalog _catalog = CommandCatalog();
+
+  /// Every registered command with its declared contract — the single source
+  /// help is rendered from.
+  CommandCatalog get catalog => _catalog;
 
   /// Register a named module with its commands.
   ///
@@ -42,7 +49,11 @@ class ModularCli {
   /// [build] receives a [ModuleBuilder] for registering commands.
   ModularCli module(String name, void Function(ModuleBuilder) build) {
     final moduleRouter = CliRouter();
-    final builder = ModuleBuilder(moduleName: name, router: moduleRouter);
+    final builder = ModuleBuilder(
+      moduleName: name,
+      router: moduleRouter,
+      catalog: _catalog,
+    );
     build(builder);
     _root.mount(name, moduleRouter);
     return this;
@@ -60,10 +71,20 @@ class ModularCli {
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
     String? description,
+    List<CliParam> params = const [],
   }) {
     // Reuse ModuleBuilder lifecycle — moduleName is unused at runtime.
-    final builder = ModuleBuilder(moduleName: '', router: _root);
-    builder.command<I, O>(route, commandFactory, description: description);
+    final builder = ModuleBuilder(
+      moduleName: '',
+      router: _root,
+      catalog: _catalog,
+    );
+    builder.command<I, O>(
+      route,
+      commandFactory,
+      description: description,
+      params: params,
+    );
     return this;
   }
 
