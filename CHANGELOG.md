@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.3.0
+
+### Added
+
+- **Command contract** — `CliParam` declares a command's parameters (kind, type, short alias, required, default, allowed values) on its `Input`, and `command(...)` accepts them via `params:` ([#7](https://github.com/macss-dev/modular_cli_sdk/issues/7))
+- **Native help** — `help`, no arguments, `--help` and `-h` print the command list to **stdout** with exit **0**. Unknown or invalid usage stays on **stderr** with exit **64**. A `help` command registered by the developer overrides the built-in one
+- **Focused help** — `<command> --help` renders that command's contract; `<module> --help` renders every command in the module
+- **`help --json`** — the full contract catalog as JSON (`help.json`), the machine twin of the text help, through the existing `JsonCliOutput`
+- **Enforcement** — the declaration governs parsing: aliases resolved, declared defaults applied, values coerced to their declared type, undeclared options and values outside `allowed` rejected with exit **7**. A rejected invocation is answered with the contract it failed to honour
+
+### Changed
+
+- `Input.schemaFields` is now typed `List<CliParam>?` (was `List<dynamic>?`, documented as reserved)
+- Requires `cli_router: ^0.1.0`, which adds the `onNotFound` hook the SDK uses to render its own catalog on the error path, and route metadata for positionals
+
+### Notes
+
+- Commands that declare no `params` behave exactly as before: not described in help, not enforced
+
 ## 0.2.1
 
 ### Added
