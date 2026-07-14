@@ -86,6 +86,35 @@ hand-maintained truth that drifts from the code that actually parses.
   (`usecase_http_handler.dart:20,32`). The contract type is CLI-native (kind, alias, default, allowed
   values, negatable, repeatable), **not** a copy of `SchemaField` (F8), and it does not live in
   `cli_router`.
+- **D4 — Enforcement ships in this PR (closes OQ2).** The declared contract governs runtime parsing:
+  alias resolution, required-ness, type coercion, declared defaults, allowed values, and rejection of
+  undeclared flags — failing with `ExitCode.validationFailed` (`lib/src/exit_codes.dart`) through the
+  existing `CliOutput.writeError` path (`lib/src/module_builder.dart:80-90`). Without it the catalog
+  is a second truth: today `dart run example/example.dart math add --b 7` prints `result: 7` with exit
+  **0** (missing operand silently defaulted), `math add --a abc --b 7` prints `result: 7` (unparsable
+  int silently defaulted), and `math add --a 3 --b 7 --typo-flag x` ignores the undeclared flag — all
+  reproduced live in ANALYZE. Help rendered from a contract that the runtime does not enforce would
+  document behaviour the binary does not have, violating specification §4.
+- **D5 — Positional enforcement is split (closes OQ1).** `cli_router` owns presence and arity: a route
+  such as `show <id>` simply does not match without the token
+  (`cli_router-0.0.3/lib/src/path_pattern.dart:26-45`), so "required" is already structurally
+  guaranteed. The SDK owns type coercion and allowed values for the positional, from the same
+  declaration used for flags. No new router API is needed for this.
+- **D6 — The error path renders the SDK catalog via a router hook (closes OQ3).** `cli_router`
+  hard-coding its own `printHelp` to stderr (`cli_router-0.0.3/lib/src/cli_router.dart:167-170`) is a
+  layering violation — the router decides *what* failed to match, not *how* it is presented to a
+  human; the transport analogy `shelf_router : modular_api :: cli_router : modular_cli_sdk` (H2)
+  requires it. `cli_router` therefore gains an injectable not-found hook (`onNotFound`), keeping its
+  current output as the default when no hook is supplied (additive, non-breaking). The SDK injects a
+  renderer so the unknown-command path and the validation-failure path emit the *same* catalog as
+  `help` — only the sink (stderr) and the exit code (64 / 7) differ. This is the only way the
+  enforcement errors of D4 can print the offending command's contract.
+- **D7 — `cli_router` releases as 0.1.0, not 0.0.4.** In Dart, `^0.0.z` resolves to `>=0.0.z <0.0.(z+1)`,
+  i.e. the caret on a `0.0.x` version permits **no** upgrade at all — which is precisely what pinned
+  the SDK to 0.0.2 and blocked the 0.0.3 fix (F4, `pubspec.yaml:19`). Since D6's hook and the route
+  introspection of H2 are additive with the default behaviour preserved, a minor bump to **0.1.0** is
+  the correct semver step, and the SDK depends on `^0.1.0` (`>=0.1.0 <0.2.0`) so future compatible
+  patches resolve without another pubspec edit.
 
 ## Constraints
 
@@ -124,18 +153,18 @@ redesign of the `Command`/`Output` lifecycle beyond what the contract requires.
 
 ## Open Questions
 
-- **OQ1.** How far does D2's enforcement reach for *positionals* (route params such as `show <id>`)?
-  `cli_router` already binds them into `CliRequest.params`
-  (`cli_router-0.0.3/lib/src/cli_router.dart:124-132`), so coercion/required-ness for positionals may
-  belong to the router rather than the SDK — a boundary for PLAN to settle; not a blocker for the
-  catalog.
-- **OQ2.** Does the runtime enforcement of the contract ship in *this* issue together with the help
-  surface, or as an immediate follow-up issue, and is the specification amended (D2 obsoletes §3's
-  "not re-parsing it") in this cycle? PLAN must state this explicitly.
-- **OQ3.** For an unknown command, should the SDK render its own full catalog on stderr (richer, but
-  requires the router hook of H4/C2) or keep `cli_router`'s current listing
-  (`cli_router-0.0.3/lib/src/cli_router.dart:169`) as the error-path output? AC-4 only demands an
-  error line + help + exit 64.
+- **OQ1 — CLOSED** by D5: positional presence/arity stays in `cli_router` (already structural), type
+  and allowed-values coercion belongs to the SDK.
+- **OQ2 — CLOSED** by D4: enforcement ships in this PR, together with the help surface. Consequence
+  for PLAN: `docs/requisitions/20260713-native-help-command/specification.md` §3 must be amended —
+  the exclusion "changing how arguments are actually parsed at runtime" is obsolete, superseded by §4.
+- **OQ3 — CLOSED** by D6: the SDK renders the catalog on the error path through an injectable
+  `onNotFound` hook in `cli_router`; the router's hard-coded stderr help
+  (`cli_router-0.0.3/lib/src/cli_router.dart:167-170`) becomes the default only when no hook is given.
+- **OQ4 (new, for PLAN).** Release ordering across the two repos (C10): `cli_router` 0.1.0 (D7) must
+  be published before `modular_cli_sdk` can depend on `^0.1.0`. PLAN must state whether the SDK work
+  proceeds against a local `path:`/`dependency_overrides` pin while 0.1.0 is being released, and what
+  the final `pubspec.yaml` state must be before merge.
 
 ## References
 
