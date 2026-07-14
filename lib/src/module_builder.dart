@@ -3,9 +3,13 @@ import 'package:cli_router/cli_router.dart';
 import 'cli_output.dart';
 import 'cli_output_json.dart';
 import 'cli_output_text.dart';
+import 'cli_param.dart';
 import 'command.dart';
+import 'command_catalog.dart';
 import 'command_exception.dart';
+import 'declared_arguments.dart';
 import 'exit_codes.dart';
+import 'help_renderer.dart';
 import 'input.dart';
 import 'output.dart';
 
@@ -29,13 +33,18 @@ import 'output.dart';
 /// });
 /// ```
 class ModuleBuilder {
-  ModuleBuilder({required this.moduleName, required CliRouter router})
-    : _router = router;
+  ModuleBuilder({
+    required this.moduleName,
+    required CliRouter router,
+    required CommandCatalog catalog,
+  }) : _router = router,
+       _catalog = catalog;
 
   /// Name of the module (used as the mount prefix).
   final String moduleName;
 
   final CliRouter _router;
+  final CommandCatalog _catalog;
 
   /// Register a command within this module.
   ///
@@ -43,11 +52,23 @@ class ModuleBuilder {
   /// [commandFactory] — builds a fully-initialized Command from a CliRequest.
   ///   The factory is responsible for constructing both Input and Command.
   /// [description] — one-line help text shown in `printHelp`.
+  /// [params] — the command's declared contract, usually the `params` of its
+  ///   [Input]. Declaring it publishes the command in help and enforces the
+  ///   parameters at parse time; omitting it leaves both behaviours off.
   void command<I extends Input, O extends Output>(
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
     String? description,
+    List<CliParam> params = const [],
   }) {
+    final contract = CommandContract(
+      route: moduleName.isEmpty ? route : '$moduleName $route',
+      module: moduleName,
+      description: description,
+      params: params,
+    );
+    _catalog.register(contract);
+
     _router.cmd(route, (req) async {
       final isJsonMode = req.flagBool('json');
       final isQuiet = req.flagBool('quiet', aliases: const ['q']);
@@ -64,7 +85,23 @@ class ModuleBuilder {
               isQuiet: isQuiet,
             );
 
-      return _executeCommand(req, commandFactory, output);
+      // Asked for the contract, not for the work: help before enforcement, so
+      // `--help` on an incomplete invocation helps instead of failing.
+      if (req.flagBool('help', aliases: const ['h'])) {
+        output.writeObject(
+          contract.toJson(),
+          textOverride: HelpRenderer(_catalog).renderCommand(contract),
+        );
+        return ExitCode.ok;
+      }
+
+      return _executeCommand(
+        req,
+        commandFactory,
+        output,
+        contract,
+        showsContractOnRejection: !isJsonMode,
+      );
     }, description: description);
   }
 
@@ -73,20 +110,27 @@ class ModuleBuilder {
     CliRequest req,
     Command<I, O> Function(CliRequest) commandFactory,
     CliOutput cliOutput,
-  ) async {
+    CommandContract contract, {
+    required bool showsContractOnRejection,
+  }) async {
     try {
-      final cmd = commandFactory(req);
+      // The declared contract is applied before the Input reads a single flag,
+      // so help and runtime can never describe different commands.
+      final cmd = commandFactory(applyDeclaredContract(req, contract.params));
 
       final validationError = cmd.validate();
       if (validationError != null) {
-        cliOutput.writeError(
+        return _reject(
           CommandException(
             code: 'VALIDATION_FAILED',
             message: validationError,
             exitCode: ExitCode.validationFailed,
           ),
+          req,
+          cliOutput,
+          contract,
+          showsContractOnRejection: showsContractOnRejection,
         );
-        return ExitCode.validationFailed;
       }
 
       final commandOutput = await cmd.execute();
@@ -96,8 +140,32 @@ class ModuleBuilder {
       );
       return commandOutput.exitCode;
     } on CommandException catch (e) {
-      cliOutput.writeError(e);
-      return e.exitCode;
+      return _reject(
+        e,
+        req,
+        cliOutput,
+        contract,
+        showsContractOnRejection: showsContractOnRejection,
+      );
     }
+  }
+
+  /// A rejected invocation is answered with the contract it failed to honour —
+  /// the user was one flag away from succeeding.
+  int _reject(
+    CommandException error,
+    CliRequest req,
+    CliOutput cliOutput,
+    CommandContract contract, {
+    required bool showsContractOnRejection,
+  }) {
+    cliOutput.writeError(error);
+    if (showsContractOnRejection &&
+        error.exitCode == ExitCode.validationFailed) {
+      req.stderr
+        ..writeln()
+        ..writeln(HelpRenderer(_catalog).renderCommand(contract));
+    }
+    return error.exitCode;
   }
 }
