@@ -2,3 +2,7 @@
 .packages
 build/
 pubspec.lock
+# Inquiry — local workspace & cycle state
+.inquiry/
+cleanrooms/
+docs/requisitions/
