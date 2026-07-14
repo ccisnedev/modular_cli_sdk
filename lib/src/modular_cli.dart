@@ -5,6 +5,7 @@ import 'package:cli_router/cli_router.dart';
 import 'cli_param.dart';
 import 'command.dart';
 import 'command_catalog.dart';
+import 'help_command.dart';
 import 'input.dart';
 import 'module_builder.dart';
 import 'output.dart';
@@ -101,8 +102,35 @@ class ModularCli {
   ///
   /// Pass custom [stdout] / [stderr] sinks for testing.
   Future<int> run(List<String> args, {io.IOSink? stdout, io.IOSink? stderr}) {
-    return _root.run(args, stdout: stdout, stderr: stderr);
+    _registerHelpCommand();
+    return _root.run(_routeHelpRequest(args), stdout: stdout, stderr: stderr);
   }
+
+  /// Help must be reachable out of the box — unless the developer wrote their
+  /// own `help`, in which case theirs is the CLI's help, everywhere.
+  void _registerHelpCommand() {
+    if (_catalog.forRoute('help') != null) return;
+
+    command<HelpInput, HelpOutput>(
+      'help',
+      (req) => HelpCommand(HelpInput(_catalog)),
+      description: 'Show the commands this CLI accepts',
+    );
+  }
+
+  /// `--help` and `-h` carry no route tokens, so no route can ever match them
+  /// (`cli_router` stops looking for a route at the first flag) — and neither
+  /// can the empty invocation reach a command. Both are rewritten into the
+  /// `help` command, which is a normal, successful command.
+  List<String> _routeHelpRequest(List<String> args) {
+    if (args.isEmpty) return const ['help'];
+    if (!_isRootHelpFlag(args)) return args;
+    return ['help', ...args];
+  }
+
+  bool _isRootHelpFlag(List<String> args) =>
+      args.first.startsWith('-') &&
+      args.any((arg) => arg == '--help' || arg == '-h');
 
   /// Print the help listing for all registered modules and commands.
   void printHelp(io.IOSink sink, {String? title}) {

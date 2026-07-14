@@ -17,6 +17,8 @@ export 'src/cli_output_json.dart' show JsonCliOutput;
 export 'src/cli_output_text.dart' show TextCliOutput;
 export 'src/command.dart' show Command;
 export 'src/command_catalog.dart' show CommandCatalog, CommandContract;
+export 'src/global_options.dart' show globalOptions;
+export 'src/help_renderer.dart' show HelpRenderer;
 export 'src/command_exception.dart' show CommandException;
 export 'src/exit_codes.dart' show ExitCode;
 export 'src/input.dart' show Input;
