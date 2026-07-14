@@ -113,24 +113,37 @@ class ModularCli {
 
     command<HelpInput, HelpOutput>(
       'help',
-      (req) => HelpCommand(HelpInput(_catalog)),
+      (req) => HelpCommand(HelpInput(_catalog, focus: req.positionals)),
       description: 'Show the commands this CLI accepts',
     );
   }
 
-  /// `--help` and `-h` carry no route tokens, so no route can ever match them
-  /// (`cli_router` stops looking for a route at the first flag) — and neither
-  /// can the empty invocation reach a command. Both are rewritten into the
-  /// `help` command, which is a normal, successful command.
+  /// Rewrites into the `help` command the two help requests no route can serve:
+  /// the empty invocation, and a `--help` / `-h` that names no command or names
+  /// a module (`cli_router` stops looking for a route at the first flag, and a
+  /// module is a mount, not a route).
+  ///
+  /// `<command> --help` is left alone: the command's own wrapper answers it, so
+  /// an unknown command with `--help` still reaches the error path.
   List<String> _routeHelpRequest(List<String> args) {
     if (args.isEmpty) return const ['help'];
-    if (!_isRootHelpFlag(args)) return args;
-    return ['help', ...args];
+    if (!args.any((arg) => arg == '--help' || arg == '-h')) return args;
+
+    final routeTokens = args.takeWhile((arg) => !arg.startsWith('-')).toList();
+    if (routeTokens.isEmpty) return ['help', ..._withoutHelpFlags(args)];
+
+    final namesAModule =
+        routeTokens.length == 1 &&
+        _catalog.forRoute(routeTokens.single) == null &&
+        _catalog.forModule(routeTokens.single).isNotEmpty;
+
+    return namesAModule ? ['help', ..._withoutHelpFlags(args)] : args;
   }
 
-  bool _isRootHelpFlag(List<String> args) =>
-      args.first.startsWith('-') &&
-      args.any((arg) => arg == '--help' || arg == '-h');
+  /// The `help` command is the request itself; carrying `--help` into it would
+  /// make it describe itself instead of what was asked about.
+  List<String> _withoutHelpFlags(List<String> args) =>
+      args.where((arg) => arg != '--help' && arg != '-h').toList();
 
   /// Print the help listing for all registered modules and commands.
   void printHelp(io.IOSink sink, {String? title}) {
