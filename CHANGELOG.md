@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.3.3
+
+### Fixed
+
+- **A command with positionals can be asked for its contract.** The router cannot match `show <id>` until the id is supplied, so `show --help` fell to the error path — the user had to provide the very argument he was asking about. A command is now *named* by its route without positional placeholders, so both `show --help` and `help show` render its contract. `show 1 --help` keeps working
+
+### Added
+
+- `CommandContract.name` — the route without its positional placeholders, i.e. the tokens a user types to name the command
+- `CommandCatalog.forName` — lookup by that name
+
 ## 0.3.2
 
 ### Fixed

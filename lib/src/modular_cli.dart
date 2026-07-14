@@ -146,7 +146,17 @@ class ModularCli {
         _catalog.forRoute(routeTokens.single) == null &&
         _catalog.forModule(routeTokens.single).isNotEmpty;
 
-    return namesAModule ? ['help', ..._withoutHelpFlags(args)] : args;
+    // A command whose route carries positionals (`show <id>`) cannot be matched
+    // by the router until they are supplied — so asking for its contract would
+    // fall to the error path, forcing the user to provide the very argument he
+    // is asking about. Name it and the help answers.
+    final contract = _catalog.forName(routeTokens.join(' '));
+    final namesAPositionalCommand =
+        contract != null && contract.positionals.isNotEmpty;
+
+    return namesAModule || namesAPositionalCommand
+        ? ['help', ..._withoutHelpFlags(args)]
+        : args;
   }
 
   /// The `help` command is the request itself; carrying `--help` into it would
