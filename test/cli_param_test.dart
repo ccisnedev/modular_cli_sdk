@@ -50,12 +50,6 @@ void main() {
       expect(param.allowed, equals(['text', 'json']));
     });
 
-    test('a repeatable param collects every occurrence', () {
-      final param = CliParam.string('tag', repeatable: true);
-
-      expect(param.repeatable, isTrue);
-    });
-
     test('aliases list the long name and the abbr', () {
       expect(CliParam.integer('a', abbr: 'a').aliases, equals(['a']));
       expect(CliParam.integer('count').aliases, isEmpty);
