@@ -5,7 +5,9 @@ import 'package:cli_router/cli_router.dart';
 import 'cli_param.dart';
 import 'command.dart';
 import 'command_catalog.dart';
+import 'exit_codes.dart';
 import 'help_command.dart';
+import 'help_renderer.dart';
 import 'input.dart';
 import 'module_builder.dart';
 import 'output.dart';
@@ -37,7 +39,7 @@ import 'output.dart';
 class ModularCli {
   ModularCli();
 
-  final CliRouter _root = CliRouter();
+  late final CliRouter _root = CliRouter(onNotFound: _reportUnknownCommand);
   final CommandCatalog _catalog = CommandCatalog();
 
   /// Every registered command with its declared contract — the single source
@@ -144,6 +146,21 @@ class ModularCli {
   /// make it describe itself instead of what was asked about.
   List<String> _withoutHelpFlags(List<String> args) =>
       args.where((arg) => arg != '--help' && arg != '-h').toList();
+
+  /// The user who mistypes a command is the one who most needs the catalog, so
+  /// the error path shows exactly what `help` shows — only on stderr, and as a
+  /// failure.
+  int _reportUnknownCommand(CliNotFound notFound) {
+    final attempted = notFound.args
+        .takeWhile((arg) => !arg.startsWith('-'))
+        .join(' ');
+
+    notFound.stderr
+      ..writeln("Error: unknown command '$attempted'.")
+      ..writeln()
+      ..writeln(HelpRenderer(_catalog).renderCatalog());
+    return ExitCode.invalidUsage;
+  }
 
   /// Print the help listing for all registered modules and commands.
   void printHelp(io.IOSink sink, {String? title}) {
