@@ -159,8 +159,47 @@ class _LegacyCommand implements Command<_LegacyInput, _SumOutput> {
   Future<_SumOutput> execute() async => _SumOutput(input.a);
 }
 
+// ── Declared command that takes NO options at all ────────────────────────────
+//
+// Distinct from _LegacyInput: that one declares nothing (undeclared, not
+// enforced). This one declares its contract and the contract is *empty* — it
+// accepts no option whatsoever, and anything passed is an error.
+
+class _InitInput extends Input {
+  _InitInput();
+
+  static const List<CliParam> params = [];
+
+  factory _InitInput.fromCliRequest(CliRequest req) => _InitInput();
+
+  @override
+  List<CliParam> get schemaFields => params;
+
+  @override
+  Map<String, dynamic> toJson() => {};
+}
+
+class _InitCommand implements Command<_InitInput, _SumOutput> {
+  @override
+  final _InitInput input;
+  _InitCommand(this.input);
+
+  @override
+  String? validate() => null;
+
+  @override
+  Future<_SumOutput> execute() async => _SumOutput(0);
+}
+
 ModularCli _buildCli() {
   final cli = ModularCli();
+
+  cli.command<_InitInput, _SumOutput>(
+    'init',
+    (req) => _InitCommand(_InitInput.fromCliRequest(req)),
+    description: 'Takes no options',
+    params: _InitInput.params,
+  );
 
   cli.command<_GreetInput, _GreetOutput>(
     'greet',
@@ -306,6 +345,33 @@ void main() {
       final result = await _run(['legacy', '--whatever', 'x']);
 
       expect(result.exitCode, equals(ExitCode.ok));
+    });
+  });
+
+  // "I accept no options" was inexpressible: `params: const []` is the same
+  // value as the default, so a zero-parameter command was indistinguishable
+  // from an undeclared one and its arguments went unchecked. That is precisely
+  // the command most likely to be mis-invoked — `init --host foo` ran, doing
+  // nothing of what the flag implied.
+  group('a command that declares an EMPTY contract accepts no option', () {
+    test('a bare invocation runs', () async {
+      final result = await _run(['init']);
+
+      expect(result.exitCode, equals(ExitCode.ok));
+    });
+
+    test('any option is rejected with the contract it violated', () async {
+      final result = await _run(['init', '--host', 'claude']);
+
+      expect(result.exitCode, equals(ExitCode.validationFailed));
+      expect(result.stderr, contains('unknown option --host'));
+    });
+
+    test('it is still described in the help', () async {
+      final result = await _run(['help']);
+
+      expect(result.stdout, contains('init'));
+      expect(result.stdout, contains('Takes no options'));
     });
   });
 

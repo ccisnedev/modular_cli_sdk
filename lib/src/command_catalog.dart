@@ -17,22 +17,33 @@ class CommandContract {
 
   final String? description;
 
-  /// Parameters declared by the command's [Input]. Empty when the command
-  /// declares none — such a command is described by route and description
-  /// alone, and its arguments are not enforced.
-  final List<CliParam> params;
+  /// Parameters declared by the command's [Input], or **null** when the command
+  /// declares no contract at all — such a command is described by route and
+  /// description alone, and its arguments are not enforced.
+  ///
+  /// An **empty** list is a declaration, not an absence: the command accepts no
+  /// option, and any option passed to it is rejected. Keeping the two apart is
+  /// what lets a zero-argument command be enforced.
+  final List<CliParam>? params;
+
+  /// Whether the command declared a contract at all.
+  bool get isDeclared => params != null;
+
+  /// The declared parameters, with "declares nothing" flattened to "none" —
+  /// for rendering, where the two look alike. Enforcement must use [params].
+  List<CliParam> get declaredParams => params ?? const [];
 
   List<CliParam> get positionals =>
-      params.where((p) => p.kind == CliParamKind.positional).toList();
+      (params ?? const []).where((p) => p.kind == CliParamKind.positional).toList();
 
   List<CliParam> get options =>
-      params.where((p) => p.kind != CliParamKind.positional).toList();
+      (params ?? const []).where((p) => p.kind != CliParamKind.positional).toList();
 
   Map<String, dynamic> toJson() => {
     'route': route,
     if (module.isNotEmpty) 'module': module,
     if (description != null) 'description': description,
-    'params': params.map((p) => p.toJson()).toList(),
+    'params': (params ?? const []).map((p) => p.toJson()).toList(),
   };
 }
 

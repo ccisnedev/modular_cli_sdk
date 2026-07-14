@@ -27,11 +27,11 @@ class HelpRenderer {
         ..add('')
         ..add(contract.description!);
     }
-    if (contract.params.isNotEmpty) {
+    if (contract.declaredParams.isNotEmpty) {
       lines
         ..add('')
         ..add('Parameters:')
-        ..addAll(_paramLines(contract.params));
+        ..addAll(_paramLines(contract.declaredParams));
     }
     lines
       ..add('')
@@ -47,7 +47,7 @@ class HelpRenderer {
       lines
         ..add('')
         ..add('  ${contract.route}${_descriptionSuffixOf(contract)}');
-      lines.addAll(_paramLines(contract.params).map((line) => '  $line'));
+      lines.addAll(_paramLines(contract.declaredParams).map((line) => '  $line'));
     }
     lines
       ..add('')

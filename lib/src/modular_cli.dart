@@ -74,7 +74,7 @@ class ModularCli {
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
     String? description,
-    List<CliParam> params = const [],
+    List<CliParam>? params,
   }) {
     // Reuse ModuleBuilder lifecycle — moduleName is unused at runtime.
     final builder = ModuleBuilder(

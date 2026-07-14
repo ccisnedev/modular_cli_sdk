@@ -12,10 +12,15 @@ import 'global_options.dart';
 /// what the command never declared. The request handed to the command's Input
 /// factory is therefore already the contract, not the raw command line.
 ///
-/// A command that declares no parameters is returned untouched — it keeps
-/// parsing its arguments imperatively, as before.
-CliRequest applyDeclaredContract(CliRequest req, List<CliParam> params) {
-  if (params.isEmpty) return req;
+/// A command that declares **nothing** (`params` omitted, i.e. null) is returned
+/// untouched — it keeps parsing its arguments imperatively, as before.
+///
+/// Declaring an **empty** contract (`params: const []`) is a different statement
+/// and is enforced: the command accepts no option at all, so any option is an
+/// error. The two were once the same value, which left the commands that take no
+/// arguments — exactly the ones most likely to be mis-invoked — unchecked.
+CliRequest applyDeclaredContract(CliRequest req, List<CliParam>? params) {
+  if (params == null) return req;
 
   _rejectUndeclaredFlags(req.flags.keys, params);
 
