@@ -68,6 +68,16 @@ ModularCli _buildCli() {
       params: _AddInput.params,
     );
   });
+  // A route of more than one segment inside a module. `api graphql` is then a
+  // valid prefix that is not a module — the case a module-only check misses.
+  cli.module('api', (m) {
+    m.command<_AddInput, _SumOutput>(
+      'graphql compile',
+      (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      description: 'Compile GraphQL artifacts',
+      params: _AddInput.params,
+    );
+  });
   return cli;
 }
 
@@ -118,6 +128,65 @@ void main() {
 
       expect(result.exitCode, equals(ExitCode.invalidUsage));
       expect(result.stderr, contains('math add'));
+    });
+  });
+
+  // An invocation that names the beginning of a real route is not unknown —
+  // what it lacks is the end. The catalog knows every route, so the error path
+  // can tell the two apart instead of calling both "unknown command".
+  group('an incomplete invocation is told what would complete it', () {
+    test('a module with no action names its commands, not the catalog',
+        () async {
+      final result = await _run(['math']);
+
+      expect(result.stderr, contains('not a complete command'));
+      expect(result.stderr, contains('math add'));
+      expect(
+        result.stderr,
+        isNot(contains('graphql compile')),
+        reason: 'only the completions of what was typed, not everything',
+      );
+    });
+
+    // The case a "is it a module?" check would miss: `graphql` is not a module,
+    // it is the first segment of the route `api graphql compile`.
+    test('a route left half-typed is treated the same way', () async {
+      final result = await _run(['api', 'graphql']);
+
+      expect(result.stderr, contains('not a complete command'));
+      expect(result.stderr, contains('graphql compile'));
+      expect(result.stderr, isNot(contains('math add')));
+    });
+
+    test('a flag does not change what is missing', () async {
+      final result = await _run(['math', '--verbose']);
+
+      expect(result.stderr, contains('not a complete command'));
+      expect(result.stderr, contains('math add'));
+    });
+
+    test('it stays an invalid usage, with the same exit code as before',
+        () async {
+      final incomplete = await _run(['math']);
+      final unknown = await _run(['bogus']);
+
+      expect(incomplete.exitCode, equals(ExitCode.invalidUsage));
+      expect(incomplete.exitCode, equals(unknown.exitCode));
+      expect(incomplete.stdout, isEmpty);
+    });
+
+    test('a name that begins no route keeps the full catalog', () async {
+      final result = await _run(['bogus']);
+
+      expect(result.stderr, isNot(contains('not a complete command')));
+      expect(result.stderr, contains('math add'));
+      expect(result.stderr, contains('graphql compile'));
+    });
+
+    test('a real route still runs', () async {
+      final result = await _run(['math', 'add', '--a', '2', '--b', '3']);
+
+      expect(result.exitCode, equals(ExitCode.ok));
     });
   });
 

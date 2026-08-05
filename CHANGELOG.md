@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.3.4
+
+### Fixed
+
+- **An incomplete invocation is no longer reported as an unknown command.** Typing the beginning of a registered route without reaching its end — `math` where `math add` exists — answered `unknown command 'math'` followed by the whole catalog. The name was real; what was missing was the end of it, and the user was sent looking for a typo they had not made. The error path now asks the catalog whether what was typed *continues* into any route, says so, and lists only those continuations
+
+  The rule is stated over routes rather than modules on purpose. `api graphql` is not a module — it is the first segment of the route `api graphql compile` — so a module-only check would have left it reported as unknown. Prefix-of-a-route covers the module without an action and the half-typed route as the one case they are, and is the simpler rule of the two
+
+  A name that begins no registered route keeps exactly the behaviour it had: it is named, and the full catalog follows. The exit code is unchanged for both, and is now pinned by a test rather than inherited
+
+  No public API was added. The completions are rendered by narrowing what `HelpRenderer` is given rather than teaching it a new shape, which keeps it the only place help text is produced
+
+### Notes
+
+- This does **not** give the surface position help of its own. `api graphql --help` still renders nothing; what changes is that the error stops calling it unknown. Whether a CLI should have three levels at all is a question for the CLIs built on this SDK, not for the SDK
+
 ## 0.3.3
 
 ### Fixed
