@@ -6,3 +6,5 @@ pubspec.lock
 .inquiry/
 cleanrooms/
 docs/requisitions/
+# MACSS — local workspace (git-ignored)
+.macss/

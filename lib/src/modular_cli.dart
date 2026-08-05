@@ -167,16 +167,56 @@ class ModularCli {
   /// The user who mistypes a command is the one who most needs the catalog, so
   /// the error path shows exactly what `help` shows — only on stderr, and as a
   /// failure.
+  ///
+  /// It tells apart two things that are not the same. An invocation naming the
+  /// **beginning of a registered route** is not unknown: what it lacks is the
+  /// end. `math` where `math add` exists, or `api graphql` where
+  /// `api graphql compile` does, are both that — a prefix with no ending, and
+  /// the catalog knows it. Calling both cases "unknown command" sent the user
+  /// looking for a typo they had not made, and answered with the whole catalog
+  /// when a handful of lines were the relevant ones.
   int _reportUnknownCommand(CliNotFound notFound) {
     final attempted = notFound.args
         .takeWhile((arg) => !arg.startsWith('-'))
         .join(' ');
 
+    final completions = _completionsOf(attempted);
+
+    // A catalog holding only the completions, rendered by the same renderer as
+    // everything else. Narrowing the renderer's input rather than teaching it a
+    // new shape keeps "the renderer is the only place help text is produced"
+    // true, and adds nothing to the package's public surface.
     notFound.stderr
-      ..writeln("Error: unknown command '$attempted'.")
+      ..writeln(completions.isEmpty
+          ? "Error: unknown command '$attempted'."
+          : "Error: '$attempted' is not a complete command.")
       ..writeln()
-      ..writeln(HelpRenderer(_catalog).renderCatalog());
+      ..writeln(
+        HelpRenderer(
+          completions.isEmpty ? _catalog : _narrowedTo(completions),
+        ).renderCatalog(),
+      );
     return ExitCode.invalidUsage;
+  }
+
+  /// Every registered route that continues [attempted].
+  ///
+  /// Matched on the route **without positional placeholders**, so `records`
+  /// finds `records show <id>`; and with a trailing space, so a prefix has to
+  /// end on a segment boundary — `mat` does not complete into `math add`.
+  List<CommandContract> _completionsOf(String attempted) {
+    if (attempted.isEmpty) return const [];
+    return _catalog.commands
+        .where((contract) => contract.name.startsWith('$attempted '))
+        .toList();
+  }
+
+  CommandCatalog _narrowedTo(List<CommandContract> contracts) {
+    final narrowed = CommandCatalog();
+    for (final contract in contracts) {
+      narrowed.register(contract);
+    }
+    return narrowed;
   }
 
   /// Print the help listing for all registered modules and commands.
