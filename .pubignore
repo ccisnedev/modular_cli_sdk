@@ -1,0 +1,34 @@
+# What does not travel inside the published package.
+#
+# CAREFUL: when this file exists, pub stops consulting .gitignore entirely.
+# Everything that should stay out of the archive has to be named here, even if
+# .gitignore already excludes it from the repository.
+
+# Hand-written documentation. It stays versioned in the repository — it just
+# does not need to ride inside the archive: pub.dev renders README.md and
+# CHANGELOG.md, generates its own API reference, and rewrites the README's
+# relative links against the repository, so these files are reachable from the
+# package page without being in it.
+#
+# Excluding it also settles `dart pub publish`'s objection to the plural name:
+# the Pub layout convention wants a singular `doc/`, and `doc/` here is left to
+# what `dart doc` generates, which must not be under source control.
+docs/
+
+# Generated API documentation.
+doc/
+
+# Working notes, cycle state and local workspaces.
+.dev/
+.inquiry/
+cleanrooms/
+.macss/
+
+# Build and tooling output.
+.dart_tool/
+.packages
+build/
+pubspec.lock
+
+# CI configuration is for this repository, not for consumers of the package.
+.github/

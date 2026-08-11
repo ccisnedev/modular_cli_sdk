@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.3.5
+
+### Fixed
+
+- **The documentation no longer teaches a way of running that answers wrongly.** A compiled Dart CLI resolves `Platform.resolvedExecutable` to itself, so whatever it locates beside its own executable is found where it was installed. Run the same code through `dart run` and that path is the *Dart* binary: the CLI looks inside the Dart SDK, finds nothing, and reports a broken installation that is not broken. Nothing here said so, and `## Compile to executable` sent the binary to `build/` with nothing next to it — a layout in which the failure is guaranteed. It now teaches the layout an installed CLI has, the binary in `bin/` with `assets/` beside it
+
+  The Quick start is deliberately unchanged. `dart run` is genuinely equivalent for a CLI that locates nothing beside itself, and forbidding it would be stricter than the truth. The limit is taught by demonstration instead
+
+- **The roadmap said things that were not true.** It announced v0.2.0 and v0.3.0 as planned with the package already at 0.3.4, and promised a `Flag` class where `CliParam` was built, plus `CliConfig`, profiles and `cli context set` — none of which exist. It now names what shipped, and what is merely being considered carries no version number, because attaching one to something unbuilt is how it went wrong
+
+- **The architecture document never mentioned root commands**, which shipped in 0.2.0 and which the README lists as a feature
+
+### Added
+
+- **`example/beside_executable.dart`** — a CLI that reads an asset from beside its own executable, so the failure above is reproducible in this repository rather than described in it. Built into `bin/` with `assets/` alongside, it answers; run from source it names the cause instead of blaming the installation
+- **`test/running_from_source_test.dart`** — pins three facts: the Quick start's CLI answers the same either way, the second example answers differently, and the outputs printed in the README are the ones the commands produce. It compiles executables and is slower than the rest of the suite together
+- **Continuous integration**, which this repository had never had — `ubuntu-latest` and `windows-latest`, mirroring `macss`. Nothing here had previously been demonstrated outside Windows
+
+### Removed
+
+- **`AGENTS.md`.** It restated the README in its own words and drifted from it. The three conventions that lived only there were carried into `docs/architecture.md` first
+- **`doc/`** as a home for hand-written documentation. It is git-ignored and left to what `dart doc` generates, which the Dart package layout convention says does not belong under source control. Everything written by hand is in **`docs/`**, which is now versioned — it never had a file tracked in it before
+- The pinned `modular_cli_sdk: ^0.3.0` snippet from `## Installation`, which was two releases stale, and a duplicated `dart pub add` line beside it
+
+### Notes
+
+- **No public API changed.** `git diff` over `lib/` for this release is empty; this is documentation, examples, tests and CI. That is why it is a PATCH
+
 ## 0.3.4
 
 ### Fixed

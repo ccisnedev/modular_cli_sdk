@@ -1,0 +1,43 @@
+name: CI
+
+# Mirrors macss/.github/workflows/ci.yml, minus the path filter and
+# working-directory that exist there because macss is a monorepo.
+#
+# Two systems rather than three: macOS is deferred by decision, recorded with
+# the specification for issue #15. The ecosystem's own precedent does not cover
+# it either.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: dart pub get
+        run: dart pub get
+
+      - name: dart analyze
+        run: dart analyze --fatal-infos
+
+      # Includes test/running_from_source_test.dart, which compiles executables
+      # and is therefore slower than the rest of the suite put together. It is
+      # what demonstrates, on both systems, that a dev build answers as the
+      # installed CLI does and running from source does not.
+      - name: dart test
+        run: dart test
