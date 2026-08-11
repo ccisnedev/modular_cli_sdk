@@ -191,16 +191,10 @@ A `help` command you register yourself always wins over the built-in one.
 dart pub add modular_cli_sdk
 ```
 
-Or add it manually to `pubspec.yaml`:
-
-```yaml
-dependencies:
-  modular_cli_sdk: ^0.3.0
-```
-
-```bash
-dart pub add modular_cli_sdk
-```
+That resolves the most recent release and writes the constraint for you. This
+README deliberately does not print a version to copy into `pubspec.yaml`: a
+number written here is one nobody updates, and it was already two releases stale
+before anybody noticed.
 
 ---
 
@@ -253,9 +247,10 @@ ModularCli → Module → Command → Business Logic → Output → formatted te
 ## Documentation
 
 - [API reference](https://pub.dev/documentation/modular_cli_sdk/latest/) — generated dartdoc on pub.dev
-- [doc/architecture.md](doc/architecture.md) — architecture overview and symmetry with modular_api
-- [doc/roadmap.md](doc/roadmap.md) — planned features for upcoming releases
-- [AGENTS.md](AGENTS.md) — framework guide (AI-optimized)
+- [docs/architecture.md](docs/architecture.md) — the stack, the command lifecycle, the conventions, and the symmetry with modular_api
+- [docs/roadmap.md](docs/roadmap.md) — what has shipped, and what is being considered
+- [docs/adr/](docs/adr/) — architecture decision records
+- [CHANGELOG.md](CHANGELOG.md) — the record of every release
 
 ---
 

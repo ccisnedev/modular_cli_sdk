@@ -2,7 +2,22 @@
 .packages
 build/
 pubspec.lock
+
+# Generated API documentation. `dart doc` writes here by default, and the Dart
+# package layout convention is explicit that generated docs do not belong under
+# source control. Hand-written documentation lives in docs/ instead — this
+# directory holds nothing anybody wrote.
+doc/
+
 # Inquiry — local workspace & cycle state
 .inquiry/
 cleanrooms/
+
+# Working notes and runbooks. Records of how work was done, not instructions
+# anybody follows; they were versioned once and had drifted into naming files
+# that no longer exist.
+.dev/
+
+# The requisitions themselves. The published GitHub issue is the artifact of
+# record — these are working copies of it.
 docs/requisitions/
