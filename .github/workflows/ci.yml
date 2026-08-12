@@ -22,8 +22,24 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
 
+    defaults:
+      run:
+        working-directory: modular_cli_sdk
+
     steps:
+      # Checked out into a named directory so that preview_executor can sit
+      # beside it, which is where pubspec.yaml's dependency_overrides looks.
       - uses: actions/checkout@v4
+        with:
+          path: modular_cli_sdk
+
+      # The engine is not on pub.dev yet, so it is resolved from source. This
+      # step and the override in pubspec.yaml go together, and both go away the
+      # day preview_executor is published.
+      - uses: actions/checkout@v4
+        with:
+          repository: ccisnedev/preview_executor
+          path: preview_executor
 
       - uses: dart-lang/setup-dart@v1
         with:
