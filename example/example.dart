@@ -12,6 +12,13 @@
 ///   dart run example/example.dart math add --a 3 --b 7
 ///   dart run example/example.dart math add --a 3 --b 7 --json
 ///   dart run example/example.dart math multiply --a 4 --b 5 --json
+///
+/// Everything above reads. The one route that writes is told which of the two
+/// it is doing, and refuses to guess:
+///
+///   dart run example/example.dart notes write today --plan
+///   dart run example/example.dart notes write today --apply --autoapprove
+///   dart run example/example.dart notes write today --plan --json
 library;
 
 import 'dart:io';
@@ -22,6 +29,7 @@ import 'commands/status.dart';
 import 'commands/version.dart';
 import 'modules/greetings/greetings_builder.dart';
 import 'modules/math/math_builder.dart';
+import 'modules/notes/notes_builder.dart';
 
 // ─── CLI ─────────────────────────────────────────────────────────────────────
 
@@ -34,27 +42,33 @@ Future<int> runExample(
   List<String> args, {
   IOSink? stdout,
   IOSink? stderr,
+  Approver? approver,
+  PlanSink? planSink,
 }) async {
-  final cli = ModularCli();
+  // [approver] and [planSink] are the two decisions the SDK leaves to the host:
+  // how an approval is taken, and whether a plan is kept on disk. Passing them
+  // in is also what lets the suite exercise `--apply` without a terminal.
+  final cli = ModularCli(approver: approver, planSink: planSink);
 
   // The root command — what the bare invocation runs. Registering it means this
   // CLI, not the help, owns the empty invocation.
-  cli.command<StatusInput, StatusOutput>(
+  cli.query<StatusInput, StatusOutput>(
     '',
-    (req) => StatusCommand(StatusInput.fromCliRequest(req)),
+    (req) => StatusQuery(StatusInput.fromCliRequest(req)),
     description: 'Show the CLI status',
   );
 
   // Root-level commands
-  cli.command<VersionInput, VersionOutput>(
+  cli.query<VersionInput, VersionOutput>(
     'version',
-    (req) => VersionCommand(VersionInput.fromCliRequest(req)),
+    (req) => VersionQuery(VersionInput.fromCliRequest(req)),
     description: 'Print application version',
   );
 
   // Module-scoped commands
   cli.module('greetings', buildGreetingsModule);
   cli.module('math', buildMathModule);
+  cli.module('notes', buildNotesModule);
 
   return cli.run(args, stdout: stdout, stderr: stderr);
 }

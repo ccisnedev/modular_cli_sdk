@@ -43,10 +43,10 @@ class HelloOutput extends Output {
 
 // ─── Command ────────────────────────────────────────────────────────────────
 
-class HelloCommand implements Command<HelloInput, HelloOutput> {
+class HelloQuery implements Query<HelloInput, HelloOutput> {
   @override
   final HelloInput input;
-  HelloCommand(this.input);
+  HelloQuery(this.input);
 
   @override
   String? validate() => null;

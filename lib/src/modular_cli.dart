@@ -2,6 +2,7 @@ import 'dart:io' as io;
 
 import 'package:cli_router/cli_router.dart';
 
+import 'approver.dart';
 import 'cli_param.dart';
 import 'command.dart';
 import 'command_catalog.dart';
@@ -11,78 +12,95 @@ import 'help_renderer.dart';
 import 'input.dart';
 import 'module_builder.dart';
 import 'output.dart';
+import 'plan.dart';
+import 'query.dart';
 
 /// Entry point for a modular CLI application.
 ///
 /// Analogous to `ModularApi` in modular_api — orchestrates modules, applies
 /// middleware, handles global flags (`--json`, `--quiet`), and dispatches
-/// commands via `cli_router`.
+/// through `cli_router`.
+///
+/// Routes are registered as one of two kinds, and the kind decides what the
+/// framework does with them: a [Query] reads and is refused `--plan` and
+/// `--apply`; a [Command] changes something and is given both, plus the
+/// approval that sits between them.
 ///
 /// ```dart
 /// final cli = ModularCli();
 ///
-/// // Root-level commands (no module prefix)
-/// cli.command<VersionInput, VersionOutput>(
+/// cli.query<VersionInput, VersionOutput>(
 ///   'version',
-///   (req) => VersionCommand(VersionInput.fromCliRequest(req)),
+///   (req) => VersionQuery(VersionInput.fromCliRequest(req)),
 ///   description: 'Print version info',
 /// );
 ///
-/// // Module-scoped commands
-/// cli.module('greetings', (m) {
-///   m.command('hello', (req) => GreetCommand(GreetInput.fromCliRequest(req)),
-///     description: 'Say hello');
+/// cli.module('requisition', (m) {
+///   m.query('list', (req) => ListRequisitions(...), description: '…');
+///   m.command('new <slug>', (req) => OpenRequisition(...), description: '…');
 /// });
 ///
 /// final exitCode = await cli.run(args);
 /// ```
 class ModularCli {
-  ModularCli();
+  /// [approver] decides whether a plan shown by `--apply` may be carried out.
+  /// Defaults to asking on the terminal, and refusing rather than hanging when
+  /// there is no terminal to ask.
+  ///
+  /// [planSink] files the plan that `--plan` produces, and returns where it put
+  /// it. Defaults to filing it nowhere: the plan is printed, and whether a
+  /// project keeps plans on disk is that project's decision, not this SDK's.
+  ModularCli({Approver? approver, PlanSink? planSink})
+    : _approver = approver,
+      _planSink = planSink;
+
+  final Approver? _approver;
+  final PlanSink? _planSink;
 
   late final CliRouter _root = CliRouter(onNotFound: _reportUnknownCommand);
   final CommandCatalog _catalog = CommandCatalog();
 
-  /// Every registered command with its declared contract — the single source
-  /// help is rendered from.
+  /// Every registered route with its declared contract — the single source help
+  /// is rendered from.
   CommandCatalog get catalog => _catalog;
 
-  /// Register a named module with its commands.
+  /// Register a named module with its routes.
   ///
-  /// [name] becomes the first segment of the command: `name subcommand`.
-  /// [build] receives a [ModuleBuilder] for registering commands.
+  /// [name] becomes the first segment: `name subcommand`.
   ModularCli module(String name, void Function(ModuleBuilder) build) {
     final moduleRouter = CliRouter();
-    final builder = ModuleBuilder(
-      moduleName: name,
-      router: moduleRouter,
-      catalog: _catalog,
-    );
-    build(builder);
+    build(_builderFor(name, moduleRouter));
     _root.mount(name, moduleRouter);
     return this;
   }
 
-  /// Register a root-level command (no module prefix).
+  /// Register a root-level [Query] (no module prefix).
+  ModularCli query<I extends Input, O extends Output>(
+    String route,
+    Query<I, O> Function(CliRequest req) queryFactory, {
+    String? description,
+    List<CliParam>? params,
+  }) {
+    _builderFor('', _root).query<I, O>(
+      route,
+      queryFactory,
+      description: description,
+      params: params,
+    );
+    return this;
+  }
+
+  /// Register a root-level [Command] (no module prefix).
   ///
-  /// [route] becomes a top-level segment: `route [--flags]`.
-  /// The command passes through the full [Command] lifecycle:
-  /// input → validate → execute → format via [CliOutput].
-  ///
-  /// Root commands have dispatch priority over mounted modules
-  /// (inherent to `cli_router`'s two-phase dispatch).
+  /// Root routes have dispatch priority over mounted modules (inherent to
+  /// `cli_router`'s two-phase dispatch).
   ModularCli command<I extends Input, O extends Output>(
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
     String? description,
     List<CliParam>? params,
   }) {
-    // Reuse ModuleBuilder lifecycle — moduleName is unused at runtime.
-    final builder = ModuleBuilder(
-      moduleName: '',
-      router: _root,
-      catalog: _catalog,
-    );
-    builder.command<I, O>(
+    _builderFor('', _root).command<I, O>(
       route,
       commandFactory,
       description: description,
@@ -91,10 +109,18 @@ class ModularCli {
     return this;
   }
 
+  ModuleBuilder _builderFor(String name, CliRouter router) => ModuleBuilder(
+    moduleName: name,
+    router: router,
+    catalog: _catalog,
+    approver: _approver,
+    planSink: _planSink,
+  );
+
   /// Add a shelf-like middleware to the root router.
   ///
-  /// Middlewares are applied in registration order and wrap all commands
-  /// across all modules.
+  /// Middlewares are applied in registration order and wrap all routes across
+  /// all modules.
   ModularCli use(CliMiddleware middleware) {
     _root.use(middleware);
     return this;
@@ -110,12 +136,14 @@ class ModularCli {
 
   /// Help must be reachable out of the box — unless the developer wrote their
   /// own `help`, in which case theirs is the CLI's help, everywhere.
+  ///
+  /// It is a query: it reads the catalog and answers.
   void _registerHelpCommand() {
     if (_catalog.forRoute('help') != null) return;
 
-    command<HelpInput, HelpOutput>(
+    query<HelpInput, HelpOutput>(
       'help',
-      (req) => HelpCommand(HelpInput(_catalog, focus: req.positionals)),
+      (req) => HelpQuery(HelpInput(_catalog, focus: req.positionals)),
       description: 'Show the commands this CLI accepts',
     );
   }
@@ -187,9 +215,11 @@ class ModularCli {
     // new shape keeps "the renderer is the only place help text is produced"
     // true, and adds nothing to the package's public surface.
     notFound.stderr
-      ..writeln(completions.isEmpty
-          ? "Error: unknown command '$attempted'."
-          : "Error: '$attempted' is not a complete command.")
+      ..writeln(
+        completions.isEmpty
+            ? "Error: unknown command '$attempted'."
+            : "Error: '$attempted' is not a complete command.",
+      )
       ..writeln()
       ..writeln(
         HelpRenderer(
@@ -219,7 +249,7 @@ class ModularCli {
     return narrowed;
   }
 
-  /// Print the help listing for all registered modules and commands.
+  /// Print the help listing for all registered modules and routes.
   void printHelp(io.IOSink sink, {String? title}) {
     _root.printHelp(sink, title: title);
   }

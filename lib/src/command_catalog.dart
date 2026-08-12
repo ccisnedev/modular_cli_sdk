@@ -1,11 +1,26 @@
 import 'cli_param.dart';
 
+/// Which of the two kinds of unit a route was registered as.
+///
+/// Not an annotation on a command but a consequence of how it was registered,
+/// and of which contract it implements. A [CommandKind.query] has no preview
+/// because it has nothing to preview, which is why `--plan` and `--apply` are
+/// rejected on one without any command author writing a line.
+enum CommandKind {
+  /// Reads and answers. Changes nothing.
+  query,
+
+  /// Changes something, through steps that say what they would do first.
+  command,
+}
+
 /// The declared contract of one registered command.
 class CommandContract {
   CommandContract({
     required this.route,
     required this.module,
     required this.params,
+    this.kind = CommandKind.command,
     this.description,
   });
 
@@ -20,6 +35,10 @@ class CommandContract {
 
   /// Module the command belongs to; empty for a root command.
   final String module;
+
+  /// Whether this route reads or changes. Published in help so a reader — a
+  /// person or an agent — can tell the two apart without running either.
+  final CommandKind kind;
 
   final String? description;
 
@@ -47,6 +66,7 @@ class CommandContract {
 
   Map<String, dynamic> toJson() => {
     'route': route,
+    'kind': kind.name,
     if (module.isNotEmpty) 'module': module,
     if (description != null) 'description': description,
     'params': (params ?? const []).map((p) => p.toJson()).toList(),
@@ -85,6 +105,17 @@ class CommandCatalog {
   /// Every command registered under a module.
   List<CommandContract> forModule(String module) =>
       _contracts.where((c) => c.module == module).toList();
+
+  /// Every registered route of one kind.
+  List<CommandContract> ofKind(CommandKind kind) =>
+      _contracts.where((c) => c.kind == kind).toList();
+
+  /// Whether both kinds are registered. Help lists them apart only then — a CLI
+  /// that is all one kind has nothing to tell apart, and two headings over one
+  /// list would be noise.
+  bool get hasBothKinds =>
+      _contracts.any((c) => c.kind == CommandKind.query) &&
+      _contracts.any((c) => c.kind == CommandKind.command);
 
   bool get isEmpty => _contracts.isEmpty;
 }

@@ -4,16 +4,16 @@ import 'commands/add.dart';
 import 'commands/multiply.dart';
 
 void buildMathModule(ModuleBuilder m) {
-  m.command<AddInput, AddOutput>(
+  m.query<AddInput, AddOutput>(
     'add',
-    (req) => AddCommand(AddInput.fromCliRequest(req)),
+    (req) => AddQuery(AddInput.fromCliRequest(req)),
     description: 'Add two numbers',
     params: AddInput.params,
   );
 
-  m.command<AddInput, AddOutput>(
+  m.query<AddInput, AddOutput>(
     'multiply',
-    (req) => MultiplyCommand(AddInput.fromCliRequest(req)),
+    (req) => MultiplyQuery(AddInput.fromCliRequest(req)),
     description: 'Multiply two numbers',
     params: AddInput.params,
   );
