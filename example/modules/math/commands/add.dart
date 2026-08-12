@@ -51,10 +51,10 @@ class AddOutput extends Output {
 
 // ─── Command ────────────────────────────────────────────────────────────────
 
-class AddCommand implements Command<AddInput, AddOutput> {
+class AddQuery implements Query<AddInput, AddOutput> {
   @override
   final AddInput input;
-  AddCommand(this.input);
+  AddQuery(this.input);
 
   @override
   String? validate() => null;

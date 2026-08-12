@@ -38,7 +38,7 @@ class _SumOutput extends Output {
   int get exitCode => ExitCode.ok;
 }
 
-class _AddCommand implements Command<_AddInput, _SumOutput> {
+class _AddCommand implements Query<_AddInput, _SumOutput> {
   @override
   final _AddInput input;
   _AddCommand(this.input);
@@ -85,7 +85,7 @@ class _GreetOutput extends Output {
   int get exitCode => ExitCode.ok;
 }
 
-class _GreetCommand implements Command<_GreetInput, _GreetOutput> {
+class _GreetCommand implements Query<_GreetInput, _GreetOutput> {
   @override
   final _GreetInput input;
   _GreetCommand(this.input);
@@ -122,7 +122,7 @@ class _ShowInput extends Input {
   Map<String, dynamic> toJson() => {'id': id};
 }
 
-class _ShowCommand implements Command<_ShowInput, _SumOutput> {
+class _ShowCommand implements Query<_ShowInput, _SumOutput> {
   @override
   final _ShowInput input;
   _ShowCommand(this.input);
@@ -147,7 +147,7 @@ class _LegacyInput extends Input {
   Map<String, dynamic> toJson() => {'a': a};
 }
 
-class _LegacyCommand implements Command<_LegacyInput, _SumOutput> {
+class _LegacyCommand implements Query<_LegacyInput, _SumOutput> {
   @override
   final _LegacyInput input;
   _LegacyCommand(this.input);
@@ -179,7 +179,7 @@ class _InitInput extends Input {
   Map<String, dynamic> toJson() => {};
 }
 
-class _InitCommand implements Command<_InitInput, _SumOutput> {
+class _InitCommand implements Query<_InitInput, _SumOutput> {
   @override
   final _InitInput input;
   _InitCommand(this.input);
@@ -194,35 +194,35 @@ class _InitCommand implements Command<_InitInput, _SumOutput> {
 ModularCli _buildCli() {
   final cli = ModularCli();
 
-  cli.command<_InitInput, _SumOutput>(
+  cli.query<_InitInput, _SumOutput>(
     'init',
     (req) => _InitCommand(_InitInput.fromCliRequest(req)),
     description: 'Takes no options',
     params: _InitInput.params,
   );
 
-  cli.command<_GreetInput, _GreetOutput>(
+  cli.query<_GreetInput, _GreetOutput>(
     'greet',
     (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
     description: 'Greet someone',
     params: _GreetInput.params,
   );
 
-  cli.command<_ShowInput, _SumOutput>(
+  cli.query<_ShowInput, _SumOutput>(
     'show <id>',
     (req) => _ShowCommand(_ShowInput.fromCliRequest(req)),
     description: 'Show a record',
     params: _ShowInput.params,
   );
 
-  cli.command<_LegacyInput, _SumOutput>(
+  cli.query<_LegacyInput, _SumOutput>(
     'legacy',
     (req) => _LegacyCommand(_LegacyInput.fromCliRequest(req)),
     description: 'Declares no contract',
   );
 
   cli.module('math', (m) {
-    m.command<_AddInput, _SumOutput>(
+    m.query<_AddInput, _SumOutput>(
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
       description: 'Add two numbers',

@@ -53,6 +53,105 @@ void main() {
         expect(out.toString(), contains('math add'));
       });
     });
+
+    // The example's one writing route. Everything else in it reads, so without
+    // this nothing here would exercise the half of the SDK that changes things.
+    group('notes write', () {
+      late Directory workspace;
+      late String dir;
+
+      setUp(() {
+        workspace =
+            Directory.systemTemp.createTempSync('modular_cli_sdk_example_');
+        dir = '${workspace.path}/notes';
+      });
+      tearDown(() => workspace.deleteSync(recursive: true));
+
+      test('refuses to guess between planning and applying', () async {
+        final err = _Sink();
+        final code = await runExample(
+          ['notes', 'write', 'today', '--dir', dir],
+          stderr: err,
+        );
+
+        expect(code, 7);
+        expect(err.toString(), contains('Choose --plan or --apply'));
+        expect(Directory(dir).existsSync(), isFalse);
+      });
+
+      test('--plan says what it would write and writes nothing', () async {
+        final out = _Sink();
+        final code = await runExample(
+          ['notes', 'write', 'today', '--dir', dir, '--plan'],
+          stdout: out,
+        );
+
+        expect(code, 0);
+        expect(out.toString(), contains('create'));
+        expect(out.toString(), contains('today.md'));
+        expect(Directory(dir).existsSync(), isFalse);
+      });
+
+      test('--apply shows the same plan to the approver', () async {
+        String? shown;
+        await runExample(
+          ['notes', 'write', 'today', '--dir', dir, '--apply'],
+          stdout: _Sink(),
+          approver: (plan) async {
+            shown = plan;
+            return false;
+          },
+        );
+
+        expect(shown, contains('today.md'));
+      });
+
+      test('--apply writes nothing when approval is refused', () async {
+        final code = await runExample(
+          ['notes', 'write', 'today', '--dir', dir, '--apply'],
+          stdout: _Sink(),
+          approver: (_) async => false,
+        );
+
+        expect(code, isNot(0));
+        expect(Directory(dir).existsSync(), isFalse);
+      });
+
+      test('--apply --autoapprove writes the note', () async {
+        final code = await runExample([
+          'notes',
+          'write',
+          'today',
+          '--dir',
+          dir,
+          '--apply',
+          '--autoapprove',
+        ], stdout: _Sink());
+
+        expect(code, 0);
+        expect(File('$dir/today.md').existsSync(), isTrue);
+      });
+
+      test('run twice, it keeps what is there and says so', () async {
+        final args = [
+          'notes',
+          'write',
+          'today',
+          '--dir',
+          dir,
+          '--apply',
+          '--autoapprove',
+        ];
+        await runExample(args, stdout: _Sink());
+
+        final out = _Sink();
+        final code = await runExample(args, stdout: out);
+
+        expect(code, 0);
+        expect(out.toString(), contains('kept'));
+        expect(out.toString(), isNot(contains('written')));
+      });
+    });
   });
 }
 

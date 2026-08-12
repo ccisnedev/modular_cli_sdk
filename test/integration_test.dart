@@ -29,7 +29,7 @@ class _GreetOutput extends Output {
   int get exitCode => ExitCode.ok;
 }
 
-class _GreetCommand implements Command<_GreetInput, _GreetOutput> {
+class _GreetCommand implements Query<_GreetInput, _GreetOutput> {
   @override
   final _GreetInput input;
   _GreetCommand(this.input);
@@ -64,7 +64,7 @@ class _EchoOutput extends Output {
   int get exitCode => ExitCode.ok;
 }
 
-class _ValidatingCommand implements Command<_RequiredInput, _EchoOutput> {
+class _ValidatingCommand implements Query<_RequiredInput, _EchoOutput> {
   @override
   final _RequiredInput input;
   _ValidatingCommand(this.input);
@@ -76,7 +76,7 @@ class _ValidatingCommand implements Command<_RequiredInput, _EchoOutput> {
   Future<_EchoOutput> execute() async => _EchoOutput(echo: input.value);
 }
 
-class _FailingCommand implements Command<_GreetInput, _GreetOutput> {
+class _FailingCommand implements Query<_GreetInput, _GreetOutput> {
   @override
   final _GreetInput input;
   _FailingCommand(this.input);
@@ -141,12 +141,12 @@ ModularCli _buildTestCli() {
   final cli = ModularCli();
 
   cli.module('greetings', (m) {
-    m.command<_GreetInput, _GreetOutput>(
+    m.query<_GreetInput, _GreetOutput>(
       'hello',
       (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
       description: 'Say hello',
     );
-    m.command<_GreetInput, _GreetOutput>(
+    m.query<_GreetInput, _GreetOutput>(
       'fail',
       (req) => _FailingCommand(_GreetInput.fromCliRequest(req)),
       description: 'Always fails',
@@ -154,7 +154,7 @@ ModularCli _buildTestCli() {
   });
 
   cli.module('utils', (m) {
-    m.command<_RequiredInput, _EchoOutput>(
+    m.query<_RequiredInput, _EchoOutput>(
       'echo',
       (req) => _ValidatingCommand(_RequiredInput.fromCliRequest(req)),
       description: 'Echo a value',
@@ -304,7 +304,7 @@ void main() {
       );
 
       cli.module('test', (m) {
-        m.command<_GreetInput, _GreetOutput>(
+        m.query<_GreetInput, _GreetOutput>(
           'cmd',
           (req) => _GreetCommand(_GreetInput(name: 'MW')),
           description: 'Test middleware order',
@@ -323,20 +323,20 @@ void main() {
     ModularCli buildRootTestCli() {
       final cli = ModularCli();
 
-      cli.command<_GreetInput, _GreetOutput>(
+      cli.query<_GreetInput, _GreetOutput>(
         'ping',
         (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
         description: 'Root-level ping',
       );
 
-      cli.command<_RequiredInput, _EchoOutput>(
+      cli.query<_RequiredInput, _EchoOutput>(
         'validate-me',
         (req) => _ValidatingCommand(_RequiredInput.fromCliRequest(req)),
         description: 'Root command with validation',
       );
 
       cli.module('greetings', (m) {
-        m.command<_GreetInput, _GreetOutput>(
+        m.query<_GreetInput, _GreetOutput>(
           'hello',
           (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
           description: 'Say hello (module)',

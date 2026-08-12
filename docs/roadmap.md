@@ -22,6 +22,8 @@ exists on pub.dev.
 | **0.3.2** | An empty contract is a declaration, not an absence |
 | **0.3.3** | A command with positionals can be asked for its contract |
 | **0.3.4** | An incomplete invocation is not an unknown command |
+| **0.3.5** | Documentation, examples, tests and CI — no public API changed |
+| **0.4.0** | Queries and commands. `Query<I, O>` reads; `Command<I, O>` changes something through steps that say what they would do first, on [`preview_executor`](https://pub.dev/packages/preview_executor). `--plan` / `--apply` / `--autoapprove` declared and enforced by the framework, with `Approver` and `PlanSink` left to the host. **Breaking**: every previous command is now a query |
 
 ---
 
@@ -55,7 +57,15 @@ CI/CD.
 Generated from the command catalog, which already holds every route and every
 declared parameter — bash, zsh, fish, PowerShell.
 
+### Applying a plan written earlier
+
+`--apply --from-plan <file>`, for the case where CI approves on Monday and acts
+on Tuesday. Today `--plan` writes a report and nothing reads it back, which is
+what makes staleness a non-problem. Honouring a saved plan would reintroduce it,
+so this needs a fingerprint of the previews and an explicit refusal when they no
+longer match — Terraform's "Saved plan is stale", and the reason that error
+exists.
+
 ### Further out
 
-Command aliases; a plugin system for third-party command modules; opt-in
-telemetry hooks.
+Route aliases; a plugin system for third-party modules; opt-in telemetry hooks.

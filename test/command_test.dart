@@ -22,7 +22,7 @@ class _GreetOutput extends Output {
   int get exitCode => ExitCode.ok;
 }
 
-class _ValidGreetCommand implements Command<_GreetInput, _GreetOutput> {
+class _ValidGreetCommand implements Query<_GreetInput, _GreetOutput> {
   @override
   final _GreetInput input;
   _ValidGreetCommand(this.input);
@@ -35,7 +35,7 @@ class _ValidGreetCommand implements Command<_GreetInput, _GreetOutput> {
       _GreetOutput(greeting: 'Hello, ${input.name}!');
 }
 
-class _InvalidGreetCommand implements Command<_GreetInput, _GreetOutput> {
+class _InvalidGreetCommand implements Query<_GreetInput, _GreetOutput> {
   @override
   final _GreetInput input;
   _InvalidGreetCommand(this.input);
@@ -48,7 +48,7 @@ class _InvalidGreetCommand implements Command<_GreetInput, _GreetOutput> {
       _GreetOutput(greeting: 'Hello, ${input.name}!');
 }
 
-class _FailingCommand implements Command<_GreetInput, _GreetOutput> {
+class _FailingCommand implements Query<_GreetInput, _GreetOutput> {
   @override
   final _GreetInput input;
   _FailingCommand(this.input);

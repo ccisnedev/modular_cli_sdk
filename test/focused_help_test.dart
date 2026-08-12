@@ -41,7 +41,7 @@ class _SumOutput extends Output {
   int get exitCode => ExitCode.ok;
 }
 
-class _AddCommand implements Command<_AddInput, _SumOutput> {
+class _AddCommand implements Query<_AddInput, _SumOutput> {
   @override
   final _AddInput input;
   _AddCommand(this.input);
@@ -75,7 +75,7 @@ class _ShowInput extends Input {
   Map<String, dynamic> toJson() => {'id': id};
 }
 
-class _ShowCommand implements Command<_ShowInput, _SumOutput> {
+class _ShowCommand implements Query<_ShowInput, _SumOutput> {
   @override
   final _ShowInput input;
   _ShowCommand(this.input);
@@ -90,7 +90,7 @@ class _ShowCommand implements Command<_ShowInput, _SumOutput> {
 ModularCli _buildCli() {
   final cli = ModularCli();
 
-  cli.command<_ShowInput, _SumOutput>(
+  cli.query<_ShowInput, _SumOutput>(
     'show <id>',
     (req) => _ShowCommand(_ShowInput.fromCliRequest(req)),
     description: 'Show a record',
@@ -98,13 +98,13 @@ ModularCli _buildCli() {
   );
 
   cli.module('math', (m) {
-    m.command<_AddInput, _SumOutput>(
+    m.query<_AddInput, _SumOutput>(
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
       description: 'Add two numbers',
       params: _AddInput.params,
     );
-    m.command<_AddInput, _SumOutput>(
+    m.query<_AddInput, _SumOutput>(
       'multiply',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
       description: 'Multiply two numbers',
