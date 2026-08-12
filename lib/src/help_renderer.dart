@@ -12,9 +12,28 @@ class HelpRenderer {
 
   final CommandCatalog catalog;
 
-  /// Every registered command with its description, plus the global options.
+  /// Every registered route with its description, plus the global options.
+  ///
+  /// When the CLI has both kinds, what reads is listed apart from what changes:
+  /// "which of these is safe to just try?" is the first question a person has
+  /// about an unfamiliar CLI, and the listing is where they look for it.
+  ///
+  /// A CLI of a single kind keeps one list. Two headings over one list would be
+  /// noise, and it is the shape of every CLI written before commands existed.
   String renderCatalog() {
-    final lines = <String>['Commands:', ..._commandLines(catalog.commands), ''];
+    final lines = <String>[
+      if (catalog.hasBothKinds) ...[
+        'Queries:',
+        ..._commandLines(catalog.ofKind(CommandKind.query)),
+        '',
+        'Commands:',
+        ..._commandLines(catalog.ofKind(CommandKind.command)),
+      ] else ...[
+        'Commands:',
+        ..._commandLines(catalog.commands),
+      ],
+      '',
+    ];
     lines.addAll(_globalOptionsSection());
     return lines.join('\n');
   }
