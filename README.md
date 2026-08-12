@@ -159,6 +159,32 @@ ModularCli(
 `--apply` re-previews immediately before it acts, so there is no saved plan that
 can go stale. See [ADR 0002](docs/adr/0002-a-command-previews-through-a-separate-method.md).
 
+## Testing a command
+
+A command has no `execute()` to call, so `package:modular_cli_sdk/testing.dart`
+drives one the way the framework does:
+
+```dart
+import 'package:modular_cli_sdk/testing.dart';
+
+final previews = await previewCommand(cmd);   // --plan: nothing is performed
+final execution = await runCommand(cmd);      // --apply --autoapprove
+final output = await applyCommand(cmd);       // …and the Output it describes
+```
+
+`applyCommand` returns the command's own `O`, so a test asserts on its fields
+without casting.
+
+Use these rather than writing your own. Your own would be a second description
+of the same lifecycle with nothing keeping the two in agreement — so the day
+this framework changes, your suite stays green while testing a flow your CLI no
+longer takes.
+
+`PreviewExecutor` is exported from here and deliberately **not** from
+`modular_cli_sdk.dart`: production code that could reach it could run steps with
+no plan shown, no approval taken, and no check that what happened is what was
+announced.
+
 > The commands above are **illustrative** — they show how you would run *your*
 > CLI, whose entry point is `bin/main.dart`. The runnable equivalents in this
 > repository live under `example/`, e.g. `dart run example/example.dart version`.
