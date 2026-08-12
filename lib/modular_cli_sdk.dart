@@ -17,6 +17,18 @@
 /// `Step`, `Preview`, `Outcome` and `Execution` come from
 /// [preview_executor](https://pub.dev/packages/preview_executor) and are
 /// re-exported here, so a command author imports one package.
+///
+/// **`PreviewExecutor` is deliberately not among them.** The engine publishes
+/// it because the engine's consumer is a framework, and running steps is what
+/// a framework does with it. This library's consumer is a command author, and
+/// for them the same class is a way out of the arrangement: a command that
+/// could reach the executor could run steps with no plan shown, no approval
+/// taken, and no check that what happened is what was announced.
+///
+/// Narrowing the surface for a different audience is what this re-export is
+/// for. Tests are the one place the executor is legitimately needed, and they
+/// get it — along with the lifecycle already assembled — from
+/// `package:modular_cli_sdk/testing.dart`.
 library;
 
 export 'package:preview_executor/preview_executor.dart'

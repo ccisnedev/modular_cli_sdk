@@ -4,6 +4,38 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.4.1
+
+### Added
+
+- **`package:modular_cli_sdk/testing.dart`** — `previewCommand`, `runCommand`
+  and `applyCommand`, which drive one `Command` exactly as `ModuleBuilder`
+  does. A carence found the first time a real CLI was migrated: a command has
+  no `execute()` to call any more, so a test that holds one command has to
+  build its steps and run them — which is what the framework does, and what
+  every host would otherwise hand-roll.
+
+  Hand-rolling it is the hazard. A host's own copy is a second description of
+  the same lifecycle with nothing keeping the two in agreement, so the day the
+  framework changes, that suite stays green while testing a flow the CLI no
+  longer takes. That is the dry-run flag again, in the test suite. Two of the
+  library's own tests pin the agreement: `applyCommand` produces what
+  `--apply --autoapprove` produces, and `previewCommand` produces what `--plan`
+  lists.
+
+  `applyCommand` returns the command's own `O`, not `Output`, so a test asserts
+  on its fields without casting.
+
+### Notes
+
+- **`PreviewExecutor` is still not exported from `modular_cli_sdk.dart`**, and
+  now the library says why. The engine publishes it because the engine's
+  consumer is a framework; this library's consumer is a command author, for
+  whom the same class is a way to run steps with no plan shown, no approval
+  taken and no check that what happened is what was announced. Narrowing the
+  surface for a different audience is what the re-export is for. `testing.dart`
+  exports it, because a test standing in for the framework legitimately needs it
+
 ## 0.4.0
 
 A CLI built on this SDK could not say which of its routes change things, and had
