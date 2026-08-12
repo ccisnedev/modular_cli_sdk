@@ -4,6 +4,69 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.4.0
+
+A CLI built on this SDK could not say which of its routes change things, and had
+no way to show what a change would do before doing it. Both are now the SDK's
+job. See [ADR 0002](docs/adr/0002-a-command-previews-through-a-separate-method.md).
+
+### Added
+
+- **`Query<I, O>`** — a route that reads and answers. `validate()` and
+  `execute()`, which is exactly what `Command` was until now
+- **`Command<I, O>`** — a route that changes something, as an ordered list of
+  steps: `validate()`, `steps()` and `describe(Execution)`. A step states its
+  intention through `preview()` and does its work through `perform()`, and the
+  executor compares the two. The preview is therefore checked rather than
+  trusted, which a dry-run flag threaded through the work can never be
+- **`m.query(...)` / `m.command(...)`**, and the same pair on `ModularCli` for
+  root routes. Which one a route is registered as decides what the framework
+  does with it, so "this changes something" is a fact about the registration
+  rather than a comment in the file
+- **`--plan`, `--apply` and `--autoapprove`**, declared on every command and
+  rejected on every query. Neither of the first two is a default: a bare
+  invocation of a command is an error. `--autoapprove` on its own authorizes
+  nothing and says so
+- **`Approver`** — how an approval is taken, injected on `ModularCli`. The
+  default asks on the terminal and **refuses rather than hangs** when there is
+  no terminal to ask, naming `--autoapprove` as the way through
+- **`PlanSink`** — where a plan is filed, injected on `ModularCli`. Defaults to
+  nowhere: whether a project keeps plans on disk is that project's decision
+- **`PlanOutput` / `DeclinedOutput`** — the framework's own answers for "nothing
+  happened yet" and "you said no", so that no command has to model either
+- **`CommandKind`** on every catalog entry, published by `help --json` as
+  `"kind"`. Text help lists queries apart from commands when a CLI has both, and
+  keeps one list when it does not
+- **`example/modules/notes/`** — the example's first writing route, exercised by
+  the suite through both `--plan` and `--apply`
+
+### Changed
+
+- **BREAKING — `Command` no longer has `execute()`.** Every existing command is
+  what is now a `Query`: change `implements Command<I, O>` to
+  `implements Query<I, O>` and `m.command(...)` to `m.query(...)`. Nothing else
+  about a reading route changes
+- **BREAKING — a command is always enforced.** Omitting `params` no longer
+  leaves it undeclared; it declares that the command takes nothing but the three
+  flags. Queries keep the old behaviour
+- **`HelpCommand` is now `HelpQuery`**, because help changes nothing — which is
+  also why `help --plan` is rejected without that having to be arranged
+- **A step that acted differently from its own preview is reported on stderr**
+  whatever the command chose to say, and does not stop the run: it did do
+  something, and later steps may depend on it. A step that *throws* stops the
+  run and fails the invocation even when the command reported what it managed
+
+### Notes
+
+- **The engine is [`preview_executor`](https://pub.dev/packages/preview_executor)**,
+  a separate package that knows nothing about CLIs. `modular_api` has the same
+  problem from the other end of the wire, so the engine belongs to neither.
+  `Step`, `Preview`, `Outcome` and `Execution` are re-exported here, so a
+  command author still imports one package
+- **`--plan` writes a report, not an executable plan.** `--apply` never reads it
+  and re-previews immediately before acting, so there is no saved plan that can
+  go stale, and none of Terraform's staleness machinery is needed
+
 ## 0.3.5
 
 ### Fixed

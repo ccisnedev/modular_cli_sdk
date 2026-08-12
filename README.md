@@ -3,10 +3,11 @@
 
 # modular_cli_sdk
 
-Command-centric SDK for building modular CLIs with Dart.
-Define `Command` classes (input → validate → execute → output), connect them to CLI routes, and get automatic output formatting with JSON and plain text modes.
+SDK for building modular CLIs with Dart, around two kinds of route:
+a **`Query`** reads and answers; a **`Command`** changes something, and says
+what it would change before anything runs.
 
-> Also see: [modular_api](https://pub.dev/packages/modular_api) — the HTTP counterpart with the same architecture.
+> Also see: [modular_api](https://pub.dev/packages/modular_api) — the HTTP counterpart with the same architecture, and [preview_executor](https://pub.dev/packages/preview_executor) — the engine behind `--plan` / `--apply`.
 
 ---
 
@@ -19,20 +20,28 @@ import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 void main(List<String> args) async {
   final cli = ModularCli();
 
-  // Root-level commands (no module prefix)
-  cli.command<VersionInput, VersionOutput>(
+  // Reads. No --plan, no --apply — it has nothing to plan.
+  cli.query<VersionInput, VersionOutput>(
     'version',
-    (req) => VersionCommand(VersionInput.fromCliRequest(req)),
+    (req) => VersionQuery(VersionInput.fromCliRequest(req)),
     description: 'Print version info',
   );
 
-  // Module-scoped commands, declaring their contract
-  cli.module('greetings', (m) {
-    m.command<HelloInput, HelloOutput>(
-      'hello',
-      (req) => HelloCommand(HelloInput.fromCliRequest(req)),
-      description: 'Say hello to someone',
-      params: HelloInput.params,
+  cli.module('notes', (m) {
+    m.query<ListInput, ListOutput>(
+      'list',
+      (req) => ListNotes(ListInput.fromCliRequest(req)),
+      description: 'List your notes',
+      params: ListInput.params,
+    );
+
+    // Changes something. --plan / --apply / --autoapprove are declared,
+    // enforced and acted on by the SDK; none of it is written here.
+    m.command<WriteInput, WriteOutput>(
+      'write <name>',
+      (req) => WriteNote(WriteInput.fromCliRequest(req)),
+      description: 'Write a note',
+      params: WriteInput.params,
     );
   });
 
@@ -45,17 +54,110 @@ void main(List<String> args) async {
 dart run bin/main.dart version
 # version: 0.2.0
 
-dart run bin/main.dart version --json
-# {"version": "0.2.0"}
+dart run bin/main.dart notes list
+# notes: today, ideas
 
-dart run bin/main.dart greetings hello --name World
-# greeting: Hello, World!
+dart run bin/main.dart notes write today
+# Error: Choose --plan or --apply.
+#   --plan   show what would change; nothing is touched
+#   --apply  show it, ask for approval, then do it
+# exit code 7
 
-dart run bin/main.dart greetings hello --name World --json
-# {"greeting": "Hello, World!"}
+dart run bin/main.dart notes write today --plan
+# Plan — notes write
+#
+#   create   notes
+#   create   notes/today.md  (10 characters)
+#
+# Nothing was changed. Re-run with --apply to carry this out.
 ```
 
-See [`example/`](example/) for a full working example with root commands and two modules (greetings + math).
+See [`example/`](example/) for a full working example: three read-only modules and one that writes.
+
+---
+
+## Queries and commands
+
+A CLI has one transport, so nothing about `argv` tells a reader whether a route
+is safe to try. `modular_api` gets that distinction from *where* a use case is
+published — GraphQL for reads, REST for the rest. Here it is declared, and the
+SDK makes the declaration mean something.
+
+|  | `Query` | `Command` |
+| --- | --- | --- |
+| Contract | `validate()`, `execute()` | `validate()`, `steps()`, `describe()` |
+| `--plan` / `--apply` | rejected | declared and enforced |
+| Listed under | **Queries:** | **Commands:** |
+| `help --json` | `"kind": "query"` | `"kind": "command"` |
+
+They share no method, so neither can be mistaken for the other by accident.
+
+## Commands that say what they would do
+
+A command is an ordered list of steps. Each states its intention through
+`preview()` and does its work through `perform()` — two methods, not one method
+with a dry-run flag, because a flag threaded through the work leaves nothing
+holding the switched-off pass and the real one to the same behaviour.
+
+```dart
+class WriteNote implements Step {
+  WriteNote(this.path, this.contents);
+  final String path;
+  final String contents;
+
+  @override
+  Preview preview() => File(path).existsSync()
+      ? Preview(verb: 'keep', target: path, detail: 'already exists')
+      : Preview(verb: 'create', target: path);
+
+  @override
+  Future<Outcome> perform(StepContext context) async {
+    if (File(path).existsSync()) return Outcome(verb: 'keep', target: path);
+    File(path).writeAsStringSync(contents);
+    return Outcome(verb: 'create', target: path);
+  }
+}
+
+class WriteNoteCommand implements Command<WriteInput, WriteOutput> {
+  @override
+  final WriteInput input;
+  WriteNoteCommand(this.input);
+
+  @override
+  String? validate() => input.name.isEmpty ? 'a <name> is required' : null;
+
+  @override
+  Future<List<Step>> steps() async => [
+    EnsureDirectory(input.directory),
+    WriteNote(input.path, await render(input)),
+  ];
+
+  @override
+  WriteOutput describe(Execution execution) =>
+      WriteOutput(written: execution.outcomes.map((o) => o.target).toList());
+}
+```
+
+Under `--apply` the SDK previews the steps, shows the plan, takes the approval,
+performs them in order, and compares what each step did against what it had
+said. A step that acted differently is reported on stderr whatever the command
+chose to say; a step that threw stops the run and fails the invocation.
+
+Note what `describe` does **not** carry: no `planPath`, no `blocked`, no
+`message`. Those describe the gate, and the gate is the SDK's.
+
+Two decisions stay with the host:
+
+```dart
+ModularCli(
+  approver: (plan) => askOnTheTerminal(plan),   // defaults to stdin
+  planSink: (plan) => filePlanUnder('.myapp/plans', plan),  // defaults to nowhere
+);
+```
+
+`--plan` produces a **report**, not an executable plan. Nothing reads it back:
+`--apply` re-previews immediately before it acts, so there is no saved plan that
+can go stale. See [ADR 0002](docs/adr/0002-a-command-previews-through-a-separate-method.md).
 
 > The commands above are **illustrative** — they show how you would run *your*
 > CLI, whose entry point is `bin/main.dart`. The runnable equivalents in this
@@ -143,8 +245,14 @@ framework enforces before your `Input` reads a flag: it resolves `-n` to
 `--name`, applies the declared default, coerces `--a abc` to a validation error
 instead of a silent `0`, rejects an option nobody declared, and checks
 `allowed` values. Help therefore cannot describe a contract the CLI does not
-actually apply. A command that declares no `params` keeps parsing its arguments
-by hand and is neither described nor enforced.
+actually apply. A **query** that declares no `params` keeps parsing its
+arguments by hand and is neither described nor enforced.
+
+A **command** is always enforced: omitting `params` does not leave it
+undeclared, it declares that the command takes nothing but `--plan`, `--apply`
+and `--autoapprove`. A route that changes something cannot be the one whose
+arguments nobody checks — and the three flags have to be declared to be typed
+at all.
 
 Help is a **success**, not an error:
 
@@ -160,9 +268,10 @@ mycli bogus                # unknown  → error + catalog on stderr, exit 64
 mycli math add --b 7       # rejected → error + that command's usage on stderr, exit 7
 ```
 
-`help --json` is the machine-readable twin of the text help: every command with
-its route, description and parameters (name, aliases, type, required, default,
-allowed), plus the global options.
+`help --json` is the machine-readable twin of the text help: every route with
+its `kind` (`query` or `command`), description and parameters (name, aliases,
+type, required, default, allowed), plus the global options. The `kind` is how an
+agent tells a reader from a writer without running either.
 
 A `help` command you register yourself always wins over the built-in one.
 
@@ -170,13 +279,16 @@ A `help` command you register yourself always wins over the built-in one.
 
 ## Features
 
-- `Command<I, O>` — pure business logic, no I/O concerns
-- `CliParam` — a command's declared contract: renders help *and* enforces parsing
-- Native help — `help`, no args, `--help`/`-h` on stdout with exit 0; `help --json` for machines
-- `Input` / `Output` — typed DTOs for command I/O
+- `Query<I, O>` — reads and answers; pure business logic, no I/O concerns
+- `Command<I, O>` — changes something, as steps that are held to what they said
+- `--plan` / `--apply` / `--autoapprove` — declared, enforced and acted on for every command; neither of the first two is a default
+- `Approver` / `PlanSink` — how approval is taken and where a plan is filed, left to the host
+- `CliParam` — a route's declared contract: renders help *and* enforces parsing
+- Native help — `help`, no args, `--help`/`-h` on stdout with exit 0; `help --json` for machines, with `kind` on every route
+- `Input` / `Output` — typed DTOs for I/O
 - `CommandException` — structured errors with code, message, exit code, and retryable flag
 - `ModularCli` + `ModuleBuilder` — module registration and routing
-- Root commands — register commands without a module prefix via `cli.command()`
+- Root routes — register without a module prefix via `cli.query()` / `cli.command()`
 - `--json` global flag — machine-readable JSON output
 - `--quiet` global flag — suppress informational messages
 - TTY detection — automatic format selection
@@ -235,10 +347,12 @@ cli_router                  — routing engine (routes, GNU flags, middleware)
        ↓
 modular_cli_sdk             — SDK/framework
        ↓
-ModularCli → Module → Command → Business Logic → Output → formatted terminal output
+ModularCli → Module → Query   → Business Logic  → Output → formatted terminal output
+                    → Command → Steps → preview → plan   → approval → perform
 ```
 
-- **Command layer** — pure logic, independent of output format
+- **Query / Command layer** — pure logic, independent of output format
+- **Step layer** — everything a command changes, each piece announced first
 - **Output adapter** — turns Output into JSON or plain text based on flags/TTY
 - **Middleware** — cross-cutting concerns (logging, auth, metrics)
 
