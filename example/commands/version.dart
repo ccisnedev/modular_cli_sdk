@@ -30,10 +30,10 @@ class VersionOutput extends Output {
 // ─── Command ────────────────────────────────────────────────────────────────
 
 /// Reports the application version.
-class VersionCommand implements Command<VersionInput, VersionOutput> {
+class VersionQuery implements Query<VersionInput, VersionOutput> {
   @override
   final VersionInput input;
-  VersionCommand(this.input);
+  VersionQuery(this.input);
 
   @override
   String? validate() => null;

@@ -3,7 +3,7 @@ description: >
   Command-centric SDK for building modular CLIs with Dart —
   Command/Input/Output contract, structured errors, output formatting,
   and automatic TTY detection. Built on cli_router.
-version: 0.3.5
+version: 0.4.0
 
 repository: https://github.com/macss-dev/modular_cli_sdk
 homepage: https://github.com/macss-dev/modular_cli_sdk
@@ -15,10 +15,18 @@ environment:
 
 dependencies:
   cli_router: ^0.1.0
+  preview_executor: ^0.1.0
 
 dev_dependencies:
   lints: ^5.0.0
   test: ^1.24.0
+
+# Local development against the sibling checkout. Overrides apply only to the
+# root package, so this is ignored by anything that depends on this one — but
+# publishing still requires preview_executor to be on pub.dev first.
+dependency_overrides:
+  preview_executor:
+    path: ../preview_executor
 
 topics:
   - cli

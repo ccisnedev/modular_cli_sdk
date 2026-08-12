@@ -74,10 +74,10 @@ class GreetOutput extends Output {
 // ─── Command ─────────────────────────────────────────────────────────────────
 
 /// Reads a greeting from `<root>/assets/greeting.txt`.
-class GreetCommand implements Command<GreetInput, GreetOutput> {
+class GreetQuery implements Query<GreetInput, GreetOutput> {
   @override
   final GreetInput input;
-  GreetCommand(this.input);
+  GreetQuery(this.input);
 
   @override
   String? validate() => null;
@@ -117,9 +117,9 @@ Future<int> runBesideExecutable(
 }) async {
   final cli = ModularCli();
 
-  cli.command<GreetInput, GreetOutput>(
+  cli.query<GreetInput, GreetOutput>(
     'greet',
-    (req) => GreetCommand(GreetInput.fromCliRequest(req)),
+    (req) => GreetQuery(GreetInput.fromCliRequest(req)),
     description: 'Read the greeting shipped beside this executable',
   );
 

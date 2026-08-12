@@ -42,11 +42,11 @@ class StatusOutput extends Output {
 
 // ─── Command ────────────────────────────────────────────────────────────────
 
-class StatusCommand implements Command<StatusInput, StatusOutput> {
+class StatusQuery implements Query<StatusInput, StatusOutput> {
   @override
   final StatusInput input;
 
-  StatusCommand(this.input);
+  StatusQuery(this.input);
 
   @override
   String? validate() => null;

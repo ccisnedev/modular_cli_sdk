@@ -46,7 +46,7 @@ class _SumOutput extends Output {
   int get exitCode => ExitCode.ok;
 }
 
-class _AddCommand implements Command<_AddInput, _SumOutput> {
+class _AddCommand implements Query<_AddInput, _SumOutput> {
   @override
   final _AddInput input;
   _AddCommand(this.input);
@@ -71,7 +71,7 @@ class _VersionOutput extends Output {
   int get exitCode => ExitCode.ok;
 }
 
-class _VersionCommand implements Command<_VersionInput, _VersionOutput> {
+class _VersionCommand implements Query<_VersionInput, _VersionOutput> {
   @override
   final _VersionInput input;
   _VersionCommand(this.input);
@@ -86,14 +86,14 @@ class _VersionCommand implements Command<_VersionInput, _VersionOutput> {
 ModularCli _buildCli() {
   final cli = ModularCli();
 
-  cli.command<_VersionInput, _VersionOutput>(
+  cli.query<_VersionInput, _VersionOutput>(
     'version',
     (req) => _VersionCommand(_VersionInput()),
     description: 'Print application version',
   );
 
   cli.module('math', (m) {
-    m.command<_AddInput, _SumOutput>(
+    m.query<_AddInput, _SumOutput>(
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
       description: 'Add two numbers',
@@ -161,7 +161,7 @@ void main() {
   // real root command (found by integrating this SDK into a CLI that has one).
   group('a registered root route owns the empty invocation', () {
     ModularCli buildCliWithRoot() => _buildCli()
-      ..command<_VersionInput, _VersionOutput>(
+      ..query<_VersionInput, _VersionOutput>(
         '',
         (req) => _VersionCommand(_VersionInput()),
         description: 'Show the dashboard',
@@ -213,7 +213,7 @@ void main() {
       'a help command registered by the developer overrides the auto one',
       () async {
         final cli = ModularCli();
-        cli.command<_VersionInput, _VersionOutput>(
+        cli.query<_VersionInput, _VersionOutput>(
           'help',
           (req) => _VersionCommand(_VersionInput()),
           description: 'My own help',

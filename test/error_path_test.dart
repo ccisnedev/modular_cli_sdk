@@ -46,7 +46,7 @@ class _SumOutput extends Output {
   int get exitCode => ExitCode.ok;
 }
 
-class _AddCommand implements Command<_AddInput, _SumOutput> {
+class _AddCommand implements Query<_AddInput, _SumOutput> {
   @override
   final _AddInput input;
   _AddCommand(this.input);
@@ -61,7 +61,7 @@ class _AddCommand implements Command<_AddInput, _SumOutput> {
 ModularCli _buildCli() {
   final cli = ModularCli();
   cli.module('math', (m) {
-    m.command<_AddInput, _SumOutput>(
+    m.query<_AddInput, _SumOutput>(
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
       description: 'Add two numbers',
@@ -71,7 +71,7 @@ ModularCli _buildCli() {
   // A route of more than one segment inside a module. `api graphql` is then a
   // valid prefix that is not a module — the case a module-only check misses.
   cli.module('api', (m) {
-    m.command<_AddInput, _SumOutput>(
+    m.query<_AddInput, _SumOutput>(
       'graphql compile',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
       description: 'Compile GraphQL artifacts',

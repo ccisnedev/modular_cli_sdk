@@ -1,15 +1,18 @@
-import 'command.dart';
 import 'command_catalog.dart';
 import 'exit_codes.dart';
 import 'global_options.dart';
 import 'help_renderer.dart';
 import 'input.dart';
 import 'output.dart';
+import 'query.dart';
 
-/// Help is a command like any other: it runs the lifecycle, writes to stdout,
-/// and exits 0. Only unknown or invalid usage is a failure.
-class HelpCommand implements Command<HelpInput, HelpOutput> {
-  HelpCommand(this.input);
+/// Help is a query like any other: it reads the catalog, writes to stdout, and
+/// exits 0. Only unknown or invalid usage is a failure.
+///
+/// A query rather than a command because it changes nothing — which is also why
+/// `help --plan` is rejected, without that having to be arranged.
+class HelpQuery implements Query<HelpInput, HelpOutput> {
+  HelpQuery(this.input);
 
   @override
   final HelpInput input;
