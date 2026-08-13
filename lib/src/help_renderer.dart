@@ -66,7 +66,9 @@ class HelpRenderer {
       lines
         ..add('')
         ..add('  ${contract.route}${_descriptionSuffixOf(contract)}');
-      lines.addAll(_paramLines(contract.declaredParams).map((line) => '  $line'));
+      lines.addAll(
+        _paramLines(contract.declaredParams).map((line) => '  $line'),
+      );
     }
     lines
       ..add('')

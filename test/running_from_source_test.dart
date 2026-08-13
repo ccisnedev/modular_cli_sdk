@@ -38,7 +38,11 @@ void main() {
       'the Quick start CLI answers the same from source and as a binary',
       () async {
         final fromSource = await _dartRun('example/example.dart', ['version']);
-        final binary = await _compile('example/example.dart', devroot, 'example');
+        final binary = await _compile(
+          'example/example.dart',
+          devroot,
+          'example',
+        );
         final fromBinary = await _run(binary, ['version']);
 
         expect(fromSource.exitCode, 0, reason: fromSource.stderr);
@@ -46,7 +50,8 @@ void main() {
         expect(
           fromBinary.stdout,
           fromSource.stdout,
-          reason: 'this CLI locates nothing beside its executable, so the two '
+          reason:
+              'this CLI locates nothing beside its executable, so the two '
               'ways of running it must not diverge',
         );
       },
@@ -78,14 +83,16 @@ void main() {
         expect(
           fromSource.exitCode,
           isNot(0),
-          reason: 'under `dart run` the asset is looked for beside the Dart '
+          reason:
+              'under `dart run` the asset is looked for beside the Dart '
               'binary, so it cannot be found — and the CLI must say so rather '
               'than answer anyway',
         );
         expect(
           fromBinary.stdout,
           isNot(fromSource.stdout),
-          reason: 'if these ever agree, the example has stopped demonstrating '
+          reason:
+              'if these ever agree, the example has stopped demonstrating '
               'the thing the README documents',
         );
       },
@@ -114,7 +121,8 @@ void main() {
           expect(
             readme,
             contains(line),
-            reason: 'the README shows an output this command does not produce. '
+            reason:
+                'the README shows an output this command does not produce. '
                 'Never retype an output — paste the real one.',
           );
         }
@@ -171,6 +179,7 @@ Future<File> _compile(String script, Directory devroot, String name) async {
 void _installAsset(Directory devroot) {
   final assets = Directory('${devroot.path}/assets')
     ..createSync(recursive: true);
-  File('${assets.path}/greeting.txt')
-      .writeAsStringSync('Hello from the assets folder\n');
+  File(
+    '${assets.path}/greeting.txt',
+  ).writeAsStringSync('Hello from the assets folder\n');
 }

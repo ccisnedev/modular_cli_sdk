@@ -132,8 +132,7 @@ class WriteNoteCommand implements Command<WriteNoteInput, WriteNoteOutput> {
   final WriteNoteInput input;
 
   @override
-  String? validate() =>
-      input.name.isEmpty ? 'a <name> is required' : null;
+  String? validate() => input.name.isEmpty ? 'a <name> is required' : null;
 
   @override
   Future<List<Step>> steps() async => [

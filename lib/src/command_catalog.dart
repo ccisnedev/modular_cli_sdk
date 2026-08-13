@@ -58,11 +58,13 @@ class CommandContract {
   /// for rendering, where the two look alike. Enforcement must use [params].
   List<CliParam> get declaredParams => params ?? const [];
 
-  List<CliParam> get positionals =>
-      (params ?? const []).where((p) => p.kind == CliParamKind.positional).toList();
+  List<CliParam> get positionals => (params ?? const [])
+      .where((p) => p.kind == CliParamKind.positional)
+      .toList();
 
-  List<CliParam> get options =>
-      (params ?? const []).where((p) => p.kind != CliParamKind.positional).toList();
+  List<CliParam> get options => (params ?? const [])
+      .where((p) => p.kind != CliParamKind.positional)
+      .toList();
 
   Map<String, dynamic> toJson() => {
     'route': route,
