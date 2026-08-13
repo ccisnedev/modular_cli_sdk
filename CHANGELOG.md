@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.5.0
 
 ### Fixed
 
@@ -22,8 +22,21 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   `"applied": false, "reason": "nothing would change"`.
 
   This also short-circuits `--apply --autoapprove`, so both invocations answer
-  the same way. A command that built no steps no longer has `describe` called
-  with an empty `Execution`.
+  the same way.
+
+### Changed
+
+- **Breaking, narrowly.** A command that builds no steps no longer has
+  `describe` called with an empty `Execution`. That path used to work under
+  `--apply --autoapprove`, so a host could be relying on it — and the exit code
+  it returned is now `0` whatever that `Output` said. A command that reported
+  "already up to date" through `describe`, or that failed the run from an empty
+  execution, will find the SDK answering for it instead.
+
+  Hence 0.5.0 rather than 0.4.2: the surface only grew, but the behaviour of a
+  reachable path changed, and an exit code that silently turns into `0` is
+  exactly the kind of change a caller deserves to be told about by the version
+  number.
 
 ## 0.4.1
 
