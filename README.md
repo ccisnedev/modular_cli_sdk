@@ -143,6 +143,11 @@ performs them in order, and compares what each step did against what it had
 said. A step that acted differently is reported on stderr whatever the command
 chose to say; a step that threw stops the run and fails the invocation.
 
+A command that builds no steps has nothing to approve, so nobody is asked:
+`--apply` reports that nothing would change and exits `0`. Asking `y/N` about no
+change at all is noise on a terminal, and on a run without one it failed an
+invocation that had nothing to fail at.
+
 Note what `describe` does **not** carry: no `planPath`, no `blocked`, no
 `message`. Those describe the gate, and the gate is the SDK's.
 

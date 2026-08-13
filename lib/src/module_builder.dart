@@ -154,6 +154,16 @@ class ModuleBuilder {
       return planned.exitCode;
     }
 
+    // Nothing to carry out, so nothing to approve. The approval exists to put a
+    // change in front of a person before it happens; with no change there is no
+    // question to ask, and asking it anyway was worse than noise — where no
+    // terminal can answer, `--apply` failed a run that had nothing to do.
+    if (plan.previews.isEmpty) {
+      final nothing = NothingToDoOutput(plan);
+      output.writeObject(nothing.toJson(), textOverride: nothing.toText());
+      return nothing.exitCode;
+    }
+
     if (!flags.autoapprove) {
       final declined = await _refusalOf(plan);
       if (declined != null) {
