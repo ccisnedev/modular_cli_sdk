@@ -37,7 +37,8 @@ export 'package:preview_executor/preview_executor.dart'
 
 export 'src/approver.dart' show Approver, ConsoleApprover, NoApproverAvailable;
 export 'src/change_flags.dart' show ChangeFlags, ChangeMode;
-export 'src/change_outputs.dart' show DeclinedOutput, PlanOutput;
+export 'src/change_outputs.dart'
+    show DeclinedOutput, NothingToDoOutput, PlanOutput;
 export 'src/cli_output.dart' show CliOutput;
 export 'src/cli_output_json.dart' show JsonCliOutput;
 export 'src/cli_output_text.dart' show TextCliOutput;
