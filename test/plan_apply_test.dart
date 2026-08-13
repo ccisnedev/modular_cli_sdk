@@ -208,6 +208,85 @@ void main() {
     });
   });
 
+  group('--apply on a plan that changes nothing', () {
+    test('does not ask, because there is nothing to approve', () async {
+      var asked = false;
+      final cli = _cliWith(
+        TouchCommand(TouchInput(), targets: const []),
+        approver: (_) async {
+          asked = true;
+          return true;
+        },
+      );
+
+      final out = MemorySink();
+      final code = await cli.run(['touch', '--apply'], stdout: out);
+
+      expect(asked, isFalse);
+      expect(code, ExitCode.ok);
+    });
+
+    test('says nothing would change', () async {
+      final cli = _cliWith(
+        TouchCommand(TouchInput(), targets: const []),
+        approver: (_) async => true,
+      );
+
+      final out = MemorySink();
+      await cli.run(['touch', '--apply'], stdout: out);
+
+      expect(out.output, contains('nothing would change'));
+    });
+
+    test('answers --autoapprove the same way', () async {
+      // Both invocations mean "carry this out"; with nothing to carry out they
+      // must not answer differently.
+      final command = TouchCommand(TouchInput(), targets: const []);
+      final cli = _cliWith(command);
+
+      final out = MemorySink();
+      final code = await cli.run([
+        'touch',
+        '--apply',
+        '--autoapprove',
+      ], stdout: out);
+
+      expect(code, ExitCode.ok);
+      expect(out.output, contains('nothing would change'));
+    });
+
+    test('says so as data under --json', () async {
+      final cli = _cliWith(TouchCommand(TouchInput(), targets: const []));
+
+      final out = MemorySink();
+      await cli.run([
+        'touch',
+        '--apply',
+        '--autoapprove',
+        '--json',
+      ], stdout: out);
+
+      final json = jsonDecode(out.output) as Map<String, dynamic>;
+      expect(json['applied'], isFalse);
+      expect(json['reason'], 'nothing would change');
+      expect(json['steps'], isEmpty);
+    });
+
+    test('does not hold a terminal-less run to a refusal', () async {
+      // Nobody to ask is only a problem when something has to be asked.
+      final cli = _cliWith(
+        TouchCommand(TouchInput(), targets: const []),
+        approver: (_) async => throw const NoApproverAvailable(),
+      );
+
+      final out = MemorySink();
+      final code = await cli.run(['touch', '--apply'], stdout: out);
+
+      expect(code, ExitCode.ok);
+      expect(out.output, isNot(contains('--autoapprove')));
+    });
+  });
+
   group('a run that broke its word', () {
     test('says so on stderr, whatever the command chose to report', () async {
       final cli = _cliWith(_MisreportingCommand());

@@ -35,6 +35,35 @@ class PlanOutput extends Output {
   int get exitCode => ExitCode.ok;
 }
 
+/// The answer to `--apply` when the plan turned out to change nothing.
+///
+/// An empty plan has nothing to approve, so nobody is asked. Putting the
+/// question anyway made a person answer `y/N` about no change at all, and — on
+/// a run with no terminal — failed an invocation that had nothing to fail at.
+///
+/// It is not a failure: the caller asked for a state, and the state is already
+/// the one asked for.
+class NothingToDoOutput extends Output {
+  NothingToDoOutput(this.plan);
+
+  final PlanDocument plan;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    ...plan.toJson(),
+    'applied': false,
+    'reason': 'nothing would change',
+  };
+
+  @override
+  String? toText() =>
+      '${plan.text}\n\nNothing to apply, so nothing was asked and nothing was '
+      'changed.';
+
+  @override
+  int get exitCode => ExitCode.ok;
+}
+
 /// The answer when `--apply` asked and the answer was no — or when there was
 /// nobody to ask.
 ///

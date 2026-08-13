@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- **`--apply` no longer asks about a plan that changes nothing.** A command
+  whose `steps()` came out empty still went through the approver, so a person
+  was shown `nothing would change` and then asked `Apply this plan? [y/N]`
+  about it. Worse where there was no terminal to answer: `--apply` refused with
+  `NoApproverAvailable` and exited non-zero, failing an invocation that had
+  nothing to do.
+
+  An empty plan is now reported and the run ends `0` — the caller asked for a
+  state and the state is already the one asked for. The answer is the new
+  framework-produced `NothingToDoOutput`, alongside `PlanOutput` and
+  `DeclinedOutput`; under `--json` it carries the plan plus
+  `"applied": false, "reason": "nothing would change"`.
+
+  This also short-circuits `--apply --autoapprove`, so both invocations answer
+  the same way. A command that built no steps no longer has `describe` called
+  with an empty `Execution`.
+
 ## 0.4.1
 
 ### Added
