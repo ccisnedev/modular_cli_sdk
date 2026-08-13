@@ -32,7 +32,13 @@
 library;
 
 export 'package:preview_executor/preview_executor.dart'
-    show Discrepancy, Execution, Outcome, Preview, Step, StepContext,
+    show
+        Discrepancy,
+        Execution,
+        Outcome,
+        Preview,
+        Step,
+        StepContext,
         StepFailure;
 
 export 'src/approver.dart' show Approver, ConsoleApprover, NoApproverAvailable;

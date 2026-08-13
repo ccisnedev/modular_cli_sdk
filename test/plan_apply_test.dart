@@ -137,26 +137,28 @@ void main() {
   });
 
   group('--apply', () {
-    test('asks for approval, and carries the plan out when it is given',
-        () async {
-      String? shown;
-      final command = TouchCommand(TouchInput());
-      final cli = _cliWith(
-        command,
-        approver: (plan) async {
-          shown = plan;
-          return true;
-        },
-      );
+    test(
+      'asks for approval, and carries the plan out when it is given',
+      () async {
+        String? shown;
+        final command = TouchCommand(TouchInput());
+        final cli = _cliWith(
+          command,
+          approver: (plan) async {
+            shown = plan;
+            return true;
+          },
+        );
 
-      final out = MemorySink();
-      final code = await cli.run(['touch', '--apply'], stdout: out);
+        final out = MemorySink();
+        final code = await cli.run(['touch', '--apply'], stdout: out);
 
-      expect(shown, contains('create   a.txt'));
-      expect(command.built.single.performed, isTrue);
-      expect(code, ExitCode.ok);
-      expect(out.output, contains('touched: a.txt'));
-    });
+        expect(shown, contains('create   a.txt'));
+        expect(command.built.single.performed, isTrue);
+        expect(code, ExitCode.ok);
+        expect(out.output, contains('touched: a.txt'));
+      },
+    );
 
     test('changes nothing when approval is refused', () async {
       final command = TouchCommand(TouchInput());

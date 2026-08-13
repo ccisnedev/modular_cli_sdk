@@ -135,18 +135,20 @@ void main() {
   // what it lacks is the end. The catalog knows every route, so the error path
   // can tell the two apart instead of calling both "unknown command".
   group('an incomplete invocation is told what would complete it', () {
-    test('a module with no action names its commands, not the catalog',
-        () async {
-      final result = await _run(['math']);
+    test(
+      'a module with no action names its commands, not the catalog',
+      () async {
+        final result = await _run(['math']);
 
-      expect(result.stderr, contains('not a complete command'));
-      expect(result.stderr, contains('math add'));
-      expect(
-        result.stderr,
-        isNot(contains('graphql compile')),
-        reason: 'only the completions of what was typed, not everything',
-      );
-    });
+        expect(result.stderr, contains('not a complete command'));
+        expect(result.stderr, contains('math add'));
+        expect(
+          result.stderr,
+          isNot(contains('graphql compile')),
+          reason: 'only the completions of what was typed, not everything',
+        );
+      },
+    );
 
     // The case a "is it a module?" check would miss: `graphql` is not a module,
     // it is the first segment of the route `api graphql compile`.
@@ -165,15 +167,17 @@ void main() {
       expect(result.stderr, contains('math add'));
     });
 
-    test('it stays an invalid usage, with the same exit code as before',
-        () async {
-      final incomplete = await _run(['math']);
-      final unknown = await _run(['bogus']);
+    test(
+      'it stays an invalid usage, with the same exit code as before',
+      () async {
+        final incomplete = await _run(['math']);
+        final unknown = await _run(['bogus']);
 
-      expect(incomplete.exitCode, equals(ExitCode.invalidUsage));
-      expect(incomplete.exitCode, equals(unknown.exitCode));
-      expect(incomplete.stdout, isEmpty);
-    });
+        expect(incomplete.exitCode, equals(ExitCode.invalidUsage));
+        expect(incomplete.exitCode, equals(unknown.exitCode));
+        expect(incomplete.stdout, isEmpty);
+      },
+    );
 
     test('a name that begins no route keeps the full catalog', () async {
       final result = await _run(['bogus']);
