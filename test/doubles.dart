@@ -81,8 +81,7 @@ class CountQuery implements Query<CountInput, CountOutput> {
   final CountInput input;
 
   @override
-  String? validate() =>
-      input.count < 0 ? 'cannot count backwards' : null;
+  String? validate() => input.count < 0 ? 'cannot count backwards' : null;
 
   @override
   Future<CountOutput> execute() async => CountOutput(input.count);
