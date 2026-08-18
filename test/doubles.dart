@@ -113,8 +113,29 @@ class TouchOutput extends Output {
 }
 
 /// A command whose steps do nothing observable outside the test.
-class TouchCommand implements Command<TouchInput, TouchOutput> {
-  TouchCommand(this.input, {this.targets = const ['a.txt'], this.error});
+class TouchCommand
+    implements Command<TouchInput, TouchOutput>, ExplainsNothingToDo {
+  TouchCommand(
+    this.input, {
+    this.targets = const ['a.txt'],
+    this.error,
+    this.explanation,
+  });
+
+  /// What this command says when it builds no steps. Null accepts the
+  /// framework's wording.
+  final String? explanation;
+
+  /// Whether the framework asked, and when — a reason read before `steps()`
+  /// would be read before the command had worked it out.
+  bool askedBeforeSteps = false;
+  bool _stepsBuilt = false;
+
+  @override
+  String? get nothingToDo {
+    if (!_stepsBuilt) askedBeforeSteps = true;
+    return explanation;
+  }
 
   @override
   final TouchInput input;
@@ -132,6 +153,7 @@ class TouchCommand implements Command<TouchInput, TouchOutput> {
 
   @override
   Future<List<Step>> steps() async {
+    _stepsBuilt = true;
     built
       ..clear()
       ..addAll([
@@ -178,4 +200,24 @@ class FakeStep implements Step {
     performed = true;
     return Outcome(verb: reportedVerb ?? verb, target: target);
   }
+}
+
+/// A command that builds no steps and never heard of [ExplainsNothingToDo].
+///
+/// The interface is opt-in, so this is what keeps the change additive: a
+/// command written before it existed must behave exactly as it did.
+class PlainEmptyCommand implements Command<TouchInput, TouchOutput> {
+  PlainEmptyCommand(this.input);
+
+  @override
+  final TouchInput input;
+
+  @override
+  String? validate() => null;
+
+  @override
+  Future<List<Step>> steps() async => const [];
+
+  @override
+  TouchOutput describe(Execution execution) => TouchOutput(const []);
 }

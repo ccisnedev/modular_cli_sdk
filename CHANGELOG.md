@@ -4,6 +4,53 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.5.1
+
+### Added
+
+- **`ExplainsNothingToDo` — a command can say why its plan is empty.** 0.5.0
+  stopped calling `describe` for an empty plan, which was right, and made a gap
+  visible that had been there all along: the framework can report *that*
+  nothing would change, and only the command knows *why*.
+
+  The two CLIs built on this SDK had four such messages between them —
+  `Already on the latest version`, `Latest release is a prerelease —
+  skipping.`, `No AI coding host found on this machine — nothing deployed.
+  Supported: … Pass --host <host> to install into one anyway.` and `No
+  supported assistant found in your home directory.` Each states what a caller
+  can act on. `nothing would change` states a fact and withholds it.
+
+  ```dart
+  class UpgradeCommand
+      implements Command<UpgradeInput, UpgradeOutput>, ExplainsNothingToDo {
+    @override
+    String? get nothingToDo => _reason;  // set while building steps
+  }
+  ```
+
+  Read once, immediately after `steps()` — which is where a command works this
+  out. It reaches `--plan` and `--apply` alike, because both render the same
+  `PlanDocument`, and `--json` carries it as `nothingToDo` on the plan and as
+  `reason` on the answer.
+
+  **Opt-in, and deliberately not a member of `Command`.** Most commands cannot
+  produce an empty plan, and adding a member to an interface every host
+  `implements` would have broken all 23 existing commands and taxed every future
+  one with `=> null`. Both hosts were checked against this release without a
+  single change: `dart analyze --fatal-infos` clean on each.
+
+### Fixed
+
+- **`--plan` no longer tells you to re-run an `--apply` that would do nothing.**
+  An empty plan ended with `Re-run with --apply to carry this out`, which invites
+  a second identical run to go and find the same nothing. It now says
+  `Nothing to carry out, so --apply would do nothing either.` A plan with steps
+  is unchanged.
+
+- **An empty plan was mute under `--plan` too**, and always had been — that path
+  never called `describe`, so the gap predates 0.5.0 on that side. Both paths now
+  show the command's reason when it gives one.
+
 ## 0.5.0
 
 ### Fixed
