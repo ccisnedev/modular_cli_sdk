@@ -119,12 +119,14 @@ void main() {
       expect(cli.catalog.forRoute('count')!.toJson()['kind'], 'query');
     });
 
-    test('gives help itself as a query, because help changes nothing',
-        () async {
-      final cli = ModularCli();
-      await cli.run(['help'], stdout: MemorySink());
+    test(
+      'gives help itself as a query, because help changes nothing',
+      () async {
+        final cli = ModularCli();
+        await cli.run(['help'], stdout: MemorySink());
 
-      expect(cli.catalog.forRoute('help')!.kind, CommandKind.query);
-    });
+        expect(cli.catalog.forRoute('help')!.kind, CommandKind.query);
+      },
+    );
   });
 }

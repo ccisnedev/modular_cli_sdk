@@ -24,6 +24,8 @@ exists on pub.dev.
 | **0.3.4** | An incomplete invocation is not an unknown command |
 | **0.3.5** | Documentation, examples, tests and CI — no public API changed |
 | **0.4.0** | Queries and commands. `Query<I, O>` reads; `Command<I, O>` changes something through steps that say what they would do first, on [`preview_executor`](https://pub.dev/packages/preview_executor). `--plan` / `--apply` / `--autoapprove` declared and enforced by the framework, with `Approver` and `PlanSink` left to the host. **Breaking**: every previous command is now a query |
+| **0.4.1** | `package:modular_cli_sdk/testing.dart` — `previewCommand`, `runCommand` and `applyCommand`, so a test that holds one command drives the lifecycle the framework drives rather than hand-rolling a second copy of it |
+| **0.5.0** | An empty plan is reported, not put to a vote. `--apply` on a command that would change nothing no longer asks for an approval, and no longer fails where there is no terminal to ask. New `NothingToDoOutput`. **Breaking, narrowly**: such a command no longer has `describe` called, and the run ends `0` |
 
 ---
 

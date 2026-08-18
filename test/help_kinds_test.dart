@@ -57,23 +57,25 @@ void main() {
   });
 
   group('a CLI of one kind', () {
-    test('keeps a single listing, because there is nothing to tell apart',
-        () async {
-      // Two headings over one list would be noise, and every CLI written before
-      // commands existed is this shape.
-      final cli = ModularCli()
-        ..query<CountInput, CountOutput>(
-          'count',
-          (req) => CountQuery(CountInput(3)),
-          description: 'Count things',
-        );
+    test(
+      'keeps a single listing, because there is nothing to tell apart',
+      () async {
+        // Two headings over one list would be noise, and every CLI written before
+        // commands existed is this shape.
+        final cli = ModularCli()
+          ..query<CountInput, CountOutput>(
+            'count',
+            (req) => CountQuery(CountInput(3)),
+            description: 'Count things',
+          );
 
-      final out = MemorySink();
-      await cli.run(['help'], stdout: out);
+        final out = MemorySink();
+        await cli.run(['help'], stdout: out);
 
-      expect(out.output, contains('Commands:'));
-      expect(out.output, isNot(contains('Queries:')));
-    });
+        expect(out.output, contains('Commands:'));
+        expect(out.output, isNot(contains('Queries:')));
+      },
+    );
   });
 
   group('help --json', () {

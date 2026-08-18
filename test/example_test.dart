@@ -61,18 +61,22 @@ void main() {
       late String dir;
 
       setUp(() {
-        workspace =
-            Directory.systemTemp.createTempSync('modular_cli_sdk_example_');
+        workspace = Directory.systemTemp.createTempSync(
+          'modular_cli_sdk_example_',
+        );
         dir = '${workspace.path}/notes';
       });
       tearDown(() => workspace.deleteSync(recursive: true));
 
       test('refuses to guess between planning and applying', () async {
         final err = _Sink();
-        final code = await runExample(
-          ['notes', 'write', 'today', '--dir', dir],
-          stderr: err,
-        );
+        final code = await runExample([
+          'notes',
+          'write',
+          'today',
+          '--dir',
+          dir,
+        ], stderr: err);
 
         expect(code, 7);
         expect(err.toString(), contains('Choose --plan or --apply'));
@@ -81,10 +85,14 @@ void main() {
 
       test('--plan says what it would write and writes nothing', () async {
         final out = _Sink();
-        final code = await runExample(
-          ['notes', 'write', 'today', '--dir', dir, '--plan'],
-          stdout: out,
-        );
+        final code = await runExample([
+          'notes',
+          'write',
+          'today',
+          '--dir',
+          dir,
+          '--plan',
+        ], stdout: out);
 
         expect(code, 0);
         expect(out.toString(), contains('create'));

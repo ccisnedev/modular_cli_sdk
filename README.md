@@ -196,6 +196,28 @@ announced.
 
 ---
 
+## Adopting this in a CLI that already exists
+
+Rewriting the units is the mechanical part. The part that surprises is that
+`--plan`/`--apply` changes your CLI's contract with **everything that ever
+typed one of its commands** — installers, CI, agent instructions, a
+post-install child process, and every message that tells a user to *run*
+something. None of those breaks the build.
+
+Two hosts have made this migration.
+[ADR 0003](docs/adr/0003-adopting-commands-changes-everything-that-ever-typed-them.md)
+records what it cost them and the three obligations that follow, including a
+test that sweeps your own sources for messages naming a command without a mode
+— derived from the catalog, so it cannot drift from your registrations:
+
+```dart
+final commands = cli.catalog
+    .ofKind(CommandKind.command)
+    .map((c) => c.name); // 'host get', 'upgrade', …
+```
+
+---
+
 ## Running it during development
 
 `dart run` is equivalent to the built binary for a CLI that locates nothing

@@ -94,9 +94,11 @@ void main() {
 
       final out = MemorySink();
       await (ModularCli()..command<TouchInput, TouchOutput>(
-        'touch',
-        (req) => TouchCommand(TouchInput(), targets: const ['a.txt', 'b.txt']),
-      )).run(['touch', '--apply', '--autoapprove', '--json'], stdout: out);
+            'touch',
+            (req) =>
+                TouchCommand(TouchInput(), targets: const ['a.txt', 'b.txt']),
+          ))
+          .run(['touch', '--apply', '--autoapprove', '--json'], stdout: out);
 
       expect(jsonDecode(out.output), throughHelper.toJson());
     });
@@ -108,9 +110,11 @@ void main() {
 
       final out = MemorySink();
       await (ModularCli()..command<TouchInput, TouchOutput>(
-        'touch',
-        (req) => TouchCommand(TouchInput(), targets: const ['a.txt', 'b.txt']),
-      )).run(['touch', '--plan', '--json'], stdout: out);
+            'touch',
+            (req) =>
+                TouchCommand(TouchInput(), targets: const ['a.txt', 'b.txt']),
+          ))
+          .run(['touch', '--plan', '--json'], stdout: out);
 
       final steps =
           (jsonDecode(out.output) as Map<String, dynamic>)['steps'] as List;
