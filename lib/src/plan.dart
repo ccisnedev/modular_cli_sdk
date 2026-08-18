@@ -7,7 +7,11 @@ import 'package:preview_executor/preview_executor.dart';
 /// could drift, and drift between what was shown and what was done is the
 /// failure the whole arrangement exists to prevent.
 class PlanDocument {
-  const PlanDocument({required this.route, required this.previews});
+  const PlanDocument({
+    required this.route,
+    required this.previews,
+    this.nothingToDo,
+  });
 
   /// The command this plan belongs to, as registered: `requisition new`.
   final String route;
@@ -15,12 +19,22 @@ class PlanDocument {
   /// What each step said it would do, in order.
   final List<Preview> previews;
 
+  /// Why the command built no steps, when it built none and chose to say.
+  ///
+  /// Supplied by a command implementing `ExplainsNothingToDo`. Null falls back
+  /// to the framework's `nothing would change`, which states the fact without
+  /// the reason — all the framework can honestly know.
+  final String? nothingToDo;
+
+  /// Whether this plan would change nothing.
+  bool get isEmpty => previews.isEmpty;
+
   /// The plan as a person reads it.
   String get text => [
     'Plan — $route',
     '',
     if (previews.isEmpty)
-      '  nothing would change'
+      '  ${nothingToDo ?? 'nothing would change'}'
     else
       ...previews.map((p) => '  ${_line(p)}'),
   ].join('\n');
@@ -29,6 +43,7 @@ class PlanDocument {
   Map<String, dynamic> toJson() => {
     'route': route,
     'steps': previews.map((p) => p.toJson()).toList(),
+    if (nothingToDo != null) 'nothingToDo': nothingToDo,
   };
 
   /// `create   docs/requisition.md  (from the Spanish template)`

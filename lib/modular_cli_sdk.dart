@@ -54,6 +54,7 @@ export 'src/command_catalog.dart'
     show CommandCatalog, CommandContract, CommandKind;
 export 'src/command_exception.dart' show CommandException;
 export 'src/exit_codes.dart' show ExitCode;
+export 'src/explains_nothing_to_do.dart' show ExplainsNothingToDo;
 export 'src/global_options.dart' show globalOptions;
 export 'src/help_renderer.dart' show HelpRenderer;
 export 'src/input.dart' show Input;

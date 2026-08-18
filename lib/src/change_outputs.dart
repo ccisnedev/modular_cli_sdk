@@ -27,8 +27,15 @@ class PlanOutput extends Output {
     plan.text,
     '',
     if (filedAt != null) '  written  $filedAt',
-    'Nothing was changed. Re-run with --apply to carry this out, or',
-    '`--apply --autoapprove` where nobody is at the keyboard.',
+    // Telling a caller to re-run with --apply is advice only when there is
+    // something to carry out. On an empty plan it invites a second, identical
+    // run to go and find the same nothing.
+    if (plan.isEmpty)
+      'Nothing to carry out, so --apply would do nothing either.'
+    else ...[
+      'Nothing was changed. Re-run with --apply to carry this out, or',
+      '`--apply --autoapprove` where nobody is at the keyboard.',
+    ],
   ].join('\n');
 
   @override
@@ -52,7 +59,7 @@ class NothingToDoOutput extends Output {
   Map<String, dynamic> toJson() => {
     ...plan.toJson(),
     'applied': false,
-    'reason': 'nothing would change',
+    'reason': plan.nothingToDo ?? 'nothing would change',
   };
 
   @override

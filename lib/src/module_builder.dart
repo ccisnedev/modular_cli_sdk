@@ -13,6 +13,7 @@ import 'command_catalog.dart';
 import 'command_exception.dart';
 import 'declared_arguments.dart';
 import 'exit_codes.dart';
+import 'explains_nothing_to_do.dart';
 import 'help_renderer.dart';
 import 'input.dart';
 import 'output.dart';
@@ -145,6 +146,12 @@ class ModuleBuilder {
     final plan = PlanDocument(
       route: contract.name,
       previews: executor.preview(steps),
+      // Read after steps(), which is where a command works out that it has
+      // nothing to do and why. Consulted whatever the mode: the reason belongs
+      // to --plan exactly as much as to --apply.
+      nothingToDo: unit is ExplainsNothingToDo
+          ? (unit as ExplainsNothingToDo).nothingToDo
+          : null,
     );
 
     if (flags.mode == ChangeMode.plan) {
