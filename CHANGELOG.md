@@ -4,13 +4,19 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
-## 0.5.1
+## 0.5.0
+
+> Prepared as two releases and shipped as one. The version here was raised to
+> 0.5.0 once and the release never went out, so the last version on pub.dev is
+> **0.4.1** and everything below is what changed since it. The first half of
+> this entry was written as 0.5.1 before that was noticed; there is no 0.5.1,
+> and never was.
 
 ### Added
 
-- **`ExplainsNothingToDo` — a command can say why its plan is empty.** 0.5.0
-  stopped calling `describe` for an empty plan, which was right, and made a gap
-  visible that had been there all along: the framework can report *that*
+- **`ExplainsNothingToDo` — a command can say why its plan is empty.** The
+  change further down — no longer calling `describe` for an empty plan — was
+  right, and it made a gap visible that had been there all along: the framework can report *that*
   nothing would change, and only the command knows *why*.
 
   The two CLIs built on this SDK had four such messages between them —
@@ -48,12 +54,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   is unchanged.
 
 - **An empty plan was mute under `--plan` too**, and always had been — that path
-  never called `describe`, so the gap predates 0.5.0 on that side. Both paths now
-  show the command's reason when it gives one.
+  never called `describe`, so on that side the silence long predates the change
+  below. Both paths now show the command's reason when it gives one.
 
-## 0.5.0
-
-### Fixed
+### Fixed — the empty plan
 
 - **`--apply` no longer asks about a plan that changes nothing.** A command
   whose `steps()` came out empty still went through the approver, so a person
@@ -71,9 +75,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   This also short-circuits `--apply --autoapprove`, so both invocations answer
   the same way.
 
-### Changed
+### Changed — BREAKING
 
-- **Breaking, narrowly.** A command that builds no steps no longer has
+- **Narrowly, but really.** A command that builds no steps no longer has
   `describe` called with an empty `Execution`. That path used to work under
   `--apply --autoapprove`, so a host could be relying on it — and the exit code
   it returned is now `0` whatever that `Output` said. A command that reported
@@ -83,7 +87,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   Hence 0.5.0 rather than 0.4.2: the surface only grew, but the behaviour of a
   reachable path changed, and an exit code that silently turns into `0` is
   exactly the kind of change a caller deserves to be told about by the version
-  number.
+  number. A host that implements `ExplainsNothingToDo` gets a better answer
+  back than the one it lost — see above.
 
 ## 0.4.1
 
