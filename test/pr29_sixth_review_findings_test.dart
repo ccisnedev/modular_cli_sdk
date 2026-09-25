@@ -26,6 +26,7 @@
 //
 // Findings are numbered to match that round, 1 through 6.
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:cli_router/cli_router.dart' show CliMiddleware;
@@ -352,6 +353,135 @@ ModularCli _cliForConcurrentRuns() {
   return cli;
 }
 
+/// A query that calls `cli.run()` again, which *succeeds* this time, and
+/// only then throws its own [CommandException]: round-7 review finding 3's
+/// recursion case, the mirror image of [_RecursiveRunQuery] above. The
+/// point is the opposite one: a nested call that finishes cleanly, touching
+/// its own zone's [InvocationOutcome] along the way (including the
+/// per-attempt reset round-7 finding 1 adds), must not disturb whatever the
+/// parent's own zone already holds, or goes on to record, once control
+/// returns to it.
+class _RecursiveThenFailsQuery implements Query<_WidgetInput, _WidgetOutput> {
+  _RecursiveThenFailsQuery(this.cli, this.capture, {required this.ownError});
+
+  final ModularCli cli;
+  final _RecursiveCapture capture;
+  final CommandException ownError;
+
+  @override
+  final _WidgetInput input = _WidgetInput();
+
+  @override
+  String? validate() => null;
+
+  @override
+  Future<_WidgetOutput> execute() async {
+    final innerOut = MemorySink();
+    final innerErr = MemorySink();
+    final innerCode = await cli.run(
+      ['inner-ok', '--json'],
+      stdout: innerOut,
+      stderr: innerErr,
+    );
+    capture.innerExitCode = innerCode;
+    capture.innerStderr = innerErr.output;
+    throw ownError;
+  }
+}
+
+/// A CLI whose `outer-fails` route calls a nested, successful `cli.run()`
+/// call before throwing its own error: the exact shape round-7 review
+/// finding 3 asks for ("the parent records a failure, calls a nested
+/// run() that succeeds, then returns nonzero").
+ModularCli _cliForRecursiveRunThatSucceedsThenParentFails(
+  _RecursiveCapture capture,
+) {
+  final cli = ModularCli(suggestionDistance: 2);
+  cli.query<_WidgetInput, _WidgetOutput>(
+    'inner-ok',
+    (req) => _OkQuery(),
+    globals: true,
+    contract: CliContract.none,
+  );
+  cli.query<_WidgetInput, _WidgetOutput>(
+    'outer-fails',
+    (req) => _RecursiveThenFailsQuery(
+      cli,
+      capture,
+      ownError: CommandException(
+        id: 'outer-failed-after-successful-nested-run',
+        message: "the outer query's own work failed, after its nested run "
+            'had already succeeded',
+        exitCode: ExitCode.dataError,
+      ),
+    ),
+    globals: true,
+    contract: CliContract.none,
+  );
+  return cli;
+}
+
+/// Wraps `next` and, only for the request whose first argument is
+/// [routeWord], awaits [barrier] *after* `next` has already returned: by
+/// the time this suspends, whatever `next` itself threw has already been
+/// caught and recorded by an inner boundary, so what this holds is the
+/// gap between "the error is fully recorded" and "run() reads it back and
+/// renders it: the exact gap round-7 review finding 3 asks a test to
+/// force open with an explicit barrier, rather than relying on
+/// `Duration.zero` delays and hoping the scheduler interleaves the two
+/// `run()` calls the way the test wants.
+CliMiddleware _barrierAfterMiddleware(String routeWord, Completer<void> barrier) =>
+    (next) {
+      return (req) async {
+        final result = await next(req);
+        final tag = req.originalArgs.isNotEmpty ? req.originalArgs.first : '';
+        if (tag == routeWord) {
+          await barrier.future;
+        }
+        return result;
+      };
+    };
+
+/// The same two failing routes as [_cliForConcurrentRuns], but `fail-a`'s
+/// own dispatch is held, after its error is fully recorded and before
+/// `run()` renders it, on [barrierA]: a test drives `fail-b`'s `run()` call
+/// to full completion first, then releases [barrierA] and drives `fail-a`'s
+/// to completion, to prove each renders only its own error even though
+/// `fail-b` ran to completion, on the same [ModularCli] instance, entirely
+/// while `fail-a` was suspended mid-dispatch.
+ModularCli _cliForConcurrentRunsWithBarrier(Completer<void> barrierA) {
+  final cli = ModularCli(suggestionDistance: 2);
+  cli.query<_WidgetInput, _WidgetOutput>(
+    'fail-a',
+    (req) => _ThrowingQuery(
+      CommandException(
+        id: 'error-a',
+        message: 'A failed',
+        exitCode: ExitCode.notFound,
+      ),
+    ),
+    globals: true,
+    contract: CliContract.none,
+  );
+  cli.query<_WidgetInput, _WidgetOutput>(
+    'fail-b',
+    (req) => _ThrowingQuery(
+      CommandException(
+        id: 'error-b',
+        message: 'B failed',
+        exitCode: ExitCode.unauthorized,
+      ),
+    ),
+    globals: true,
+    contract: CliContract.none,
+  );
+  // Outermost: holds fail-a's dispatch after the escalating middleware
+  // below has already thrown, been caught and recorded its error.
+  cli.use(_barrierAfterMiddleware('fail-a', barrierA));
+  cli.use(_escalatingMiddlewareTaggedByRoute());
+  return cli;
+}
+
 // ── Part B fixtures ──────────────────────────────────────────────────────
 
 /// The shortcut's own contract: an optional integer `a` (the bad-typed
@@ -646,30 +776,87 @@ void main() {
       );
 
       test(
-        'two concurrent run() calls on the same instance each render only '
-        'their own error, not the other\'s',
+        'a nested cli.run() call that succeeds does not leak into, or get '
+        "overwritten by, the parent's own error once the parent goes on to "
+        'fail with its own error afterwards',
         () async {
-          final cli = _cliForConcurrentRuns();
+          final capture = _RecursiveCapture();
+          final outerErr = MemorySink();
+          final outerCode = await _cliForRecursiveRunThatSucceedsThenParentFails(
+            capture,
+          ).run(
+            ['outer-fails', '--json'],
+            stdout: MemorySink(),
+            stderr: outerErr,
+          );
+
+          // The nested call genuinely succeeded, and rendered nothing of
+          // its own.
+          expect(capture.innerExitCode, equals(ExitCode.ok));
+          expect(capture.innerStderr, isEmpty);
+
+          // The outer call's own error, recorded strictly after the nested
+          // call already returned, is what renders: exactly once, and it
+          // is the outer query's own error, not anything left behind by
+          // the nested call (there was nothing to leave behind) and not
+          // duplicated.
+          expect(outerCode, equals(ExitCode.dataError));
+          final envelope = jsonDecode(outerErr.output) as Map<String, dynamic>;
+          final error = envelope['error'] as Map<String, dynamic>;
+          expect(
+            error['id'],
+            equals('outer-failed-after-successful-nested-run'),
+          );
+          expect(
+            'error'.allMatches(outerErr.output).length,
+            equals(1),
+            reason: 'the envelope must contain exactly one error object',
+          );
+        },
+      );
+
+      test(
+        'two concurrent run() calls on the same instance each render only '
+        "their own error, not the other's, proven with an explicit barrier "
+        'rather than incidental scheduling: fail-b runs to completion '
+        "entirely while fail-a is still suspended, mid-dispatch, on its "
+        'own error already having been recorded',
+        () async {
+          final barrierA = Completer<void>();
+          final cli = _cliForConcurrentRunsWithBarrier(barrierA);
           final errA = MemorySink();
           final errB = MemorySink();
 
-          final results = await Future.wait([
-            cli.run(['fail-a', '--json'], stdout: MemorySink(), stderr: errA),
-            cli.run(['fail-b', '--json'], stdout: MemorySink(), stderr: errB),
-          ]);
-
-          expect(results[0], equals(ExitCode.conflict));
-          expect(results[1], equals(ExitCode.conflict));
-
-          final envelopeA = jsonDecode(errA.output) as Map<String, dynamic>;
-          expect(
-            (envelopeA['error'] as Map<String, dynamic>)['id'],
-            equals('escalated-fail-a'),
+          final runA = cli.run(
+            ['fail-a', '--json'],
+            stdout: MemorySink(),
+            stderr: errA,
           );
+
+          // fail-b's whole run() call, start to finish, happens while
+          // fail-a is parked on barrierA, after fail-a's own error has
+          // already been recorded by the escalating middleware but before
+          // ModularCli.run() has read it back to render it.
+          final codeB = await cli.run(
+            ['fail-b', '--json'],
+            stdout: MemorySink(),
+            stderr: errB,
+          );
+          expect(codeB, equals(ExitCode.conflict));
           final envelopeB = jsonDecode(errB.output) as Map<String, dynamic>;
           expect(
             (envelopeB['error'] as Map<String, dynamic>)['id'],
             equals('escalated-fail-b'),
+          );
+
+          // Only now does fail-a's own dispatch resume and finish.
+          barrierA.complete();
+          final codeA = await runA;
+          expect(codeA, equals(ExitCode.conflict));
+          final envelopeA = jsonDecode(errA.output) as Map<String, dynamic>;
+          expect(
+            (envelopeA['error'] as Map<String, dynamic>)['id'],
+            equals('escalated-fail-a'),
           );
         },
       );
