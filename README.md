@@ -595,6 +595,22 @@ boundary: a `CommandException` it throws is caught there and turned into this
 same envelope, honoring the resolved request's `--json` mode, instead of
 escaping `run()` as an uncaught exception.
 
+### InstallationPlugin error ids
+
+`upgrade` and `uninstall` report one of the ids below through `UpgradeOutput.errorId` /
+`UninstallOutput.errorId` (and as `"error"` under `--json`) whenever a step fails.
+Each row is what actually happens in `installation_plugin.dart`, not an aspiration.
+
+| id | reported when |
+| --- | --- |
+| `release-lookup-failed` | the release source could not be queried, a release's tag does not parse as semver once the tag prefix is stripped, no release with the configured tag prefix exists, or the latest release has no asset for the current platform |
+| `executable-check-failed` | resolving `config.executable` or `config.alias` on PATH itself threw, before it could even be determined whether either is present |
+| `file-access-denied` | `config.executable` is not on PATH, a resolved PATH entry could not be canonicalized to an install target, or moving the running executable aside for `uninstall` failed |
+| `alias-hard-link-unsupported` | `config.alias` resolves to a hard link to the executable rather than a symlink, a shape this plugin will not create or rewrite |
+| `download-failed` | the release asset could not be downloaded, or an `--apply` run failed at a point where no `CliInstallStepFailure` was thrown (the default id for an otherwise-untyped step failure) |
+| `install-target-changed` | immediately before writing the downloaded binary, re-resolving `config.executable` no longer matches the target `--apply`'s own plan showed: it fell off PATH, now resolves elsewhere, or is no longer a plain file |
+| `cleanup-start-failed` | `uninstall` renamed the running executable aside successfully, but the worker process that deletes it once this process exits could not be started; the renamed file is left behind and named in the message so it can be removed by hand |
+
 ---
 
 ## Architecture

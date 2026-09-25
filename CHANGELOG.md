@@ -192,6 +192,68 @@ release already touched.
   disagrees, and `doctor`'s `alias` check and `uninstall` both use it in
   place of a bare `canonicalize` comparison
 
+### Fixed (third review round)
+
+A third pass over #30, against the same install/uninstall code.
+
+- **`canonicalize` no longer swallows a resolution failure.**
+  `IoCliFileSystem.canonicalize` used to catch every `FileSystemException`
+  from resolving symlinks and return the original path unchanged, so a
+  broken resolution looked identical to a successful no-op; a real symlinked
+  upgrade could silently write over the symlink itself instead of its
+  target once resolution started failing partway through. `canonicalize` is
+  now abstract with no such default, and lets the exception through;
+  `UninstallCommand.steps()` (which reaches it indirectly through
+  `sameFile`) now catches that failure explicitly and reports
+  `file-access-denied` instead of crashing as an unhandled exception
+- **Executability is now asked of the platform, not guessed from stat
+  bits.** `resolveOnPath` and `writeExecutable`'s permission verification
+  used to read and interpret POSIX mode bits and uid/gid by hand; they now
+  run a fixed, non-searched `test -x` (`/bin/test` on macOS, `/usr/bin/test`
+  on Linux) against the candidate and trust its exit code. Any exit code
+  other than 0 or 1, or the checker failing to start at all, is
+  `CliExecutableCheckFailure` rather than a guess, and is reported as
+  `executable-check-failed` from `upgrade`, `uninstall` and `doctor` rather
+  than being reported as the file simply not being found
+- **A hard-linked alias is rejected before anything changes, not rewritten.**
+  An alias that is a hard link to the executable, rather than a symlink, is
+  a shape this plugin will not create or update; it is now detected
+  (`sameFile` true, the raw paths unequal, `canonicalize` disagreeing) and
+  reported as `alias-hard-link-unsupported` in `doctor`'s `alias` check, at
+  `upgrade` plan time, and again inside `InstallExecutableStep` immediately
+  before the write
+- **`upgrade --apply` revalidates its install target immediately before
+  replacing it, not only when the plan was built.** `--apply` computes its
+  own plan, asks for approval, then executes within the same run; nothing
+  outside this run stops the target from changing in that window.
+  `InstallExecutableStep.perform` now re-resolves `config.executable` on
+  PATH and requires it still resolves to the exact target the plan showed,
+  and that the target is still a regular file, immediately before writing.
+  Any mismatch is reported as `install-target-changed` and nothing is
+  written; `--plan` already failed with the same typed error whenever the
+  target could not be resolved at all
+- **Windows self-uninstall's cleanup worker is redesigned around a real
+  process, not a broken Dart API.** The previous detached-process approach
+  (`ProcessStartMode.detachedWithStdio`) does not work on Windows: Windows
+  PowerShell's console host cannot run at all under the `DETACHED_PROCESS`
+  creation flag both `.detached` and `.detachedWithStdio` use, and exits
+  within milliseconds before doing anything (confirmed with `Get-Process`
+  never finding the reported pid), separately from the long-standing
+  `detachedWithStdio` I/O bug (dart-lang/sdk#35809). The worker is now
+  launched as `cmd.exe /d /c start "" /min <powershell.exe> -File <script>`
+  under `ProcessStartMode.normal`, the standard Windows job-object
+  breakaway: `start` hands the new process off outside the calling
+  `cmd.exe`'s own process tree, so it survives the launching process's exit
+  instead of being killed by that process's Windows Job Object, while still
+  giving PowerShell a real console. The worker reads its payload (the
+  parent pid to watch, the paths to delete, the timeout) from a JSON file
+  and signals readiness by creating a marker file; both paths travel as
+  environment variables, never as command-line arguments, so no
+  caller-supplied path is ever re-parsed by `cmd.exe`'s own shell grammar.
+  If the worker cannot be started, the step still fails with
+  `cleanup-start-failed`, as before, naming the renamed file to delete by
+  hand
+
 ### Notes
 
 - **No archive format.** An asset is assumed to be the executable itself;
