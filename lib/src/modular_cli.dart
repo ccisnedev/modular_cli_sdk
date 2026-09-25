@@ -162,8 +162,9 @@ class ModularCli {
   ///
   /// This is for a route that means the same thing as a longer one but is
   /// spelled differently and more narrowly:
-  /// `cli.shortcut('&lt;program&gt;', target: 'eval rpn', globals: false)`
-  /// lets a bare program argument alone run exactly what
+  /// `cli.shortcut('&lt;program&gt;', target: 'eval rpn', globals: false,
+  /// contract: CliContract.none)` lets a bare program argument alone run
+  /// exactly what
   /// `eval rpn --program &lt;program&gt;` would, without exposing
   /// `eval rpn`'s other options (`--file`, `--stdin`) or accepting global
   /// options at all when `globals: false` (`cli_router.cmd` itself refuses
@@ -186,8 +187,12 @@ class ModularCli {
   /// [contract] declares only options and constraints: a shortcut's
   /// positionals are taken from [target]'s own positional declarations,
   /// matched by name, and bound to whichever cardinality [pattern] itself
-  /// gives them. See [ModuleBuilder.shortcut] for the full account,
-  /// including issue #27's own example.
+  /// gives them. Required, like every other registration call on this SDK
+  /// ([CliContract.none] for a shortcut that declares nothing itself): when
+  /// [target] is a [Command], [contract] gains [ChangeFlags.params]
+  /// regardless, the same way [command] itself always gains them. See
+  /// [ModuleBuilder.shortcut] for the full account, including issue #27's
+  /// own example.
   ///
   /// Throws [ArgumentError] if [target] names no registered route, more
   /// than one, or if [contract] declares a positional directly.
@@ -195,7 +200,7 @@ class ModularCli {
     String pattern, {
     required String target,
     required bool globals,
-    CliContract contract = CliContract.none,
+    required CliContract contract,
     String? description,
   }) {
     _builderFor('', _root).shortcut(

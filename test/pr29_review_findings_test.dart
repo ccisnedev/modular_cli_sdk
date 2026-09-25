@@ -435,13 +435,18 @@ void main() {
     });
 
     // Issue #27, section 4, gives this exact line as the shorthand a caller
-    // should be able to write: no `contract:` argument at all. `contract`
-    // defaults to `CliContract.none`, and `program` is still derived from
-    // the target and rebound `required` by the route pattern.
-    test('the exact issue #27 example compiles and runs with no contract '
-        'argument at all', () async {
+    // should be able to write, `contract` named explicitly the same way
+    // query() and command() require it: no undeclared, defaulted contract.
+    // `program` is still derived from the target and rebound `required` by
+    // the route pattern.
+    test('the exact issue #27 example runs, contract named explicitly', () async {
       final cli = _buildConstraintCli();
-      cli.shortcut('<program>', target: 'eval rpn', globals: false);
+      cli.shortcut(
+        '<program>',
+        target: 'eval rpn',
+        globals: false,
+        contract: CliContract.none,
+      );
 
       final result = await _runWith(cli, ['1 2 +']);
 

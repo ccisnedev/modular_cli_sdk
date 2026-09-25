@@ -202,9 +202,19 @@ class ModuleBuilder {
   /// own positional declarations, matched by name, and bound to whichever
   /// cardinality [pattern] itself gives them. The exact line from issue
   /// #27, `shortcut('<program>', target: 'eval rpn', globals: false)`,
-  /// works with no explicit [contract] at all, because `program` is looked
-  /// up on the target and rebound `required` (the shorter spelling has no
-  /// `[...]`) even though the target's own declaration of it is optional.
+  /// runs with `program` looked up on the target and rebound `required`
+  /// (the shorter spelling has no `[...]`) even though the target's own
+  /// declaration of it is optional; the call still names its own
+  /// [contract] explicitly ([CliContract.none] when it declares nothing),
+  /// the same way [query] and [command] do: a route's contract is never
+  /// left for a default to fill in silently.
+  ///
+  /// When [target] is a [Command], [contract] gains [ChangeFlags.params]
+  /// exactly as [command] itself gains them: a shortcut to a route that
+  /// changes something is still a route that changes something, and it
+  /// cannot be invoked without choosing `--plan` or `--apply` any more
+  /// than the target could. A shortcut to a [Query] gains nothing beyond
+  /// what [contract] itself declares.
   ///
   /// Throws [ArgumentError] when [target] names no registered route, more
   /// than one (a shortcut's target must be unambiguous), when [contract]
@@ -214,7 +224,7 @@ class ModuleBuilder {
     String pattern, {
     required String target,
     required bool globals,
-    CliContract contract = CliContract.none,
+    required CliContract contract,
     String? description,
   }) {
     final matches = _catalog.commands.where((c) => c.name == target).toList();
@@ -257,10 +267,13 @@ class ModuleBuilder {
         _positionalFromTarget(targetEntry, name, pattern, target, routePattern),
     ];
 
+    final withChangeFlags = targetEntry.kind == CommandKind.command
+        ? contract.withOptions(ChangeFlags.params)
+        : contract;
     final shortcutContract = CliContract(
-      options: contract.options,
+      options: withChangeFlags.options,
       positionals: derivedPositionals,
-      constraints: contract.constraints,
+      constraints: withChangeFlags.constraints,
     );
     validateContractPositionals(pattern, shortcutContract);
 

@@ -336,18 +336,27 @@ registration, before the route can ever be dispatched to.
 narrower contract:
 
 ```dart
-cli.shortcut('<program>', target: 'eval rpn', globals: false);
+cli.shortcut(
+  '<program>',
+  target: 'eval rpn',
+  globals: false,
+  contract: CliContract.none,
+);
 ```
 
 `mycli '1 2 +'` then runs the same handler as `mycli eval rpn '1 2 +'`, but
 through its own, narrower contract: here, with `globals: false`, none of the
-SDK's global options (`--plan`, `--apply`, `--json`, and so on) are accepted
-on the shortcut itself. A shortcut never declares its own positionals:
-`program` is taken from the target's own declaration, by name, and rebound to
-whichever cardinality `<program>` itself gives it (`required` here, even
-though the target's own `[<program>]` makes it optional). `contract` is
-optional and defaults to `CliContract.none`; passing one lets a shortcut add
-its own options or constraints on top. `target` must already be registered
+SDK's global options (`--json`, `--quiet`, `--help`) are accepted on the
+shortcut itself. A shortcut never declares its own positionals: `program` is
+taken from the target's own declaration, by name, and rebound to whichever
+cardinality `<program>` itself gives it (`required` here, even though the
+target's own `[<program>]` makes it optional). `contract` is required, like
+every other registration call (`CliContract.none` for a shortcut that
+declares nothing of its own); passing one lets a shortcut add its own options
+or constraints on top. When `target` is a `Command`, `contract` gains
+`--plan`/`--apply`/`--autoapprove` automatically, exactly as `command()`
+itself always gains them: a shortcut to a route that changes something is
+still a route that changes something. `target` must already be registered
 and name exactly one route; registering a shortcut to a route that does not
 exist, or that matches more than one registered route, is an `ArgumentError`,
 and so is declaring a positional directly in a shortcut's own `contract`.
