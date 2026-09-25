@@ -70,12 +70,15 @@ void main() {
 
       test('refuses to guess between planning and applying', () async {
         final err = _Sink();
+        // `cli_router` requires every option to precede the first
+        // positional (spec 8.2: "options go before the program"), so `--dir`
+        // comes before the note's name, `today`, throughout this group.
         final code = await runExample([
           'notes',
           'write',
-          'today',
           '--dir',
           dir,
+          'today',
         ], stderr: err);
 
         expect(code, 7);
@@ -88,10 +91,10 @@ void main() {
         final code = await runExample([
           'notes',
           'write',
-          'today',
           '--dir',
           dir,
           '--plan',
+          'today',
         ], stdout: out);
 
         expect(code, 0);
@@ -103,7 +106,7 @@ void main() {
       test('--apply shows the same plan to the approver', () async {
         String? shown;
         await runExample(
-          ['notes', 'write', 'today', '--dir', dir, '--apply'],
+          ['notes', 'write', '--dir', dir, '--apply', 'today'],
           stdout: _Sink(),
           approver: (plan) async {
             shown = plan;
@@ -116,7 +119,7 @@ void main() {
 
       test('--apply writes nothing when approval is refused', () async {
         final code = await runExample(
-          ['notes', 'write', 'today', '--dir', dir, '--apply'],
+          ['notes', 'write', '--dir', dir, '--apply', 'today'],
           stdout: _Sink(),
           approver: (_) async => false,
         );
@@ -129,11 +132,11 @@ void main() {
         final code = await runExample([
           'notes',
           'write',
-          'today',
           '--dir',
           dir,
           '--apply',
           '--autoapprove',
+          'today',
         ], stdout: _Sink());
 
         expect(code, 0);
@@ -144,11 +147,11 @@ void main() {
         final args = [
           'notes',
           'write',
-          'today',
           '--dir',
           dir,
           '--apply',
           '--autoapprove',
+          'today',
         ];
         await runExample(args, stdout: _Sink());
 

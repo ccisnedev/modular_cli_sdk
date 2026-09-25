@@ -355,7 +355,16 @@ void main() {
     test('are joined by the three flags, not replaced by them', () async {
       final cli = _cliWith(
         TouchCommand(TouchInput()),
-        params: [CliParam.string('name', description: 'Who')],
+        contract: CliContract(
+          options: [
+            CliParam.string(
+              'name',
+              required: false,
+              repeatable: false,
+              description: 'Who',
+            ),
+          ],
+        ),
       );
 
       final contract = cli.catalog.forRoute('touch')!;
@@ -383,7 +392,7 @@ ModularCli _cliWith(
   Command<dynamic, dynamic> command, {
   Approver? approver,
   PlanSink? planSink,
-  List<CliParam>? params,
+  CliContract contract = CliContract.none,
 }) {
   final cli = ModularCli(approver: approver, planSink: planSink);
   if (command is TouchCommand) {
@@ -391,13 +400,13 @@ ModularCli _cliWith(
       'touch',
       (req) => command,
       description: 'Touch things',
-      params: params,
+      contract: contract,
     );
   } else {
     cli.command<TouchInput, TouchOutput>(
       'misreport',
       (req) => command as _MisreportingCommand,
-      params: params,
+      contract: contract,
     );
   }
   return cli;

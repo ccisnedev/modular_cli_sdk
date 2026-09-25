@@ -36,11 +36,6 @@ void main() {
       expect(output.exitCode, isA<int>());
     });
 
-    test('should allow optional schemaFields (defaults to null)', () {
-      final output = _TestOutput(greeting: 'Hello');
-      expect(output.schemaFields, isNull);
-    });
-
     test('concrete Output should serialize correctly', () {
       final output = _TestOutput(greeting: 'Hello, World!');
       expect(output.toJson(), {'greeting': 'Hello, World!'});

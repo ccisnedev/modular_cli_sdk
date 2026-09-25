@@ -11,6 +11,13 @@ class _GreetInput extends Input {
   final String name;
   _GreetInput({required this.name});
 
+  static final contract = CliContract(
+    options: [
+      CliParam.string('name', required: false, repeatable: false,
+          description: 'Who to greet'),
+    ],
+  );
+
   factory _GreetInput.fromCliRequest(CliRequest req) =>
       _GreetInput(name: req.flagString('name') ?? 'World');
 
@@ -45,6 +52,13 @@ class _GreetCommand implements Query<_GreetInput, _GreetOutput> {
 class _RequiredInput extends Input {
   final String value;
   _RequiredInput({required this.value});
+
+  static final contract = CliContract(
+    options: [
+      CliParam.string('value', required: false, repeatable: false,
+          description: 'The value to echo'),
+    ],
+  );
 
   factory _RequiredInput.fromCliRequest(CliRequest req) =>
       _RequiredInput(value: req.flagString('value') ?? '');
@@ -145,11 +159,13 @@ ModularCli _buildTestCli() {
       'hello',
       (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
       description: 'Say hello',
+      contract: _GreetInput.contract,
     );
     m.query<_GreetInput, _GreetOutput>(
       'fail',
       (req) => _FailingCommand(_GreetInput.fromCliRequest(req)),
       description: 'Always fails',
+      contract: _GreetInput.contract,
     );
   });
 
@@ -158,6 +174,7 @@ ModularCli _buildTestCli() {
       'echo',
       (req) => _ValidatingCommand(_RequiredInput.fromCliRequest(req)),
       description: 'Echo a value',
+      contract: _RequiredInput.contract,
     );
   });
 
@@ -327,12 +344,14 @@ void main() {
         'ping',
         (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
         description: 'Root-level ping',
+        contract: _GreetInput.contract,
       );
 
       cli.query<_RequiredInput, _EchoOutput>(
         'validate-me',
         (req) => _ValidatingCommand(_RequiredInput.fromCliRequest(req)),
         description: 'Root command with validation',
+        contract: _RequiredInput.contract,
       );
 
       cli.module('greetings', (m) {
@@ -340,6 +359,7 @@ void main() {
           'hello',
           (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
           description: 'Say hello (module)',
+          contract: _GreetInput.contract,
         );
       });
 

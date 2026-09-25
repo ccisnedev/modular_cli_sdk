@@ -15,7 +15,6 @@ void main() {
           'count',
           (req) => CountQuery(CountInput(3)),
           description: 'Count things',
-          params: const [],
         );
 
       final out = MemorySink();
@@ -30,7 +29,6 @@ void main() {
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
-          params: const [],
         );
 
       final err = MemorySink();
@@ -45,7 +43,6 @@ void main() {
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
-          params: const [],
         );
 
       final err = MemorySink();
@@ -60,7 +57,6 @@ void main() {
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(-1)),
-          params: const [],
         );
 
       final err = MemorySink();
@@ -76,7 +72,6 @@ void main() {
           m.query<CountInput, CountOutput>(
             'count',
             (req) => CountQuery(CountInput(7)),
-            params: const [],
           );
         });
 
@@ -125,7 +120,7 @@ void main() {
         final cli = ModularCli();
         await cli.run(['help'], stdout: MemorySink());
 
-        expect(cli.catalog.forRoute('help')!.kind, CommandKind.query);
+        expect(cli.catalog.forName('help')!.kind, CommandKind.query);
       },
     );
   });

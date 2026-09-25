@@ -10,26 +10,27 @@ class _AddInput extends Input {
   final int b;
   _AddInput({required this.a, required this.b});
 
-  static final params = [
-    CliParam.integer(
-      'a',
-      abbr: 'a',
-      required: true,
-      description: 'First operand',
-    ),
-    CliParam.integer(
-      'b',
-      abbr: 'b',
-      required: true,
-      description: 'Second operand',
-    ),
-  ];
+  static final contract = CliContract(
+    options: [
+      CliParam.integer(
+        'a',
+        abbr: 'a',
+        required: true,
+        repeatable: false,
+        description: 'First operand',
+      ),
+      CliParam.integer(
+        'b',
+        abbr: 'b',
+        required: true,
+        repeatable: false,
+        description: 'Second operand',
+      ),
+    ],
+  );
 
   factory _AddInput.fromCliRequest(CliRequest req) =>
       _AddInput(a: req.flagInt('a')!, b: req.flagInt('b')!);
-
-  @override
-  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {'a': a, 'b': b};
@@ -65,7 +66,7 @@ ModularCli _buildCli() {
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
       description: 'Add two numbers',
-      params: _AddInput.params,
+      contract: _AddInput.contract,
     );
   });
   // A route of more than one segment inside a module. `api graphql` is then a
@@ -75,7 +76,7 @@ ModularCli _buildCli() {
       'graphql compile',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
       description: 'Compile GraphQL artifacts',
-      params: _AddInput.params,
+      contract: _AddInput.contract,
     );
   });
   return cli;
