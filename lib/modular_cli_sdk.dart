@@ -86,11 +86,11 @@ export 'src/plugins/installation/cli_process_launcher.dart'
         CliProcessLauncher,
         IoCliProcessLauncher,
         cleanupWorkerBootstrapScript,
-        cleanupWorkerCmdCommandLine,
-        cleanupWorkerEncodedBootstrapScript,
+        cleanupWorkerMarkerDeadlineSafetyMargin,
         cleanupWorkerParentExitTimeoutMs,
         cleanupWorkerPayloadEnvVar,
         cleanupWorkerReadyMarkerPathEnvVar,
+        cleanupWorkerReadyPollInterval,
         cleanupWorkerStartupTimeout,
         cmdExecutablePath,
         powershellExecutablePath;

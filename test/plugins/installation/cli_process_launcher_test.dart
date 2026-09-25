@@ -16,6 +16,14 @@ import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
+// Round 5 finding 5: cleanupWorkerCmdCommandLine and
+// cleanupWorkerEncodedBootstrapScript are implementation details of how the
+// worker is launched, not part of the public API, so they are not exported
+// from the public barrel above. This test still needs them, to check the
+// command line and the encoded script directly, so it reaches them through
+// the src path instead.
+import 'package:modular_cli_sdk/src/plugins/installation/cli_process_launcher.dart'
+    show cleanupWorkerCmdCommandLine, cleanupWorkerEncodedBootstrapScript;
 import 'package:test/test.dart';
 
 /// Every directory directly under the system temp directory whose name
