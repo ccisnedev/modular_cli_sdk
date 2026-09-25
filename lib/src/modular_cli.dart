@@ -91,8 +91,8 @@ class ModularCli {
   /// [ModuleBuilder.shortcut] does not add its entry to [_catalog] (a
   /// shortcut is deliberately not given its own catalog entry: see
   /// [shortcut]'s own doc comment), which otherwise left a shortcut
-  /// invisible to [_contractFor] — used by [_handleRejection] to check a
-  /// badly typed supplied value before letting `--help` win a rejection —
+  /// invisible to [_contractFor], which [_handleRejection] uses to check a
+  /// badly typed supplied value before letting `--help` win a rejection,
   /// so an invalid value on a shortcut silently lost to `--help` instead of
   /// being reported (round-4 review finding 1). This lookup exists only for
   /// that check; it is never consulted by [_emitFocusedHelp] or
@@ -662,7 +662,7 @@ class ModularCli {
   /// instead of [_catalog]: a shortcut's own contract, keyed the same way
   /// [_bodiesByName] keys its body (the route pattern exactly as given to
   /// `cli_router`). Used only to validate a supplied option value before
-  /// deciding whether `--help` wins (round-4 review finding 1) — never to
+  /// deciding whether `--help` wins (round-4 review finding 1), never to
   /// choose what a rejection's help or JSON `contract` field shows, which
   /// stays keyed off [_catalog] alone, through [_contractFor].
   CommandContract? _shortcutContractFor(CliRejection rejection) {

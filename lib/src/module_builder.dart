@@ -296,8 +296,8 @@ class ModuleBuilder {
       globals: globals,
     );
 
-    // Not registered with [_catalog] — see this method's own doc comment
-    // ("deliberately not given its own CommandCatalog entry") — but kept
+    // Not registered with [_catalog] (see this method's own doc comment,
+    // "deliberately not given its own CommandCatalog entry"), but kept
     // here, keyed exactly as [_mount] below registers it with
     // `cli_router`, so [ModularCli] can still validate a badly typed
     // supplied value against a shortcut's own contract before letting
