@@ -33,7 +33,7 @@ void main() {
       const fs = IoCliFileSystem();
       final path = pathIn(tempDir, 'cx');
 
-      await fs.writeExecutable(path, [1, 2, 3]);
+      await fs.writeExecutable(path, [1, 2, 3], revalidate: () async {});
 
       expect(io.File(path).readAsBytesSync(), [1, 2, 3]);
     });
@@ -43,7 +43,7 @@ void main() {
       final path = pathIn(tempDir, 'cx');
       io.File(path).writeAsBytesSync([9, 9, 9, 9, 9]);
 
-      await fs.writeExecutable(path, [1, 2, 3]);
+      await fs.writeExecutable(path, [1, 2, 3], revalidate: () async {});
 
       expect(io.File(path).readAsBytesSync(), [1, 2, 3]);
     });
@@ -53,7 +53,7 @@ void main() {
       final path = pathIn(tempDir, 'cx');
       io.File(path).writeAsBytesSync([9, 9, 9]);
 
-      await fs.writeExecutable(path, [1, 2, 3]);
+      await fs.writeExecutable(path, [1, 2, 3], revalidate: () async {});
 
       final leftovers = tempDir
           .listSync()
@@ -63,12 +63,81 @@ void main() {
     });
 
     test(
+      'calls revalidate after staging the new content but before '
+      'committing it into place',
+      () async {
+        const fs = IoCliFileSystem();
+        final path = pathIn(tempDir, io.Platform.isWindows ? 'cx.exe' : 'cx');
+        io.File(path).writeAsBytesSync([9, 9, 9]);
+
+        List<int>? pathContentAtRevalidateTime;
+        int? stagedFileCountAtRevalidateTime;
+
+        await fs.writeExecutable(
+          path,
+          [1, 2, 3],
+          revalidate: () async {
+            pathContentAtRevalidateTime = io.File(path).readAsBytesSync();
+            stagedFileCountAtRevalidateTime = tempDir
+                .listSync()
+                .where((e) => e.path != path)
+                .length;
+          },
+        );
+
+        expect(
+          pathContentAtRevalidateTime,
+          [9, 9, 9],
+          reason:
+              'revalidate must see the pre-commit content: the destructive '
+              'step that replaces it has not run yet',
+        );
+        expect(
+          stagedFileCountAtRevalidateTime,
+          1,
+          reason:
+              'the new content must already be staged to a temporary file '
+              'by the time revalidate runs',
+        );
+        expect(io.File(path).readAsBytesSync(), [1, 2, 3]);
+      },
+    );
+
+    test(
+      'nothing is committed and no temp file is left behind when '
+      'revalidate throws',
+      () async {
+        const fs = IoCliFileSystem();
+        final path = pathIn(tempDir, io.Platform.isWindows ? 'cx.exe' : 'cx');
+        io.File(path).writeAsBytesSync([9, 9, 9]);
+
+        await expectLater(
+          fs.writeExecutable(
+            path,
+            [1, 2, 3],
+            revalidate: () async {
+              throw StateError('target changed since this plan was built');
+            },
+          ),
+          throwsA(isA<StateError>()),
+        );
+
+        expect(io.File(path).readAsBytesSync(), [9, 9, 9]);
+        final leftovers = tempDir
+            .listSync()
+            .where((e) => e.path != path)
+            .toList();
+        expect(leftovers, isEmpty);
+      },
+    );
+
+    test(
       'sets the execute bit',
       () async {
         const fs = IoCliFileSystem();
         final path = pathIn(tempDir, 'cx');
 
-        await fs.writeExecutable(path, [1, 2, 3]);
+        await fs.writeExecutable(path, [1, 2, 3], revalidate: () async {});
 
         final mode = io.File(path).statSync().mode;
         expect(
@@ -98,7 +167,7 @@ void main() {
         final handle = io.File(path).openSync(mode: io.FileMode.read);
 
         try {
-          await fs.writeExecutable(path, [1, 2, 3]);
+          await fs.writeExecutable(path, [1, 2, 3], revalidate: () async {});
           expect(handle.readSync(3), [9, 9, 9]);
         } finally {
           handle.closeSync();
@@ -116,7 +185,7 @@ void main() {
         final path = pathIn(tempDir, 'cx.exe');
         io.File(path).writeAsBytesSync([9, 9, 9]);
 
-        await fs.writeExecutable(path, [1, 2, 3]);
+        await fs.writeExecutable(path, [1, 2, 3], revalidate: () async {});
 
         expect(io.File(path).readAsBytesSync(), [1, 2, 3]);
       },
@@ -133,7 +202,7 @@ void main() {
         final path = pathIn(tempDir, 'cx');
 
         await expectLater(
-          fs.writeExecutable(path, [1, 2, 3]),
+          fs.writeExecutable(path, [1, 2, 3], revalidate: () async {}),
           throwsA(isA<io.FileSystemException>()),
         );
       },
@@ -152,7 +221,7 @@ void main() {
         final path = pathIn(tempDir, 'cx');
 
         await expectLater(
-          fs.writeExecutable(path, [1, 2, 3]),
+          fs.writeExecutable(path, [1, 2, 3], revalidate: () async {}),
           throwsA(isA<CliExecutableCheckFailure>()),
         );
       },
@@ -173,7 +242,7 @@ void main() {
         final path = pathIn(tempDir, 'cx');
 
         await expectLater(
-          fs.writeExecutable(path, [1, 2, 3]),
+          fs.writeExecutable(path, [1, 2, 3], revalidate: () async {}),
           throwsA(isA<CliExecutableCheckFailure>()),
         );
       },
@@ -192,7 +261,7 @@ void main() {
         io.File(path).writeAsBytesSync([9, 9, 9]);
 
         await expectLater(
-          fs.writeExecutable(path, [1, 2, 3]),
+          fs.writeExecutable(path, [1, 2, 3], revalidate: () async {}),
           throwsA(isA<io.FileSystemException>()),
         );
 
@@ -212,7 +281,7 @@ void main() {
         io.File(path).writeAsBytesSync([9, 9, 9]);
 
         await expectLater(
-          fs.writeExecutable(path, [1, 2, 3]),
+          fs.writeExecutable(path, [1, 2, 3], revalidate: () async {}),
           throwsA(isA<io.FileSystemException>()),
         );
 
