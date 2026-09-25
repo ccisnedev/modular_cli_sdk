@@ -166,12 +166,19 @@ class CommandCatalog {
   /// as a single edit (the "Damerau" part of Damerau-Levenshtein, in its
   /// cheaper OSA/restricted form: each substring is only ever transposed
   /// once). A candidate must be within [maxDistance] edits to be returned
-  /// at all: the default, 2, catches a typo like `shwo` -> `show`
-  /// (distance 1, transposition) without also matching words that merely
-  /// happen to share a few letters. Ties (more than one candidate at the
-  /// minimum distance found) are broken by catalog order: the order
-  /// routes were registered in, the same order [commands] reports.
-  String? suggest(String word, {int maxDistance = 2}) {
+  /// at all: 2 catches a typo like `shwo` -> `show` (distance 1,
+  /// transposition) without also matching words that merely happen to
+  /// share a few letters. Ties (more than one candidate at the minimum
+  /// distance found) are broken by catalog order: the order routes were
+  /// registered in, the same order [commands] reports.
+  ///
+  /// [maxDistance] is required: this catalog has no distance of its own to
+  /// fall back to, and a caller that does not say how tolerant to be would
+  /// otherwise get a silently chosen one, which could disagree with
+  /// whatever distance the rest of the CLI is configured with. `ModularCli`
+  /// is the usual caller; it always threads its own configured distance
+  /// through explicitly.
+  String? suggest(String word, {required int maxDistance}) {
     final vocabulary = <String>[];
     final seen = <String>{};
     for (final contract in _contracts) {
