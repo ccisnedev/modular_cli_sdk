@@ -609,7 +609,7 @@ Each row is what actually happens in `installation_plugin.dart`, not an aspirati
 | `alias-hard-link-unsupported` | `config.alias` resolves to a hard link to the executable rather than a symlink, a shape this plugin will not create or rewrite |
 | `download-failed` | the release asset could not be downloaded, or an `--apply` run failed at a point where no `CliInstallStepFailure` was thrown (the default id for an otherwise-untyped step failure) |
 | `install-target-changed` | immediately before writing the downloaded binary, re-resolving `config.executable` no longer matches the target `--apply`'s own plan showed: it fell off PATH, now resolves elsewhere, or is no longer a plain file |
-| `cleanup-start-failed` | `uninstall` renamed the running executable aside successfully, but the worker process that deletes it once this process exits could not be started; the renamed file is left behind and named in the message so it can be removed by hand |
+| `cleanup-start-failed` | `uninstall` renamed the running executable aside successfully, but the worker process that deletes it once this process exits could not be started, did not confirm it was ready in time, or its own private temporary directory could not be removed afterwards; the renamed file is left behind and named in the message so it can be removed by hand. A cleanup-directory failure that coincides with one of the other causes is folded into the same message rather than reported separately |
 
 ---
 

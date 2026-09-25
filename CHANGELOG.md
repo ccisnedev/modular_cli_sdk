@@ -271,6 +271,74 @@ A third pass over #30, against the same install/uninstall code.
   waiting for one, so nothing is left behind on success or on a startup
   failure
 
+### Fixed (fourth review round)
+
+A fourth pass over #30, again against the Windows cleanup worker and the
+hard-link identity check.
+
+- **The cleanup worker now distinguishes "no such parent process" from
+  every other failure to retain a handle on it.** `GetProcessById` is
+  wrapped in a `catch` scoped to `System.ArgumentException` only, the
+  exception it throws when no process with that id exists, so that case
+  alone is still treated as "the parent already exited." Any other
+  failure retaining a handle, such as access denied on a protected
+  process under PowerShell 5.1, is left uncaught: it stops the worker
+  before the ready marker is created, so `startCleanupWorker` sees no
+  marker in time and reports `cleanup-start-failed` instead of silently
+  treating the two cases the same way
+- **The ready marker can no longer recreate a private directory the CLI
+  already gave up on.** The worker used to create its marker with
+  `New-Item -Force`, which recreates a missing parent directory; a worker
+  that started slowly could use it to recreate the private directory
+  `IoCliProcessLauncher` had already deleted after giving up waiting,
+  scheduling a deletion the CLI had already reported as failed. The
+  marker is now created with `[System.IO.File]::Open(path,
+  [System.IO.FileMode]::CreateNew)`, which never creates a missing parent
+  and fails if the marker already exists. The remaining race is closed
+  with an absolute deadline: the CLI computes an absolute
+  `markerDeadlineUnixMs` (Unix epoch milliseconds, UTC) from its own
+  startup timeout minus a safety margin and carries it in the payload;
+  the worker refuses to create the marker past that deadline and exits,
+  deleting nothing. The CLI polls for the marker often enough, well under
+  that margin, that a marker the worker created in time is always
+  observed before the CLI's own, later deadline runs out
+- **A failure to remove the worker's private temporary directory is no
+  longer discarded.** `startCleanupWorker` now returns a warning instead
+  of nothing on success; if the worker confirmed ready but its own
+  private directory could not then be removed, that warning names the
+  directory and the error, and `uninstall`'s schedule step appends it to
+  the outcome it already reports, so it reaches both the JSON result and
+  the text output rather than vanishing into a swallowed catch. A
+  directory-cleanup failure that coincides with a start failure is folded
+  into the same `cleanup-start-failed` message instead of being reported
+  separately
+- **`hardLinkedAliasIssue` no longer reports "no issue" when the real
+  filesystem cannot actually tell.** `IoCliFileSystem.sameFile` used to
+  let `FileSystemEntity.identicalSync` throw past `canonicalize`
+  succeeding, which surfaced to callers as `sameFile` returning `false`,
+  identical to two genuinely different files: a hard-link alias whose
+  identity could not be determined looked exactly like no alias problem
+  at all. The identity check now runs through its own overridable seam,
+  and a failure is left to propagate as `AliasIdentityCheckFailure`, the
+  same typed error already used for a `canonicalize` failure at this
+  point, both in `upgrade --plan` and again immediately before `upgrade
+  --apply`'s own replace step
+- **`cleanupWorkerCmdCommandLine` and `cleanupWorkerEncodedBootstrapScript`
+  are no longer part of the public API.** Both were exported from the
+  public barrel only so a test could reach them; they are implementation
+  details of how the detached worker is launched. Removed from
+  `lib/modular_cli_sdk.dart`; the one test that needs them now imports
+  them from their `src` path directly
+- **CI now runs on a pull request into any base branch, not only `main`.**
+  The `pull_request` trigger was previously filtered to
+  `branches: [main]`, so a pull request whose base is any other branch,
+  including this very PR, got no CI at all. That filter is removed; the
+  `push` trigger, and the existing `ubuntu-latest` / `windows-latest`
+  matrix, are unchanged. (A prior review round's claim that no Windows
+  runner existed in this matrix did not match the file: `windows-latest`
+  was already there. macOS remains deliberately deferred, as recorded by
+  the comment citing issue #15, not an oversight this round addresses.)
+
 ### Notes
 
 - **No archive format.** An asset is assumed to be the executable itself;
