@@ -104,6 +104,47 @@ ModularCli _buildTouchShortcutCli(Command<TouchInput, TouchOutput> command) {
   return cli;
 }
 
+// ── Finding 5 fixture: a middleware that throws ────────────────────────────
+
+class _MarkerInput2 extends Input {
+  @override
+  Map<String, dynamic> toJson() => {};
+}
+
+class _MarkerOutput2 extends Output {
+  @override
+  Map<String, dynamic> toJson() => {'ok': true};
+
+  @override
+  int get exitCode => ExitCode.ok;
+}
+
+class _MarkerQuery2 implements Query<_MarkerInput2, _MarkerOutput2> {
+  _MarkerQuery2(this.input);
+
+  @override
+  final _MarkerInput2 input;
+
+  @override
+  String? validate() => null;
+
+  @override
+  Future<_MarkerOutput2> execute() async => _MarkerOutput2();
+}
+
+ModularCli _buildMiddlewareCli(CliMiddleware middleware) {
+  final cli = ModularCli(suggestionDistance: 2);
+  cli.query<_MarkerInput2, _MarkerOutput2>(
+    'marker',
+    (req) => _MarkerQuery2(_MarkerInput2()),
+    globals: true,
+    description: 'A marker route to dispatch middleware through',
+    contract: CliContract.none,
+  );
+  cli.use(middleware);
+  return cli;
+}
+
 void main() {
   group('finding 2: an invalid supplied option value wins over --help', () {
     test(
@@ -168,6 +209,70 @@ void main() {
       expect(result.stdout, contains('touched: a.txt'));
     });
   });
+
+  group(
+    'finding 5: a middleware that throws is caught inside its own boundary',
+    () {
+      test(
+        'run() returns the exit code instead of letting the exception '
+        'escape',
+        () async {
+          final cli = _buildMiddlewareCli(
+            (next) => (req) async {
+              throw CommandException(
+                id: 'middleware-blew-up',
+                message: 'the middleware refused this request',
+                exitCode: ExitCode.conflict,
+              );
+            },
+          );
+
+          final err = MemorySink();
+          final code = await cli.run(['marker'], stderr: err);
+
+          expect(code, equals(ExitCode.conflict));
+          expect(err.output, contains('middleware-blew-up'));
+          expect(err.output, contains('the middleware refused this request'));
+        },
+      );
+
+      test('writes the structured envelope under --json', () async {
+        final cli = _buildMiddlewareCli(
+          (next) => (req) async {
+            throw CommandException(
+              id: 'middleware-blew-up',
+              message: 'the middleware refused this request',
+              exitCode: ExitCode.conflict,
+            );
+          },
+        );
+
+        final err = MemorySink();
+        final code = await cli.run(['marker', '--json'], stderr: err);
+
+        expect(code, equals(ExitCode.conflict));
+        final envelope = jsonDecode(err.output) as Map<String, dynamic>;
+        final error = envelope['error'] as Map<String, dynamic>;
+        expect(error['id'], equals('middleware-blew-up'));
+        expect(error['exitCode'], equals(ExitCode.conflict));
+      });
+
+      test('a middleware that does not throw still runs normally', () async {
+        var ran = false;
+        final cli = _buildMiddlewareCli(
+          (next) => (req) async {
+            ran = true;
+            return next(req);
+          },
+        );
+
+        final result = await _runWith(cli, ['marker']);
+
+        expect(ran, isTrue);
+        expect(result.exitCode, equals(ExitCode.ok));
+      });
+    },
+  );
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
