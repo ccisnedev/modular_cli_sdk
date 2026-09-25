@@ -61,9 +61,13 @@ class FakeFileSystem implements CliFileSystem {
   Object? deleteError;
   Object? renameError;
   Object? canonicalizeError;
+  Object? resolveOnPathError;
 
   @override
-  String? resolveOnPath(String name) => _onPath[name];
+  String? resolveOnPath(String name) {
+    if (resolveOnPathError != null) throw resolveOnPathError!;
+    return _onPath[name];
+  }
 
   @override
   String canonicalize(String path) {

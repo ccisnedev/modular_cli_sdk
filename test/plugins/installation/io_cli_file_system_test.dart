@@ -186,7 +186,8 @@ void main() {
         final linkPath = pathIn(tempDir, 'link');
         try {
           io.Link(linkPath).createSync(target);
-        } on io.FileSystemException {
+        } on io.FileSystemException catch (e) {
+          markTestSkipped('could not create a symlink fixture: $e');
           return;
         }
         io.File(target).deleteSync();
@@ -211,7 +212,8 @@ void main() {
         final linkPath = pathIn(tempDir, 'link');
         try {
           io.Link(linkPath).createSync(target);
-        } on io.FileSystemException {
+        } on io.FileSystemException catch (e) {
+          markTestSkipped('could not create a symlink fixture: $e');
           return;
         }
 
@@ -301,6 +303,113 @@ void main() {
       },
       skip: io.Platform.isWindows ? 'POSIX execute bit only' : false,
     );
+
+    test(
+      'accepts a file the owner may execute (0700)',
+      () {
+        final binDir = io.Directory(pathIn(tempDir, 'bin'))..createSync();
+        final path = pathIn(binDir, 'cx');
+        io.File(path).writeAsBytesSync([1]);
+        io.Process.runSync('chmod', ['0700', path]);
+
+        final fs = IoCliFileSystem(pathDirectories: [binDir.path]);
+        expect(fs.resolveOnPath('cx'), path);
+      },
+      skip: io.Platform.isWindows ? 'POSIX execute bit only' : false,
+    );
+
+    test(
+      'finds a name behind a symlink to an executable',
+      () {
+        final binDir = io.Directory(pathIn(tempDir, 'bin'))..createSync();
+        final real = pathIn(binDir, 'cx-real');
+        io.File(real).writeAsBytesSync([1]);
+        io.Process.runSync('chmod', ['+x', real]);
+        final linkPath = pathIn(binDir, 'cx');
+        try {
+          io.Link(linkPath).createSync(real);
+        } on io.FileSystemException catch (e) {
+          fail(
+            'fixture setup failed: could not create a symlink for this '
+            'test to exercise ($e)',
+          );
+        }
+
+        final fs = IoCliFileSystem(pathDirectories: [binDir.path]);
+        expect(fs.resolveOnPath('cx'), linkPath);
+      },
+      skip: io.Platform.isWindows ? 'POSIX symlink semantics only' : false,
+    );
+
+    test(
+      'a checker that reports the candidate is not executable (exit 1) is '
+      'skipped in favor of the next PATH entry',
+      () {
+        final firstDir = io.Directory(pathIn(tempDir, 'first'))..createSync();
+        final secondDir = io.Directory(pathIn(tempDir, 'second'))
+          ..createSync();
+        final notExecutable = pathIn(firstDir, 'cx');
+        final executable = pathIn(secondDir, 'cx');
+        io.File(notExecutable).writeAsBytesSync([1]);
+        io.File(executable).writeAsBytesSync([1]);
+
+        final fs = IoCliFileSystem(
+          pathDirectories: [firstDir.path, secondDir.path],
+          executableChecker: _FakeExecutableChecker(
+            exitCodes: {notExecutable: 1, executable: 0},
+          ),
+        );
+        expect(fs.resolveOnPath('cx'), executable);
+      },
+      skip: io.Platform.isWindows
+          ? 'the executable checker is a POSIX-only concern'
+          : false,
+    );
+
+    test(
+      'a checker exit code other than 0 or 1 is a typed failure, not a '
+      'silent skip',
+      () {
+        final binDir = io.Directory(pathIn(tempDir, 'bin'))..createSync();
+        final path = pathIn(binDir, 'cx');
+        io.File(path).writeAsBytesSync([1]);
+
+        final fs = IoCliFileSystem(
+          pathDirectories: [binDir.path],
+          executableChecker: _FakeExecutableChecker(exitCodes: {path: 2}),
+        );
+        expect(
+          () => fs.resolveOnPath('cx'),
+          throwsA(isA<CliExecutableCheckFailure>()),
+        );
+      },
+      skip: io.Platform.isWindows
+          ? 'the executable checker is a POSIX-only concern'
+          : false,
+    );
+
+    test(
+      'the checker failing to start at all is a typed failure',
+      () {
+        final binDir = io.Directory(pathIn(tempDir, 'bin'))..createSync();
+        final path = pathIn(binDir, 'cx');
+        io.File(path).writeAsBytesSync([1]);
+
+        final fs = IoCliFileSystem(
+          pathDirectories: [binDir.path],
+          executableChecker: _FakeExecutableChecker(
+            startupError: {path: Exception('no such file or directory')},
+          ),
+        );
+        expect(
+          () => fs.resolveOnPath('cx'),
+          throwsA(isA<CliExecutableCheckFailure>()),
+        );
+      },
+      skip: io.Platform.isWindows
+          ? 'the executable checker is a POSIX-only concern'
+          : false,
+    );
   });
 
   group('sameFile', () {
@@ -328,7 +437,8 @@ void main() {
         final linkPath = pathIn(tempDir, 'link');
         try {
           io.Link(linkPath).createSync(target);
-        } on io.FileSystemException {
+        } on io.FileSystemException catch (e) {
+          markTestSkipped('could not create a symlink fixture: $e');
           return;
         }
 
@@ -345,9 +455,10 @@ void main() {
       final hardLinkPath = pathIn(tempDir, 'hardlink');
       final result = io.Process.runSync('ln', [target, hardLinkPath]);
       if (result.exitCode != 0) {
-        // Creating a hard link can fail for reasons outside this test's
-        // control (a filesystem that does not support them); the platform
-        // rule under test does not apply in that environment.
+        markTestSkipped(
+          'could not create a hard link fixture: ln exited '
+          '${result.exitCode}: ${result.stderr}',
+        );
         return;
       }
 
@@ -368,10 +479,12 @@ void main() {
 
       try {
         io.Link(linkPath).createSync(target);
-      } on io.FileSystemException {
+      } on io.FileSystemException catch (e) {
         // Creating a symlink can require a privilege this test process does
         // not have (notably on Windows without Developer Mode enabled); the
-        // platform rule under test does not apply in that environment.
+        // platform rule under test does not apply in that environment, and
+        // that is recorded as an explicit skip rather than a silent pass.
+        markTestSkipped('could not create a symlink fixture: $e');
         return;
       }
 
@@ -407,7 +520,8 @@ void main() {
         final linkPath = pathIn(tempDir, 'link');
         try {
           io.Link(linkPath).createSync(target);
-        } on io.FileSystemException {
+        } on io.FileSystemException catch (e) {
+          markTestSkipped('could not create a symlink fixture: $e');
           return;
         }
         io.File(target).deleteSync();
@@ -433,5 +547,29 @@ class _FailingRenameFileSystem extends IoCliFileSystem {
   @override
   Future<void> renameIntoPlace(io.File temp, String path) async {
     throw io.FileSystemException('simulated rename failure', path);
+  }
+}
+
+/// An injected [CliExecutableChecker] whose answer for each path is fixed by
+/// the test, in place of actually shelling out to `/bin/test` or
+/// `/usr/bin/test`: exit codes, or a startup failure, per path.
+class _FakeExecutableChecker implements CliExecutableChecker {
+  _FakeExecutableChecker({
+    this.exitCodes = const {},
+    this.startupError = const {},
+  });
+
+  final Map<String, int> exitCodes;
+  final Map<String, Object> startupError;
+
+  @override
+  int exitCodeFor(String path) {
+    final error = startupError[path];
+    if (error != null) throw error;
+    final exitCode = exitCodes[path];
+    if (exitCode == null) {
+      throw StateError('no exit code configured for $path in this test');
+    }
+    return exitCode;
   }
 }

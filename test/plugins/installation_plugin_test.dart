@@ -304,6 +304,31 @@ void main() {
       },
     );
 
+    test(
+      'the executable check itself failing is a distinct, typed error from '
+      'the executable not being found at all',
+      () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+          ..resolveOnPathError = Exception('permission denied reading PATH');
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+          ),
+        );
+
+        final err = MemorySink();
+        final code = await cli.run([
+          'upgrade',
+          '--apply',
+          '--autoapprove',
+        ], stderr: err);
+
+        expect(code, ExitCode.genericError);
+        expect(err.output, contains('executable-check-failed'));
+      },
+    );
+
     test('installs to the resolved target, not a symlinked PATH entry, when '
         'the executable on PATH is a symlink', () async {
       // `cx` on PATH is a symlink to a versioned install directory (as a
@@ -396,7 +421,8 @@ void main() {
         io.Process.runSync('chmod', ['+x', targetPath]);
         try {
           io.Link(linkPath).createSync(targetPath);
-        } on io.FileSystemException {
+        } on io.FileSystemException catch (e) {
+          markTestSkipped('could not create a symlink fixture: $e');
           return;
         }
 
@@ -558,6 +584,26 @@ void main() {
     });
 
     test(
+      'the executable check itself failing is a distinct, typed error from '
+      'nothing being on PATH',
+      () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+          ..resolveOnPathError = Exception('permission denied reading PATH');
+        final cli = _cliWith(_upgradePlugin(fileSystem: fileSystem));
+
+        final err = MemorySink();
+        final code = await cli.run([
+          'uninstall',
+          '--apply',
+          '--autoapprove',
+        ], stderr: err);
+
+        expect(code, ExitCode.genericError);
+        expect(err.output, contains('executable-check-failed'));
+      },
+    );
+
+    test(
       'a failure to remove the executable reports file-access-denied',
       () async {
         final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
@@ -693,7 +739,8 @@ void main() {
         io.Process.runSync('chmod', ['+x', binaryPath]);
         try {
           io.Link(aliasPath).createSync(binaryPath);
-        } on io.FileSystemException {
+        } on io.FileSystemException catch (e) {
+          markTestSkipped('could not create a symlink fixture: $e');
           return;
         }
 
@@ -765,6 +812,43 @@ void main() {
 
         final code = await cli.run(['doctor'], stdout: MemorySink());
         expect(code, ExitCode.ok);
+      },
+    );
+
+    test(
+      'the binary check itself failing reports that it could not check, '
+      'not that the binary was not found',
+      () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+          ..resolveOnPathError = Exception('permission denied reading PATH');
+        final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
+
+        final out = MemorySink();
+        final code = await cli.run(['doctor'], stdout: out);
+
+        expect(code, ExitCode.configError);
+        expect(out.output, contains('could not check'));
+        expect(out.output, isNot(contains('was not found on PATH')));
+      },
+    );
+
+    test(
+      'the alias check itself failing reports that it could not check, not '
+      'that the alias was not found',
+      () async {
+        final fileSystem = FakeFileSystem(
+          onPath: {
+            'cx': '/usr/local/bin/cx',
+            'calculatrix': '/usr/local/bin/cx',
+          },
+        )..resolveOnPathError = Exception('permission denied reading PATH');
+        final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
+
+        final out = MemorySink();
+        final code = await cli.run(['doctor'], stdout: out);
+
+        expect(code, ExitCode.configError);
+        expect(out.output, contains('could not check'));
       },
     );
 
