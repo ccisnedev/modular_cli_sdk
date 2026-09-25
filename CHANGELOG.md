@@ -169,11 +169,22 @@ rejected. No bug or missing API was found in it while building this one.
   returns is now always the written exception's own `exitCode`, not a
   separate computation that could drift from it
 - **A middleware registered through `ModularCli.use()` that throws a
-  `CommandException` no longer escapes `run()`.** Each middleware now runs
-  inside its own error boundary: a thrown `CommandException` is caught and
-  turned into the same structured error envelope a failed command or a
-  rejected invocation produces, honoring the resolved request's `--json`
-  mode, instead of propagating out of `run()` as an uncaught exception
+  `CommandException` no longer escapes `run()`, and, when middleware is
+  nested, exactly one structured error envelope is rendered for the whole
+  invocation.** Each middleware still runs inside its own error boundary,
+  covering a throw from its own construction as well as one from the
+  handler it returns, but that boundary only records which
+  `CommandException` terminated the invocation and converts it to a plain
+  exit code an outer middleware can still inspect through its own `await
+  next(req)`; the outer boundary's own catch, if it has one, records over
+  that in turn. Rendering happens exactly once, after the whole chain has
+  finished, for whichever exception was recorded last, the one that
+  actually terminates the invocation, an outer middleware's own throw when
+  it escalates a failure of its own, an inner one otherwise. Previously
+  every boundary rendered its own catch immediately: an inner middleware's
+  construction-time throw, escalated by an outer middleware into a fresh
+  throw of its own, wrote two concatenated JSON documents to stderr instead
+  of one
 - **A constraint (`ExactlyOne`, `MutuallyExclusive`) now counts a bound
   positional by name, the same as an option.** Previously only option
   presence was checked, so `eval rpn '1 2 +'` (the positional alone) ran
