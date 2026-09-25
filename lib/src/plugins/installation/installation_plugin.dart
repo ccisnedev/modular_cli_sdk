@@ -146,8 +146,22 @@ class InstallationPlugin implements CliPlugin {
     // catches a hard-linked alias, which canonicalize alone cannot: a hard
     // link has no symlink target to resolve, so two hard-linked paths
     // canonicalize to two different strings despite naming the same inode.
-    final isSameBinary =
-        binaryPath != null && fileSystem.sameFile(aliasPath, binaryPath);
+    final bool isSameBinary;
+    String? hardLinkIssue;
+    try {
+      isSameBinary =
+          binaryPath != null && fileSystem.sameFile(aliasPath, binaryPath);
+      hardLinkIssue = isSameBinary
+          ? hardLinkedAliasIssue(fileSystem, config, aliasPath, binaryPath)
+          : null;
+    } on Object catch (e) {
+      return CliCheckResult(
+        status: CliCheckStatus.error,
+        message:
+            'could not check whether ${config.alias} resolves to '
+            '${config.executable}: $e',
+      );
+    }
     if (!isSameBinary) {
       return CliCheckResult(
         status: CliCheckStatus.error,
@@ -155,12 +169,6 @@ class InstallationPlugin implements CliPlugin {
             '${config.alias} resolves to $aliasPath, not ${config.executable}',
       );
     }
-    final hardLinkIssue = hardLinkedAliasIssue(
-      fileSystem,
-      config,
-      aliasPath,
-      binaryPath,
-    );
     if (hardLinkIssue != null) {
       return CliCheckResult(status: CliCheckStatus.error, message: hardLinkIssue);
     }
@@ -311,6 +319,21 @@ CliReleaseAsset? assetForPlatform(
   return null;
 }
 
+/// Thrown by [hardLinkedAliasIssue] when whether the alias is a hard link
+/// to the executable could not be determined: [CliFileSystem.sameFile] or
+/// [CliFileSystem.canonicalize] failed while comparing them. Propagated
+/// rather than swallowed into "no issue": a caller that cannot tell whether
+/// the alias is a hard link must be told that, not handed a false all-clear
+/// that reports a broken or unverifiable alias as fine.
+class AliasIdentityCheckFailure implements Exception {
+  const AliasIdentityCheckFailure(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// Whether [config]'s alias is currently a hard link to its executable
 /// rather than a symlink, or the exact same raw path, or not resolving to
 /// the same file at all.
@@ -334,6 +357,12 @@ CliReleaseAsset? assetForPlatform(
 /// when they resolve to the same file by way of a symlink rather than a
 /// hard link: none of those is the hard-link problem this checks for, and
 /// each is either fine or a different, already-reported problem.
+///
+/// Throws [AliasIdentityCheckFailure] when [CliFileSystem.sameFile] or
+/// [CliFileSystem.canonicalize] itself fails while comparing [aliasPath]
+/// and [executablePath]: that failure means whether the alias is a hard
+/// link genuinely cannot be determined, which is not the same thing as it
+/// being fine, and callers must not treat it that way.
 String? hardLinkedAliasIssue(
   CliFileSystem fileSystem,
   CliInstallationConfig config,
@@ -346,8 +375,11 @@ String? hardLinkedAliasIssue(
   final bool isSameFile;
   try {
     isSameFile = fileSystem.sameFile(aliasPath, executablePath);
-  } on Object {
-    return null;
+  } on Object catch (e) {
+    throw AliasIdentityCheckFailure(
+      'Could not determine whether $aliasPath and $executablePath are the '
+      'same file: $e',
+    );
   }
   if (!isSameFile) return null;
 
@@ -356,8 +388,11 @@ String? hardLinkedAliasIssue(
     sameCanonicalTarget =
         fileSystem.canonicalize(aliasPath) ==
         fileSystem.canonicalize(executablePath);
-  } on Object {
-    return null;
+  } on Object catch (e) {
+    throw AliasIdentityCheckFailure(
+      'Could not resolve $aliasPath or $executablePath to compare their '
+      'canonical targets: $e',
+    );
   }
   if (sameCanonicalTarget) return null;
 
@@ -561,12 +596,23 @@ class UpgradeCommand
         exitCode: ExitCode.genericError,
       );
     }
-    final hardLinkIssue = hardLinkedAliasIssue(
-      fileSystem,
-      config,
-      aliasPath,
-      installPath,
-    );
+    final String? hardLinkIssue;
+    try {
+      hardLinkIssue = hardLinkedAliasIssue(
+        fileSystem,
+        config,
+        aliasPath,
+        installPath,
+      );
+    } on AliasIdentityCheckFailure catch (e) {
+      throw CommandException(
+        code: 'executable-check-failed',
+        message:
+            'Could not check whether ${config.alias} is a hard link to '
+            '${config.executable}: $e',
+        exitCode: ExitCode.genericError,
+      );
+    }
     if (hardLinkIssue != null) {
       throw CommandException(
         code: 'alias-hard-link-unsupported',
@@ -738,12 +784,21 @@ class InstallExecutableStep implements Step {
         'Could not check whether ${config.alias} is on PATH: $e',
       );
     }
-    final hardLinkIssue = hardLinkedAliasIssue(
-      fileSystem,
-      config,
-      aliasPath,
-      reResolvedInstallPath,
-    );
+    final String? hardLinkIssue;
+    try {
+      hardLinkIssue = hardLinkedAliasIssue(
+        fileSystem,
+        config,
+        aliasPath,
+        reResolvedInstallPath,
+      );
+    } on AliasIdentityCheckFailure catch (e) {
+      throw CliInstallStepFailure(
+        'executable-check-failed',
+        'Could not check whether ${config.alias} is a hard link to '
+            '${config.executable}: $e',
+      );
+    }
     if (hardLinkIssue != null) {
       throw CliInstallStepFailure('alias-hard-link-unsupported', hardLinkIssue);
     }

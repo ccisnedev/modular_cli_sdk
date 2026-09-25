@@ -101,6 +101,7 @@ export 'src/plugins/installation/cli_release_source.dart'
         HttpCliReleaseSource;
 export 'src/plugins/installation/installation_plugin.dart'
     show
+        AliasIdentityCheckFailure,
         CliInstallStepFailure,
         CliInstallationConfig,
         CliInvalidReleaseTag,
@@ -116,6 +117,7 @@ export 'src/plugins/installation/installation_plugin.dart'
         UpgradeInput,
         UpgradeOutput,
         assetForPlatform,
+        hardLinkedAliasIssue,
         latestTaggedRelease;
 export 'src/plugins/version_plugin.dart'
     show VersionInput, VersionOutput, VersionPlugin, VersionQuery;
