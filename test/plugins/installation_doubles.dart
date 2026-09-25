@@ -83,6 +83,23 @@ class FakeFileSystem implements CliFileSystem {
   Object? canonicalizeError;
   Object? resolveOnPathError;
 
+  /// Makes [sameFile] throw [sameFileError] on every call, in place of its
+  /// normal identity comparison. Used to exercise a caller
+  /// (`hardLinkedAliasIssue`, in particular) that must propagate a
+  /// [sameFile] resolution failure rather than swallow it.
+  Object? sameFileError;
+
+  /// Once [canonicalize] has been called [canonicalizeErrorAfterCalls]
+  /// times, every call after that throws [canonicalizeError] instead of
+  /// resolving normally; calls up to and including that count still resolve
+  /// normally. Left at 0 (the default whenever [canonicalizeError] is set),
+  /// every call throws, matching the plain [canonicalizeError] behaviour
+  /// this replaces. A test sets this higher to let an earlier caller (e.g.
+  /// [sameFile]'s own internal canonicalize calls) succeed, and only a
+  /// later, separate canonicalize call fail.
+  int canonicalizeErrorAfterCalls = 0;
+  int _canonicalizeCalls = 0;
+
   @override
   String? resolveOnPath(String name) {
     if (resolveOnPathError != null) throw resolveOnPathError!;
@@ -124,15 +141,21 @@ class FakeFileSystem implements CliFileSystem {
 
   @override
   String canonicalize(String path) {
-    if (canonicalizeError != null) throw canonicalizeError!;
+    _canonicalizeCalls++;
+    if (canonicalizeError != null &&
+        _canonicalizeCalls > canonicalizeErrorAfterCalls) {
+      throw canonicalizeError!;
+    }
     return _canonicalTargets[path] ?? path;
   }
 
   @override
-  bool sameFile(String a, String b) =>
-      a == b ||
-      canonicalize(a) == canonicalize(b) ||
-      _hardLinkedPairs.contains((a, b));
+  bool sameFile(String a, String b) {
+    if (sameFileError != null) throw sameFileError!;
+    return a == b ||
+        canonicalize(a) == canonicalize(b) ||
+        _hardLinkedPairs.contains((a, b));
+  }
 
   @override
   bool isRegularFile(String path) => !nonRegularFiles.contains(path);

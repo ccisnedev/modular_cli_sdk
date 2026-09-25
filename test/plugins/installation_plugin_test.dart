@@ -60,6 +60,89 @@ void main() {
     });
   });
 
+  group('hardLinkedAliasIssue', () {
+    final config = _config();
+
+    test(
+      'propagates a sameFile identity-resolution failure instead of '
+      'reporting no issue',
+      () {
+        final fileSystem =
+            FakeFileSystem(
+              onPath: {
+                'cx': '/usr/local/bin/cx',
+                'calculatrix': '/usr/local/bin/calculatrix',
+              },
+            )..sameFileError = Exception(
+              'permission denied comparing identity',
+            );
+
+        expect(
+          () => hardLinkedAliasIssue(
+            fileSystem,
+            config,
+            '/usr/local/bin/calculatrix',
+            '/usr/local/bin/cx',
+          ),
+          throwsA(isA<AliasIdentityCheckFailure>()),
+        );
+      },
+    );
+
+    test(
+      'propagates a canonicalize identity-resolution failure instead of '
+      'reporting no issue',
+      () {
+        // markHardLinked makes sameFile true through its identicalSync
+        // branch, which itself calls canonicalize twice (once per path)
+        // without failing. canonicalizeErrorAfterCalls lets those two
+        // succeed and only the direct canonicalize calls hardLinkedAliasIssue
+        // makes afterward, to compare the two paths' canonical targets, fail.
+        final fileSystem =
+            FakeFileSystem(
+              onPath: {
+                'cx': '/usr/local/bin/cx',
+                'calculatrix': '/usr/local/bin/calculatrix',
+              },
+            )..markHardLinked(
+              '/usr/local/bin/calculatrix',
+              '/usr/local/bin/cx',
+            );
+        fileSystem.canonicalizeError = Exception(
+          'permission denied resolving canonical target',
+        );
+        fileSystem.canonicalizeErrorAfterCalls = 2;
+
+        expect(
+          () => hardLinkedAliasIssue(
+            fileSystem,
+            config,
+            '/usr/local/bin/calculatrix',
+            '/usr/local/bin/cx',
+          ),
+          throwsA(isA<AliasIdentityCheckFailure>()),
+        );
+      },
+    );
+
+    test('returns null when either path is null', () {
+      final fileSystem = FakeFileSystem();
+      expect(
+        hardLinkedAliasIssue(fileSystem, config, null, '/usr/local/bin/cx'),
+        isNull,
+      );
+      expect(
+        hardLinkedAliasIssue(
+          fileSystem,
+          config,
+          '/usr/local/bin/calculatrix',
+          null,
+        ),
+        isNull,
+      );
+    });
+  });
+
   group('upgrade', () {
     test('invoked with neither --plan nor --apply is refused', () async {
       final cli = _cliWith(_upgradePlugin());
@@ -637,6 +720,73 @@ void main() {
         expect(fileSystem.written, isEmpty);
       },
     );
+
+    test(
+      'upgrade refuses to plan with a typed error when whether the alias '
+      'is a hard link cannot be determined',
+      () async {
+        final fileSystem =
+            FakeFileSystem(
+              onPath: {
+                'cx': '/usr/local/bin/cx',
+                'calculatrix': '/usr/local/bin/calculatrix',
+              },
+            )..sameFileError = Exception(
+              'permission denied comparing identity',
+            );
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+          ),
+        );
+
+        final err = MemorySink();
+        final code = await cli.run(['upgrade', '--plan'], stderr: err);
+
+        expect(code, ExitCode.genericError);
+        expect(err.output, contains('executable-check-failed'));
+        expect(err.output, isNot(contains('alias-hard-link-unsupported')));
+      },
+    );
+
+    test(
+      'apply fails with a typed error when whether the alias became a hard '
+      'link cannot be determined at the replace step',
+      () async {
+        final fileSystem = FakeFileSystem(
+          onPath: {
+            'cx': '/usr/local/bin/cx',
+            'calculatrix': '/usr/local/bin/calculatrix',
+          },
+        );
+        final downloader = FakeDownloader(
+          bytes: const [9, 9, 9],
+          onDownload: () => fileSystem.sameFileError = Exception(
+            'permission denied comparing identity',
+          ),
+        );
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+            downloader: downloader,
+          ),
+        );
+
+        final out = MemorySink();
+        final code = await cli.run([
+          'upgrade',
+          '--apply',
+          '--autoapprove',
+        ], stdout: out);
+
+        expect(code, ExitCode.genericError);
+        expect(out.output, contains('executable-check-failed'));
+        expect(out.output, isNot(contains('alias-hard-link-unsupported')));
+        expect(fileSystem.written, isEmpty);
+      },
+    );
   });
 
   group('uninstall', () {
@@ -1128,6 +1278,29 @@ void main() {
       },
     );
 
+    test(
+      'the alias identity check itself failing is a doctor error, not a '
+      'silent ok',
+      () async {
+        final fileSystem =
+            FakeFileSystem(
+              onPath: {
+                'cx': '/usr/local/bin/cx',
+                'calculatrix': '/usr/local/bin/calculatrix',
+              },
+            )..sameFileError = Exception(
+              'permission denied comparing identity',
+            );
+        final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
+
+        final out = MemorySink();
+        final code = await cli.run(['doctor'], stdout: out);
+
+        expect(code, ExitCode.configError);
+        expect(out.output, contains('could not check'));
+      },
+    );
+
     test('a newer release is a warning, not an error', () async {
       final fileSystem = FakeFileSystem(
         onPath: {'cx': '/usr/local/bin/cx', 'calculatrix': '/usr/local/bin/cx'},
@@ -1199,6 +1372,19 @@ void main() {
     });
   });
 }
+
+CliInstallationConfig _config({String tagPrefix = 'cli-v'}) =>
+    CliInstallationConfig(
+      repository: 'ccisnedev/calculatrix',
+      tagPrefix: tagPrefix,
+      executable: 'cx',
+      alias: 'calculatrix',
+      assets: const {
+        'linux': 'cx-linux',
+        'macos': 'cx-macos',
+        'windows': 'cx-windows.exe',
+      },
+    );
 
 InstallationPlugin _upgradePlugin({
   List<CliRelease> releases = const [],
