@@ -401,6 +401,63 @@ A fifth pass over #30, focused on the same Windows cleanup worker.
   self-skip on this machine, is fixed the same way, and now actually
   runs against pid 4 rather than reporting itself skipped
 
+### Fixed (sixth review round)
+
+A sixth pass over #30, adding a second phase to the same claim protocol
+so that winning phase 1 is never mistaken for a completed cleanup.
+
+- **A worker that crashes or goes silent between creating its ready
+  marker and being claimed is no longer reported as `scheduled`.**
+  Winning the phase 1 claim, the `ready` to `accepted` rename, used to
+  be treated as success on its own, but a claimed marker with no live
+  worker behind it deletes nothing. The protocol gains a second,
+  independent single-winner rename: the worker, on observing `accepted`,
+  arms deletion by renaming `accepted` to `armed`; `IoCliProcessLauncher`
+  reports `scheduled` only once `pollForArm` has itself observed that
+  `armed` marker, not merely the earlier claim. If the CLI's own ack
+  deadline passes first with no `armed` marker observed, it renames
+  `accepted` to `revoked` instead; a worker that loses the arming rename
+  finds `revoked` and exits without touching the target paths, and the
+  CLI reports `cleanup-start-failed`
+- **A failed abandonment is no longer swallowed by an empty catch.**
+  The worker's `abandoned` rename used to sit inside a bare `catch`
+  that discarded anything other than the expected loss, so a real
+  failure, such as a sharing violation, let the worker exit with its
+  `ready` marker still in place, claimable by a CLI that had already
+  moved on and would then report success for a worker no longer
+  running. An unexpected rename failure, on either the abandon rename
+  or the new arm rename, is now retried on the same poll interval until
+  the worker's own ack deadline, and only then does it record a
+  `failed` marker, best effort, before exiting. The worker never exits
+  while `ready` or `accepted` still exists as a claimable marker.
+  `tryClaimReadyMarker` and `tryRevokeAcceptedMarker` rethrow an
+  unexpected failure instead of hiding it, and `pollForClaim`, on the
+  CLI side, retries through the same kind of transient failure and
+  rethrows only once its own deadline has passed, so the failure that
+  reaches a caller is always the real typed exception, not a generic
+  timeout standing in for it
+- **The worker's wait on its parent process no longer has a five
+  minute cap.** Once armed, the worker used to wait for the parent to
+  exit for at most `cleanupWorkerParentExitTimeoutMs` before giving up
+  on its own; a suspended CLI process or a long-lived host that simply
+  outlived that window then left the target paths and the worker's
+  private directory behind with no further attempt. That constant is
+  removed. An armed worker now waits on the parent handle with no
+  timeout: deletion stays armed until the parent actually exits
+- **The bootstrap script's abandon and arm renames now share one
+  retry-and-failure-marker helper, `Complete-Rename`, instead of each
+  carrying its own copy.** Phase 2 added a second rename with the same
+  retry-until-ack-deadline shape as the first, and writing it out twice
+  pushed the full `cmd.exe` command line back over its roughly
+  8191-character limit. Factoring the shared logic into one function
+  keeps the command line well under that limit while giving both
+  renames the same failure handling
+- Every phase 2 state and timing is a named constant:
+  `cleanupWorkerArmedMarkerFileName`, `cleanupWorkerRevokedMarkerFileName`,
+  `cleanupWorkerFailedMarkerFileName`, and `cleanupWorkerAckTimeout` for
+  how long `IoCliProcessLauncher` waits to observe `armed` before it
+  revokes
+
 ### Notes
 
 - **No archive format.** An asset is assumed to be the executable itself;
