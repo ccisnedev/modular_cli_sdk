@@ -113,6 +113,8 @@ class ModularCli {
   final CommandCatalog _catalog = CommandCatalog();
   final List<CliPlugin> _plugins = [];
   bool _pluginsBuilt = false;
+  Object? _buildFailure;
+  StackTrace? _buildFailureStack;
 
   /// Every registered route's business logic, keyed by
   /// [CommandContract.route]. Shared by every [ModuleBuilder] this instance
@@ -311,37 +313,73 @@ class ModularCli {
   /// chance to register a route. [run] calls [buildPlugins] itself; call it
   /// directly only where you need the plugin set built without also
   /// dispatching an invocation, such as a test that asserts on [catalog].
+  ///
+  /// Throws [StateError] once [buildPlugins] has been attempted, whether it
+  /// succeeded or failed: a plugin added after that point would silently
+  /// never run (a success has already set up every plugin it knew about) or
+  /// would be added to a set already found broken, neither of which this
+  /// method accepts without saying so.
   ModularCli plugin(CliPlugin plugin) {
+    if (_pluginsBuilt) {
+      throw StateError(
+        'Cannot register plugin "${plugin.manifest.id}": the plugin set was '
+        'already built. Call plugin() for every plugin before run() or '
+        'buildPlugins() runs.',
+      );
+    }
     _plugins.add(plugin);
     return this;
   }
 
   /// Validate and set up every plugin registered with [plugin].
   ///
-  /// Idempotent: a second call, including the one [run] makes, does nothing.
-  /// Validation happens for every plugin before [CliPlugin.setup] runs for
-  /// any of them: a duplicate id, an incompatible [CliPluginManifest.hostApiVersion],
-  /// a missing dependency or a dependency cycle is a failure of the whole
-  /// set, not of whichever plugin happened to be set up first, so none of the
-  /// set is allowed to register a single route before every plugin in it has
-  /// passed every check that does not require running [setup] itself.
+  /// Idempotent on success: a second call, including the one [run] makes,
+  /// does nothing. Validation happens for every plugin before
+  /// [CliPlugin.setup] runs for any of them: a duplicate id, an incompatible
+  /// [CliPluginManifest.hostApiVersion], a missing dependency or a dependency
+  /// cycle is a failure of the whole set, not of whichever plugin happened to
+  /// be set up first, so none of the set is allowed to register a single
+  /// route before every plugin in it has passed every check that does not
+  /// require running [setup] itself.
   ///
   /// Throws [CliPluginError]: there is no fallback that runs a plugin set
-  /// found to be broken.
+  /// found to be broken. A failed build is remembered, not merely marked
+  /// done: a second call, including the one [run] makes on every invocation,
+  /// rethrows the same failure instead of silently skipping validation and
+  /// dispatching against whatever partial state the first attempt left.
   void buildPlugins() {
-    if (_pluginsBuilt) return;
-    _pluginsBuilt = true;
-    if (_plugins.isEmpty) return;
-
-    final ordered = orderCliPlugins(_plugins);
-    for (final plugin in ordered) {
-      checkHostApiCompatibility(plugin.manifest);
+    if (_pluginsBuilt) {
+      final failure = _buildFailure;
+      if (failure != null) {
+        Error.throwWithStackTrace(
+          failure,
+          _buildFailureStack ?? StackTrace.current,
+        );
+      }
+      return;
+    }
+    if (_plugins.isEmpty) {
+      _pluginsBuilt = true;
+      return;
     }
 
-    final host = RuntimeCliPluginHost(this);
-    for (final plugin in ordered) {
-      host.currentPluginId = plugin.manifest.id;
-      plugin.setup(host);
+    try {
+      final ordered = orderCliPlugins(_plugins);
+      for (final plugin in ordered) {
+        checkHostApiCompatibility(plugin.manifest);
+      }
+
+      final host = RuntimeCliPluginHost(this);
+      for (final plugin in ordered) {
+        host.currentPluginId = plugin.manifest.id;
+        plugin.setup(host);
+      }
+      _pluginsBuilt = true;
+    } on Object catch (e, st) {
+      _pluginsBuilt = true;
+      _buildFailure = e;
+      _buildFailureStack = st;
+      rethrow;
     }
   }
 

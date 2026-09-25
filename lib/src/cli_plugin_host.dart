@@ -99,6 +99,16 @@ class RuntimeCliPluginHost implements CliPluginHost {
 
   @override
   void declareExtensionPoint<T>(String id) {
+    final existing = _extensionPointTypes[id];
+    if (existing != null) {
+      throw CliPluginError(
+        'PLUGIN_EXTENSION_POINT_DUPLICATE',
+        'Plugin "${currentPluginId ?? '?'}" declared extension point "$id" a '
+            'second time; it was already declared for $existing.',
+        pluginId: currentPluginId,
+        resourceId: id,
+      );
+    }
     _extensionPointTypes[id] = T;
     _contributions.putIfAbsent(id, () => []);
   }

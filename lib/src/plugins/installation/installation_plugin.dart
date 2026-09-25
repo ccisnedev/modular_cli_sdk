@@ -8,6 +8,7 @@ import '../../exit_codes.dart';
 import '../../explains_nothing_to_do.dart';
 import '../../input.dart';
 import '../../output.dart';
+import '../../skips_interactive_approval.dart';
 import '../doctor_plugin.dart';
 import 'cli_downloader.dart';
 import 'cli_file_system.dart';
@@ -83,7 +84,11 @@ class InstallationPlugin implements CliPlugin {
     );
     host.registerCommand<UninstallInput, UninstallOutput>(
       'uninstall',
-      (req) => UninstallCommand(UninstallInput(), config: config, fileSystem: fileSystem),
+      (req) => UninstallCommand(
+        UninstallInput(),
+        config: config,
+        fileSystem: fileSystem,
+      ),
       description: 'Remove this CLI',
     );
   }
@@ -91,7 +96,10 @@ class InstallationPlugin implements CliPlugin {
   Future<CliCheckResult> _checkBinary() async {
     final path = fileSystem.resolveOnPath(config.executable);
     return path != null
-        ? CliCheckResult(status: CliCheckStatus.ok, message: '${config.executable} found at $path')
+        ? CliCheckResult(
+            status: CliCheckStatus.ok,
+            message: '${config.executable} found at $path',
+          )
         : CliCheckResult(
             status: CliCheckStatus.error,
             message: '${config.executable} was not found on PATH',
@@ -107,10 +115,19 @@ class InstallationPlugin implements CliPlugin {
         message: '${config.alias} was not found on PATH',
       );
     }
-    if (aliasPath != binaryPath) {
+    // Compared by canonical identity, not by path string: a valid symlink
+    // (`cx -> calculatrix`) resolves under each name to a different path on
+    // disk even though both ultimately open the same file, and a
+    // string-equality check would report that as broken.
+    final isSameBinary =
+        binaryPath != null &&
+        fileSystem.canonicalize(aliasPath) ==
+            fileSystem.canonicalize(binaryPath);
+    if (!isSameBinary) {
       return CliCheckResult(
         status: CliCheckStatus.error,
-        message: '${config.alias} resolves to $aliasPath, not ${config.executable}',
+        message:
+            '${config.alias} resolves to $aliasPath, not ${config.executable}',
       );
     }
     return CliCheckResult(
@@ -130,22 +147,41 @@ class InstallationPlugin implements CliPlugin {
       );
     }
 
-    final latest = latestTaggedRelease(releases, config.tagPrefix);
+    final CliRelease? latest;
+    try {
+      latest = latestTaggedRelease(releases, config.tagPrefix);
+    } on CliInvalidReleaseTag catch (e) {
+      return CliCheckResult(
+        status: CliCheckStatus.warning,
+        message:
+            'Release ${e.tagName} in ${config.repository} does not parse as '
+            'semver once the tag prefix "${config.tagPrefix}" is stripped.',
+      );
+    }
     if (latest == null) {
       return CliCheckResult(
         status: CliCheckStatus.warning,
-        message: 'No release with tag prefix "${config.tagPrefix}" was found in ${config.repository}.',
+        message:
+            'No release with tag prefix "${config.tagPrefix}" was found in ${config.repository}.',
       );
     }
 
-    final latestVersion = semver.Version.parse(latest.tagName.substring(config.tagPrefix.length));
+    final latestVersion = semver.Version.parse(
+      latest.tagName.substring(config.tagPrefix.length),
+    );
     final current = semver.Version.parse(host.metadata().version);
     return latestVersion > current
         ? CliCheckResult(
             status: CliCheckStatus.warning,
-            message: 'A newer release is available: ${latest.tagName} (current: ${host.metadata().version}).',
+            message:
+                'A newer release is available: ${latest.tagName} '
+                '(current: ${host.metadata().version}). Run '
+                '"${config.alias} upgrade --apply" to install it.',
           )
-        : CliCheckResult(status: CliCheckStatus.ok, message: 'Up to date (${host.metadata().version}).');
+        : CliCheckResult(
+            status: CliCheckStatus.ok,
+            message: 'Up to date (${host.metadata().version}).',
+          );
   }
 }
 
@@ -181,11 +217,32 @@ class CliInstallationConfig {
   final Map<String, String> assets;
 }
 
+/// Thrown by [latestTaggedRelease] when a release's tag carries [CliInstallationConfig.tagPrefix]
+/// but the remainder does not parse as semver, e.g. `cli-vnightly` under the
+/// prefix `cli-v`. Surfaced rather than skipped: a tag this CLI's own release
+/// process produced and cannot make sense of is a fact about the repository
+/// worth reporting, not a candidate quietly passed over in favor of the next
+/// one that happens to parse.
+class CliInvalidReleaseTag implements Exception {
+  const CliInvalidReleaseTag(this.tagName);
+
+  /// The tag that did not parse, exactly as GitHub returned it.
+  final String tagName;
+
+  @override
+  String toString() =>
+      'Tag "$tagName" does not parse as semver once its prefix is stripped.';
+}
+
 /// The newest release among [releases] whose tag starts with [tagPrefix] and
-/// parses as semver once the prefix is stripped. A tag that does not parse,
-/// or does not carry the prefix at all, such as an application's own `v*` tag
-/// living in the same repository as this CLI's `cli-v*`, is skipped rather
-/// than guessed at.
+/// parses as semver once the prefix is stripped, or null when no release
+/// carries [tagPrefix] at all. A tag with no [tagPrefix] (an application's
+/// own `v*` tag living in the same repository as this CLI's `cli-v*`) is not
+/// a candidate and is skipped without comment. A tag that does carry
+/// [tagPrefix] but fails to parse once it is stripped is a different thing:
+/// [CliInvalidReleaseTag] is thrown rather than silently passed over, because
+/// treating it as absent could report a repository as up to date against a
+/// release nobody actually superseded.
 CliRelease? latestTaggedRelease(List<CliRelease> releases, String tagPrefix) {
   CliRelease? best;
   semver.Version? bestVersion;
@@ -193,9 +250,11 @@ CliRelease? latestTaggedRelease(List<CliRelease> releases, String tagPrefix) {
     if (!release.tagName.startsWith(tagPrefix)) continue;
     final semver.Version version;
     try {
-      version = semver.Version.parse(release.tagName.substring(tagPrefix.length));
+      version = semver.Version.parse(
+        release.tagName.substring(tagPrefix.length),
+      );
     } on FormatException {
-      continue;
+      throw CliInvalidReleaseTag(release.tagName);
     }
     if (bestVersion == null || version > bestVersion) {
       best = release;
@@ -269,7 +328,10 @@ class CliInstallStepFailure implements Exception {
 }
 
 class UpgradeCommand
-    implements Command<UpgradeInput, UpgradeOutput>, ExplainsNothingToDo {
+    implements
+        Command<UpgradeInput, UpgradeOutput>,
+        ExplainsNothingToDo,
+        SkipsInteractiveApproval {
   UpgradeCommand(
     this.input, {
     required this.config,
@@ -312,16 +374,30 @@ class UpgradeCommand
       );
     }
 
-    final latest = latestTaggedRelease(releases, config.tagPrefix);
+    final CliRelease? latest;
+    try {
+      latest = latestTaggedRelease(releases, config.tagPrefix);
+    } on CliInvalidReleaseTag catch (e) {
+      throw CommandException(
+        code: 'release-lookup-failed',
+        message:
+            'Release ${e.tagName} in ${config.repository} does not parse as '
+            'semver once the tag prefix "${config.tagPrefix}" is stripped.',
+        exitCode: ExitCode.genericError,
+      );
+    }
     if (latest == null) {
       throw CommandException(
         code: 'release-lookup-failed',
-        message: 'No release with tag prefix "${config.tagPrefix}" was found in ${config.repository}.',
+        message:
+            'No release with tag prefix "${config.tagPrefix}" was found in ${config.repository}.',
         exitCode: ExitCode.genericError,
       );
     }
 
-    final latestVersion = semver.Version.parse(latest.tagName.substring(config.tagPrefix.length));
+    final latestVersion = semver.Version.parse(
+      latest.tagName.substring(config.tagPrefix.length),
+    );
     final current = semver.Version.parse(currentVersion);
     if (latestVersion <= current) {
       _nothingToDo = 'already on the latest version ($currentVersion)';
@@ -329,11 +405,16 @@ class UpgradeCommand
     }
     _latestVersion = latestVersion.toString();
 
-    final asset = assetForPlatform(latest, config.assets, platform.operatingSystem);
+    final asset = assetForPlatform(
+      latest,
+      config.assets,
+      platform.operatingSystem,
+    );
     if (asset == null) {
       throw CommandException(
         code: 'release-lookup-failed',
-        message: 'Release ${latest.tagName} has no asset for platform "${platform.operatingSystem}".',
+        message:
+            'Release ${latest.tagName} has no asset for platform "${platform.operatingSystem}".',
         exitCode: ExitCode.genericError,
       );
     }
@@ -342,13 +423,22 @@ class UpgradeCommand
     if (installPath == null) {
       throw CommandException(
         code: 'file-access-denied',
-        message: '${config.executable} is not on PATH; there is nowhere to install it.',
+        message:
+            '${config.executable} is not on PATH; there is nowhere to install it.',
         exitCode: ExitCode.genericError,
       );
     }
 
-    final download = DownloadAssetStep(downloader: downloader, url: asset.downloadUrl, assetName: asset.name);
-    final install = InstallExecutableStep(fileSystem: fileSystem, path: installPath, download: download);
+    final download = DownloadAssetStep(
+      downloader: downloader,
+      url: asset.downloadUrl,
+      assetName: asset.name,
+    );
+    final install = InstallExecutableStep(
+      fileSystem: fileSystem,
+      path: installPath,
+      download: download,
+    );
     return [download, install];
   }
 
@@ -360,7 +450,9 @@ class UpgradeCommand
     if (failure != null) {
       final error = failure.error;
       final id = error is CliInstallStepFailure ? error.id : 'download-failed';
-      final message = error is CliInstallStepFailure ? error.message : failure.message;
+      final message = error is CliInstallStepFailure
+          ? error.message
+          : failure.message;
       return UpgradeOutput(
         stepsCompleted: stepsCompleted,
         exitCode: ExitCode.genericError,
@@ -378,14 +470,19 @@ class UpgradeCommand
 }
 
 class DownloadAssetStep implements Step {
-  DownloadAssetStep({required this.downloader, required this.url, required this.assetName});
+  DownloadAssetStep({
+    required this.downloader,
+    required this.url,
+    required this.assetName,
+  });
 
   final CliDownloader downloader;
   final String url;
   final String assetName;
 
   @override
-  Preview preview() => Preview(verb: 'download', target: assetName, pending: const ['bytes']);
+  Preview preview() =>
+      Preview(verb: 'download', target: assetName, pending: const ['bytes']);
 
   @override
   Future<Outcome> perform(StepContext context) async {
@@ -393,14 +490,25 @@ class DownloadAssetStep implements Step {
     try {
       bytes = await downloader.download(url);
     } on Object catch (e) {
-      throw CliInstallStepFailure('download-failed', 'Could not download $assetName: $e');
+      throw CliInstallStepFailure(
+        'download-failed',
+        'Could not download $assetName: $e',
+      );
     }
-    return Outcome(verb: 'download', target: assetName, values: {'bytes': bytes});
+    return Outcome(
+      verb: 'download',
+      target: assetName,
+      values: {'bytes': bytes},
+    );
   }
 }
 
 class InstallExecutableStep implements Step {
-  InstallExecutableStep({required this.fileSystem, required this.path, required this.download});
+  InstallExecutableStep({
+    required this.fileSystem,
+    required this.path,
+    required this.download,
+  });
 
   final CliFileSystem fileSystem;
   final String path;
@@ -415,7 +523,10 @@ class InstallExecutableStep implements Step {
     try {
       await fileSystem.writeExecutable(path, bytes);
     } on Object catch (e) {
-      throw CliInstallStepFailure('file-access-denied', 'Could not write $path: $e');
+      throw CliInstallStepFailure(
+        'file-access-denied',
+        'Could not write $path: $e',
+      );
     }
     return Outcome(verb: 'install', target: path);
   }
@@ -431,7 +542,12 @@ class UninstallInput extends Input {
 }
 
 class UninstallOutput extends Output {
-  UninstallOutput({required this.removed, required this.exitCode, this.errorId, this.errorMessage});
+  UninstallOutput({
+    required this.removed,
+    required this.exitCode,
+    this.errorId,
+    this.errorMessage,
+  });
 
   final List<String> removed;
   final String? errorId;
@@ -449,8 +565,15 @@ class UninstallOutput extends Output {
 }
 
 class UninstallCommand
-    implements Command<UninstallInput, UninstallOutput>, ExplainsNothingToDo {
-  UninstallCommand(this.input, {required this.config, required this.fileSystem});
+    implements
+        Command<UninstallInput, UninstallOutput>,
+        ExplainsNothingToDo,
+        SkipsInteractiveApproval {
+  UninstallCommand(
+    this.input, {
+    required this.config,
+    required this.fileSystem,
+  });
 
   @override
   final UninstallInput input;
@@ -477,14 +600,26 @@ class UninstallCommand
 
     // The alias is only ever removed here when it currently points at this
     // same binary: an alias resolving elsewhere, or not at all, is left
-    // alone rather than guessed at.
+    // alone rather than guessed at. Compared by canonical identity, not by
+    // path string, for the same reason _checkAlias is: a valid symlink
+    // resolves under each name to a different path on disk even though both
+    // ultimately open the same file. When both names resolve to the exact
+    // same raw path, only one delete step is queued; the entry has already
+    // been removed once as the executable, and a second delete of the same
+    // path is rejected rather than silently repeated.
     final aliasPath = fileSystem.resolveOnPath(config.alias);
-    if (aliasPath != null && aliasPath == executablePath) {
+    final isSameBinary =
+        aliasPath != null &&
+        executablePath != null &&
+        fileSystem.canonicalize(aliasPath) ==
+            fileSystem.canonicalize(executablePath);
+    if (isSameBinary && aliasPath != executablePath) {
       steps.add(RemoveFileStep(fileSystem: fileSystem, path: aliasPath));
     }
 
     if (steps.isEmpty) {
-      _nothingToDo = '${config.executable} is not on PATH; there is nothing to remove';
+      _nothingToDo =
+          '${config.executable} is not on PATH; there is nothing to remove';
     }
     return steps;
   }
@@ -496,8 +631,12 @@ class UninstallCommand
     final failure = execution.failure;
     if (failure != null) {
       final error = failure.error;
-      final id = error is CliInstallStepFailure ? error.id : 'file-access-denied';
-      final message = error is CliInstallStepFailure ? error.message : failure.message;
+      final id = error is CliInstallStepFailure
+          ? error.id
+          : 'file-access-denied';
+      final message = error is CliInstallStepFailure
+          ? error.message
+          : failure.message;
       return UninstallOutput(
         removed: removed,
         exitCode: ExitCode.genericError,
@@ -524,7 +663,10 @@ class RemoveFileStep implements Step {
     try {
       await fileSystem.delete(path);
     } on Object catch (e) {
-      throw CliInstallStepFailure('file-access-denied', 'Could not remove $path: $e');
+      throw CliInstallStepFailure(
+        'file-access-denied',
+        'Could not remove $path: $e',
+      );
     }
     return Outcome(verb: 'remove', target: path);
   }

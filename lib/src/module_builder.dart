@@ -23,6 +23,7 @@ import 'output.dart';
 import 'plan.dart';
 import 'query.dart';
 import 'route_pattern.dart';
+import 'skips_interactive_approval.dart';
 
 /// Registers [Query]s and [Command]s within a named module.
 ///
@@ -477,7 +478,11 @@ class ModuleBuilder {
       return nothing.exitCode;
     }
 
-    if (!flags.autoapprove) {
+    // A command whose own `--apply` already is the authorization (see
+    // [SkipsInteractiveApproval]) skips this gate entirely, not merely
+    // treated as pre-approved, but never asked at all, so it never refuses
+    // for lack of a terminal either.
+    if (!flags.autoapprove && unit is! SkipsInteractiveApproval) {
       final declined = await _refusalOf(plan);
       if (declined != null) {
         output.writeError(

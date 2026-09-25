@@ -68,6 +68,77 @@ installer, `upgrade` / `uninstall`) built on it.
   behind an injectable interface with a `Http*`/`Io*` default, so the test
   suite never downloads anything or touches a real install path
 
+### Fixed
+
+Review findings against issue #28, found before this release shipped.
+
+- **Self-upgrade no longer overwrites the running executable in place.**
+  `IoCliFileSystem.writeExecutable` now downloads to a temporary file beside
+  the destination, sets and verifies its permissions, then replaces the
+  destination the way each platform requires: `rename(2)` on POSIX (atomic,
+  and never disturbs a handle a running process still has open on the old
+  file, so it does not hit Linux's `ETXTBSY`), or the current target moved
+  aside first on Windows, before the new file takes its name
+- **PATH resolution now checks that a candidate can actually run.**
+  `resolveOnPath` skips a file that exists but is not executable: the POSIX
+  execute bit on Linux and macOS, `PATHEXT`-driven candidate extensions
+  (`.EXE`, `.CMD`, `.BAT`, `.COM` by default) on Windows
+- **`upgrade --apply` and `uninstall --apply` no longer hit the interactive
+  approval prompt.** Both commands now implement `SkipsInteractiveApproval`;
+  an explicit `--apply` on these routes is itself the authorization issue #28
+  asks for, so `ModuleBuilder` no longer prompts, and no longer refuses for
+  lack of a terminal, on either one
+- **A symlinked alias is compared by canonical identity, not by path
+  string.** `doctor`'s `alias` check and `uninstall` both canonicalize before
+  comparing, so a valid symlink alias no longer reports as an error, and
+  `uninstall` deletes the binary and a distinct alias path exactly once each,
+  never the same path twice
+- **`doctor`'s results are an ordered list, not a map keyed by name.** Two
+  checks sharing a name (or contributed by different plugins) are both kept,
+  in the order they ran; the exit code is computed from every result, not
+  from whichever happened to be written last under a shared key. The `--json`
+  shape is now `{"checks": [{"name", "status", "detail"}, ...]}`, per the
+  issue
+- **A check that throws no longer stops the rest.** `DoctorQuery.execute`
+  catches a failing check, records it as an `error` naming the reason, and
+  continues with the checks after it; `doctor` still exits
+  `ExitCode.configError` (78) when that happens
+- **Release lookup follows pagination.** `HttpCliReleaseSource.listReleases`
+  keeps following the response's `Link` header (`rel="next"`) instead of
+  reading only the first page of 30 releases, so a repository with more
+  releases than that no longer loses the older ones a `tagPrefix` search
+  might still need
+- **A tag matching `tagPrefix` that does not parse as semver is surfaced,
+  not skipped.** `latestTaggedRelease` now throws `CliInvalidReleaseTag`
+  naming the tag; `upgrade` fails with `release-lookup-failed` and exits 1,
+  and `doctor`'s `release` check reports it as a warning naming the tag,
+  instead of silently treating the release as absent
+- **`ModularCli.buildPlugins()` tracks success and failure separately.** A
+  second `run()` (or `buildPlugins()`) after a failed build rethrows the
+  stored failure instead of silently skipping validation and using a
+  half-built plugin set; `.plugin()` after either a successful or a failed
+  build throws `StateError`, instead of being accepted and never run
+- **The topological sort is stable.** Registration order now breaks ties
+  among a plugin's own `requires`, so registering `a` (`requires: ['c',
+  'b']`), then `b`, then `c` always runs `setup()` in the order `b`, `c`,
+  `a`
+- **Declaring an extension point a second time is rejected outright.**
+  `host.declareExtensionPoint<T>(id)` now throws `CliPluginError` on any
+  second declaration of the same `id`, whether or not the second `T` matches
+  the first, before touching registry state; the type check on a duplicate
+  id was previously skipped
+- **`VersionPlugin(version: '0.8.0')` now compiles and reports that version.**
+  The example from issue #28 works as written. Host metadata is kept: a
+  `ModularCli` still needs `name` and `version` for `VersionPlugin` to have
+  anything to fall back to, and `name` always comes from `metadata()`, but
+  `VersionPlugin`'s new optional `version` parameter, when given, is reported
+  instead of `CliHostMetadata.version`
+- **The newer-release doctor warning names the corrective command.** The
+  `release` check's warning text now reads `A newer release is available:
+  <tag> (current: <version>). Run "<alias> upgrade --apply" to install it.`,
+  matching what issue #28 prescribes, rather than announcing the release
+  without saying what to do about it
+
 ### Notes
 
 - **No archive format.** An asset is assumed to be the executable itself;

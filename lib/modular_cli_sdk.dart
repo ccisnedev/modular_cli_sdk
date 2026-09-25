@@ -64,6 +64,7 @@ export 'src/plugins/doctor_plugin.dart'
         CliCheckResult,
         CliCheckStatus,
         CliDoctorCheck,
+        CliDoctorEntry,
         DoctorInput,
         DoctorOutput,
         DoctorPlugin,
@@ -85,6 +86,7 @@ export 'src/plugins/installation/installation_plugin.dart'
     show
         CliInstallStepFailure,
         CliInstallationConfig,
+        CliInvalidReleaseTag,
         DownloadAssetStep,
         InstallExecutableStep,
         InstallationPlugin,
@@ -121,3 +123,4 @@ export 'src/module_builder.dart' show ModuleBuilder;
 export 'src/output.dart' show Output;
 export 'src/plan.dart' show PlanDocument, PlanSink;
 export 'src/query.dart' show Query;
+export 'src/skips_interactive_approval.dart' show SkipsInteractiveApproval;

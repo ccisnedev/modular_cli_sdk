@@ -140,7 +140,12 @@ abstract class CliPluginHost {
 /// for any of these: the offending plugin set does not run, partially or
 /// otherwise.
 class CliPluginError implements Exception {
-  const CliPluginError(this.code, this.message, {this.pluginId, this.resourceId});
+  const CliPluginError(
+    this.code,
+    this.message, {
+    this.pluginId,
+    this.resourceId,
+  });
 
   /// Machine-readable failure code, `SCREAMING_SNAKE_CASE`.
   final String code;
@@ -192,6 +197,24 @@ List<CliPlugin> orderCliPlugins(Iterable<CliPlugin> plugins) {
     byId[id] = plugin;
   }
 
+  // Checked once, over every plugin, before the traversal below: the
+  // traversal below no longer walks `requires` directly (see [visit]), so it
+  // can no longer tell "not required by this plugin" apart from "required but
+  // missing" on its own.
+  for (final plugin in pluginList) {
+    for (final requiredId in plugin.manifest.requires) {
+      if (!byId.containsKey(requiredId)) {
+        throw CliPluginError(
+          'PLUGIN_DEPENDENCY_MISSING',
+          'Plugin "${plugin.manifest.id}" requires "$requiredId", which is '
+              'not registered.',
+          pluginId: plugin.manifest.id,
+          resourceId: requiredId,
+        );
+      }
+    }
+  }
+
   final visitState = <String, _VisitState>{};
   final ordered = <CliPlugin>[];
 
@@ -209,17 +232,19 @@ List<CliPlugin> orderCliPlugins(Iterable<CliPlugin> plugins) {
     }
 
     visitState[id] = _VisitState.visiting;
-    for (final requiredId in plugin.manifest.requires) {
-      final dependency = byId[requiredId];
-      if (dependency == null) {
-        throw CliPluginError(
-          'PLUGIN_DEPENDENCY_MISSING',
-          'Plugin "$id" requires "$requiredId", which is not registered.',
-          pluginId: id,
-          resourceId: requiredId,
-        );
+    // Walked over [pluginList], in registration order, rather than over
+    // `plugin.manifest.requires` itself: a plugin naming more than one
+    // dependency would otherwise be ordered by the order it *listed* them
+    // in, which is not a fact about the plugin set a host controls. Filtering
+    // [pluginList] by the required-id set visits the same dependencies, but
+    // in the order they were registered, which is what breaks a tie between
+    // two of a plugin's own dependencies that have no order relative to each
+    // other.
+    final requiredIds = plugin.manifest.requires.toSet();
+    for (final candidate in pluginList) {
+      if (requiredIds.contains(candidate.manifest.id)) {
+        visit(candidate);
       }
-      visit(dependency);
     }
     visitState[id] = _VisitState.visited;
     ordered.add(plugin);
