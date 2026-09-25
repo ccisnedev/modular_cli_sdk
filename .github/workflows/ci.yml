@@ -10,8 +10,11 @@ name: CI
 on:
   push:
     branches: [main]
+  # No branches filter here: a pull request into any base branch runs CI, not
+  # only one whose base happens to be main. A feature branch stacked on
+  # another feature branch (its own base not yet merged to main) still gets
+  # CI on every PR into it.
   pull_request:
-    branches: [main]
 
 jobs:
   test:
