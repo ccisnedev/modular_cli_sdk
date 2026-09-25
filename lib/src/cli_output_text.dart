@@ -2,6 +2,7 @@ import 'dart:io' as io;
 
 import 'cli_output.dart';
 import 'command_exception.dart';
+import 'invocation_outcome.dart';
 
 /// Formats output as human-readable plain text.
 ///
@@ -68,13 +69,14 @@ class TextCliOutput implements CliOutput {
     stdout.writeln(message);
   }
 
+  /// Records [error] as the current invocation's outcome instead of
+  /// writing it: [ModularCli.run] is the only place that ever renders it,
+  /// exactly once, after the whole dispatch finishes (round-6 review
+  /// findings 1 through 3). [stderr] is still declared above for callers
+  /// that read it as this output's own error sink, but this method itself
+  /// no longer writes to it directly.
   @override
   void writeError(CommandException error) {
-    stderr.writeln('Error: ${error.message} [${error.id}]');
-    if (error.details != null && error.details!.isNotEmpty) {
-      for (final entry in error.details!.entries) {
-        stderr.writeln('  ${entry.key}: ${entry.value}');
-      }
-    }
+    recordInvocationError(error, jsonMode: false);
   }
 }

@@ -15,6 +15,7 @@ import 'global_options.dart';
 import 'help_command.dart';
 import 'help_renderer.dart';
 import 'input.dart';
+import 'invocation_outcome.dart';
 import 'module_builder.dart';
 import 'output.dart';
 import 'plan.dart';
@@ -86,27 +87,37 @@ class ModularCli {
   /// contract. See [ContractAwareBody].
   final Map<String, ContractAwareBody> _bodiesByName = {};
 
-  /// Every shortcut's own contract, keyed by both identities a
-  /// [CliRejection] can report it under: `cli_router`'s own
-  /// `route.pattern` (mount prefix included, a trailing optional
-  /// positional or wildcard stripped, a required one kept) and, when no
-  /// specific route resolved, the literal words alone that were
-  /// `consumed` (mount prefix included, every positional dropped), not
-  /// just the bare pattern text a caller passed to [ModuleBuilder.shortcut]
-  /// (round-5 review finding 1: that single, unprefixed key missed a
-  /// trailing optional positional, an omitted required one, and a shortcut
-  /// mounted under a module alike). [ModuleBuilder.shortcut] does not add
-  /// its entry to [_catalog] (a shortcut is deliberately not given its own
-  /// catalog entry: see [shortcut]'s own doc comment), which otherwise left
-  /// a shortcut invisible to [_contractFor], which [_handleRejection] uses
-  /// to check a badly typed supplied value before letting `--help` win a
-  /// rejection, so an invalid value on a shortcut silently lost to `--help`
-  /// instead of being reported (round-4 review finding 1). This lookup
-  /// exists only for that check; it is never consulted by
-  /// [_emitFocusedHelp] or [_emitRejectionError], so a shortcut's own
-  /// contract still never shows
-  /// up in help or a JSON error's `contract` field, exactly as documented.
-  final Map<String, CommandContract> _shortcutContractsByRoute = {};
+  /// Every shortcut's own contract, keyed by `cli_router`'s own
+  /// `route.pattern` identity: mount prefix included, a trailing optional
+  /// positional or wildcard stripped, a required one kept. [_contractFor]
+  /// (through [_catalog]) cannot see a shortcut at all (a shortcut is
+  /// deliberately not given its own catalog entry: see [shortcut]'s own
+  /// doc comment), so [_handleRejection] consults this too, to check a
+  /// badly typed supplied value before letting `--help` win a rejection
+  /// (round-4 review finding 1). A second shortcut registered under the
+  /// same mounted router pattern as one already here is a build-time
+  /// [ArgumentError], raised by [ModuleBuilder.shortcut] itself (round-6
+  /// review finding 4: an earlier, single shared map let a later
+  /// registration overwrite an earlier one silently instead).
+  final Map<String, CommandContract> _shortcutContractsByExactRoute = {};
+
+  /// Every shortcut's own contract, keyed by its mounted **literal prefix**
+  /// alone (mount prefix included, every positional dropped): the identity
+  /// [CliRejection.consumed] reports when `cli_router` never resolved a
+  /// specific route at all. Several shortcuts can share one literal prefix
+  /// (`s` and `s <id>` are both prefixed `s`), so this maps to every
+  /// candidate registered under it, and [_shortcutContractFor] reports
+  /// back whether exactly one candidate matched or several did, rather
+  /// than picking one arbitrarily (round-6 review finding 4) or letting
+  /// `--help` win silently on an ambiguous partial match (round-6 review
+  /// finding 6). See [ModuleBuilder.shortcut] for how both maps are kept
+  /// in sync, including the empty-prefix fix (round-6 review finding 5).
+  ///
+  /// Neither map is ever consulted by [_emitFocusedHelp] or
+  /// [_emitRejectionError]: a shortcut's own contract still never shows up
+  /// in help or a JSON error's `contract` field, exactly as documented on
+  /// [shortcut] itself.
+  final Map<String, List<CommandContract>> _shortcutContractsByPrefix = {};
 
   /// Every registered route with its declared contract — the single source help
   /// is rendered from.
@@ -254,7 +265,8 @@ class ModularCli {
     router: router,
     catalog: _catalog,
     bodiesByName: _bodiesByName,
-    shortcutContractsByRoute: _shortcutContractsByRoute,
+    shortcutContractsByExactRoute: _shortcutContractsByExactRoute,
+    shortcutContractsByPrefix: _shortcutContractsByPrefix,
     approver: _approver,
     planSink: _planSink,
   );
@@ -266,12 +278,29 @@ class ModularCli {
   ///
   /// A middleware that throws a [CommandException] is caught inside its own
   /// error boundary, exactly as before, but that boundary no longer renders
-  /// anything itself: it only records the exception (in [_pendingMiddlewareError])
-  /// and swallows it into a plain returned exit code, so an outer
-  /// middleware wrapping this one can still inspect that code through its
-  /// own `await next(req)`, precisely as it could before this fix (round-5
-  /// review finding 2). Actually rendering happens exactly once, in [run],
-  /// after the whole middleware chain (and whatever it wraps) has finished.
+  /// anything itself: it only records the exception, into the current
+  /// invocation's own [InvocationOutcome] (see [runWithInvocationOutcome],
+  /// [recordInvocationError]), and swallows it into a plain returned exit
+  /// code, so an outer middleware wrapping this one can still inspect that
+  /// code through its own `await next(req)`, precisely as it could before
+  /// this fix (round-5 review finding 2). Actually rendering happens
+  /// exactly once, in [run], after the whole middleware chain (and
+  /// whatever it wraps) has finished.
+  ///
+  /// The outcome is reached through a [Zone], not an instance field the
+  /// way an earlier fix kept it (round-6 review findings 1 through 3): a
+  /// plain instance field is shared by every invocation on this same
+  /// [ModularCli], so a handler that itself calls [run] again (a
+  /// recursive invocation, its own sinks and all) or two concurrent [run]
+  /// calls on the same instance would step on each other's recorded
+  /// error, and nothing about an instance field says "discard this,
+  /// the invocation that recorded it went on to recover" versus "this is
+  /// what actually terminated it". A zone value, freshly created by
+  /// [runWithInvocationOutcome] once per [run] call, cannot leak into a
+  /// sibling or a parent invocation's own zone, and is preserved
+  /// automatically across every `await` inside [middleware]'s own handler,
+  /// exactly where an instance field would have to be threaded through by
+  /// hand.
   ///
   /// That boundary covers a throw from [middleware] itself while it builds
   /// its handler (the outer `(next) { ... }` body), not just one from the
@@ -284,7 +313,7 @@ class ModularCli {
   /// exit code an outer middleware's own logic can inspect; if that outer
   /// middleware itself throws (as the outer half of round-5 finding 2's
   /// regression test does, escalating a nonzero result of its own), its
-  /// own boundary catches that and overwrites [_pendingMiddlewareError] in
+  /// own boundary catches that and overwrites the recorded outcome in
   /// turn. Because catching unwinds from innermost to outermost, whichever
   /// exception is recorded last is necessarily the one that actually
   /// terminates the invocation, an outer boundary's own throw if it has
@@ -297,10 +326,7 @@ class ModularCli {
           final wrapped = middleware(next);
           return await wrapped(req);
         } on CommandException catch (e) {
-          _pendingMiddlewareError = (
-            error: e,
-            jsonMode: req.flagBool('json'),
-          );
+          recordInvocationError(e, jsonMode: req.flagBool('json'));
           return e.exitCode;
         }
       };
@@ -308,66 +334,59 @@ class ModularCli {
     return this;
   }
 
-  /// The most recent [CommandException] caught while unwinding a nested
-  /// [use] middleware chain during the invocation [run] is currently
-  /// handling, together with the `--json` mode of the request that saw it,
-  /// or `null` when none was caught. Reset to `null` at the start of every
-  /// [run] call, so it never leaks between invocations sharing the same
-  /// [ModularCli] instance; not safe for concurrent [run] calls on the same
-  /// instance, which this SDK does not otherwise support.
-  ///
-  /// [use]'s own doc comment explains why "most recent" is exactly
-  /// "outermost": see it for the full account.
-  ({CommandException error, bool jsonMode})? _pendingMiddlewareError;
-
   /// Dispatch [args] through the router and return an exit code.
   ///
   /// Pass custom [stdout] / [stderr] sinks for testing.
   ///
-  /// Exactly one error envelope is ever rendered for the [CommandException]
-  /// path: [use]'s own per-middleware boundaries only record the exception
-  /// that terminates the invocation (see [_pendingMiddlewareError] and
-  /// [use]'s own doc comment for why "the last one recorded" is exactly
-  /// "the outermost thrown"); rendering it, once, happens only here, after
-  /// [_root]'s whole run, middleware chain and dispatched handler alike,
-  /// has finished (round-5 review finding 2; before this fix, each nested
-  /// middleware boundary rendered its own catch immediately, so a
-  /// construction-time throw an outer middleware went on to escalate wrote
-  /// two concatenated JSON envelopes to stderr instead of one).
+  /// The whole dispatch runs inside a fresh [InvocationOutcome], reachable
+  /// only through the [Zone] [runWithInvocationOutcome] establishes for
+  /// this one call (round-6 review findings 1 through 3): no SDK path
+  /// writes an error to stderr directly any more (a handler's thrown
+  /// [CommandException], an approval refusal, a failed step, a
+  /// [use] middleware boundary, and a rejection this SDK classifies before
+  /// any handler runs all call [recordInvocationError] instead), so
+  /// exactly one write ever happens for the [CommandException] path,
+  /// decided right here: once the whole chain returns, an exit code of 0
+  /// discards whatever was recorded and renders nothing at all, even if an
+  /// inner failure was recorded along the way and later recovered from or
+  /// retried into success; a nonzero exit code renders whichever error was
+  /// recorded last (see [use]'s own doc comment for why "last recorded" is
+  /// exactly "outermost thrown"), exactly once, in the mode ([--json] or
+  /// text) the request that recorded it was running under.
   Future<int> run(
     List<String> args, {
     io.IOSink? stdout,
     io.IOSink? stderr,
-  }) async {
-    _registerHelpCommand();
-    final out = stdout ?? io.stdout;
-    final err = stderr ?? io.stderr;
+  }) {
+    return runWithInvocationOutcome(() async {
+      _registerHelpCommand();
+      final out = stdout ?? io.stdout;
+      final err = stderr ?? io.stderr;
 
-    // A bare invocation is a help request only when nothing else claims it:
-    // a CLI may register its own root route (a dashboard, a status screen),
-    // and bare `<cli>` is then that route, not a request for help.
-    if (args.isEmpty && _catalog.forRoute('') == null) {
-      out.writeln(HelpRenderer(_catalog).renderCatalog());
-      return ExitCode.ok;
-    }
+      // A bare invocation is a help request only when nothing else claims
+      // it: a CLI may register its own root route (a dashboard, a status
+      // screen), and bare `<cli>` is then that route, not a request for
+      // help.
+      if (args.isEmpty && _catalog.forRoute('') == null) {
+        out.writeln(HelpRenderer(_catalog).renderCatalog());
+        return ExitCode.ok;
+      }
 
-    _pendingMiddlewareError = null;
-    final exitCode = await _root.run(
-      args,
-      onReject: (rejection) => _handleRejection(rejection, out, err),
-      stdout: out,
-      stderr: err,
-    );
-
-    final pending = _pendingMiddlewareError;
-    if (pending != null) {
-      return _emitCommandException(
-        pending.error,
-        err,
-        jsonMode: pending.jsonMode,
+      final exitCode = await _root.run(
+        args,
+        onReject: (rejection) => _handleRejection(rejection, out),
+        stdout: out,
+        stderr: err,
       );
-    }
-    return exitCode;
+
+      if (exitCode != ExitCode.ok) {
+        final outcome = currentInvocationOutcome();
+        if (outcome.error != null) {
+          _renderRecordedError(outcome, err);
+        }
+      }
+      return exitCode;
+    });
   }
 
   /// Help must be reachable out of the box, unless the developer wrote their
@@ -471,7 +490,12 @@ class ModularCli {
     return null;
   }
 
-  int _handleRejection(CliRejection rejection, io.IOSink out, io.IOSink err) {
+  /// Resolves a rejection cli_router could not dispatch itself. Neither
+  /// branch below writes anything: each only records, into the current
+  /// invocation's own [InvocationOutcome], what [run] alone renders, once,
+  /// after the whole dispatch finishes (round-6 review findings 1
+  /// through 3).
+  int _handleRejection(CliRejection rejection, io.IOSink out) {
     final helpRequested = rejection.options.any((o) => o.spec.name == 'help');
     final jsonMode = rejection.options.any((o) => o.spec.name == 'json');
 
@@ -495,42 +519,30 @@ class ModularCli {
       // _emitFocusedHelp() below still resolves help from _contractFor()
       // alone, so a shortcut's own contract still never appears in help or
       // a JSON error's `contract` field (round-4 review finding 1).
-      final contract =
-          _contractFor(rejection) ?? _shortcutContractFor(rejection);
+      //
+      // Several shortcuts can share the literal prefix a rejection reports
+      // (round-6 review finding 4): when they do, there is no one contract
+      // to validate against or to fall back to, so --help must not win
+      // silently on a guess (round-6 review finding 6). Falling through to
+      // the plain rejection error, exactly as if --help had not been
+      // passed, reports the router's own rejection instead of pretending
+      // one candidate is the answer.
+      final shortcutLookup = _shortcutContractFor(rejection);
+      if (shortcutLookup.ambiguous) {
+        return _emitRejectionError(rejection, jsonMode: jsonMode);
+      }
+      final contract = _contractFor(rejection) ?? shortcutLookup.contract;
       if (contract != null) {
         try {
           validateSuppliedOptionValues(rejection.options, contract.contract);
         } on CommandException catch (e) {
-          return _emitCommandException(e, err, jsonMode: jsonMode);
+          recordInvocationError(e, jsonMode: jsonMode);
+          return e.exitCode;
         }
       }
       return _emitFocusedHelp(rejection, out, jsonMode: jsonMode);
     }
-    return _emitRejectionError(rejection, err, jsonMode: jsonMode);
-  }
-
-  /// Writes a [CommandException] raised while resolving a rejection (not
-  /// while running a handler body) in the same envelope shape
-  /// [CliOutput.writeError] writes: a [ModuleBuilder] route has an
-  /// [CliOutput] to delegate to by the time it can catch one, but a
-  /// rejection this SDK is still classifying does not, so the two writers
-  /// are kept in the same shape independently rather than shared.
-  int _emitCommandException(
-    CommandException error,
-    io.IOSink err, {
-    required bool jsonMode,
-  }) {
-    if (jsonMode) {
-      err.writeln(jsonEncode({'error': error.toJson()}));
-      return error.exitCode;
-    }
-    err.writeln('Error: ${error.message} [${error.id}]');
-    if (error.details != null && error.details!.isNotEmpty) {
-      for (final entry in error.details!.entries) {
-        err.writeln('  ${entry.key}: ${entry.value}');
-      }
-    }
-    return error.exitCode;
+    return _emitRejectionError(rejection, jsonMode: jsonMode);
   }
 
   /// Help for a rejection `--help` won: the most specific thing the router
@@ -604,11 +616,17 @@ class ModularCli {
   /// and the catalog knows it. Calling both cases "unknown command" sent the
   /// user looking for a typo they had not made, and answered with the whole
   /// catalog when a handful of lines were the relevant ones.
-  int _emitRejectionError(
-    CliRejection rejection,
-    io.IOSink err, {
-    required bool jsonMode,
-  }) {
+  ///
+  /// Neither writes anything itself: it only records, into the current
+  /// invocation's own [InvocationOutcome], what [run] alone renders, once,
+  /// after the whole dispatch finishes (round-6 review findings 1
+  /// through 3). The `contract` field a JSON envelope carries alongside a
+  /// [CommandException]'s own `id`/`message`/`exitCode`/`details` is not
+  /// part of [CommandException.toJson()] itself, so it travels separately,
+  /// through [recordInvocationExtraJson]; the same "you were one flag away"
+  /// help text a text-mode envelope carries travels through
+  /// [recordInvocationExtraText].
+  int _emitRejectionError(CliRejection rejection, {required bool jsonMode}) {
     final exitCode = _exitCodeFor(rejection.kind);
     final contract = _contractFor(rejection);
     final attempted = rejection.consumed.join(' ');
@@ -641,39 +659,55 @@ class ModularCli {
           : routerMessage,
     );
 
+    final details = _detailsFor(rejection, contract);
+    recordInvocationError(
+      CommandException(
+        id: _errorIdFor(rejection.kind),
+        message: message,
+        exitCode: exitCode,
+        details: details,
+      ),
+      jsonMode: jsonMode,
+    );
     if (jsonMode) {
-      final details = _detailsFor(rejection, contract);
-      err.writeln(
-        jsonEncode({
-          'error': {
-            'id': _errorIdFor(rejection.kind),
-            'message': message,
-            'exitCode': exitCode,
-            if (contract != null) 'contract': contract.toJson(),
-            if (details != null) 'details': details,
-          },
-        }),
+      if (contract != null) {
+        recordInvocationExtraJson({'contract': contract.toJson()});
+      }
+    } else {
+      recordInvocationExtraText(
+        contract != null
+            ? HelpRenderer(_catalog).renderCommand(contract)
+            : HelpRenderer(
+                completions.isEmpty ? _catalog : _narrowedTo(completions),
+              ).renderCatalog(),
       );
-      return exitCode;
     }
+    return exitCode;
+  }
 
-    err.writeln('Error: $message');
-
-    if (contract != null) {
+  /// Renders [outcome]'s recorded error to [err], exactly once: the only
+  /// place, in the whole SDK, that ever writes a [CommandException] out
+  /// (round-6 review findings 1 through 3). Called by [run], and only when
+  /// the invocation's final exit code is nonzero and an error was actually
+  /// recorded, never on a recovered or retried-into-success invocation.
+  void _renderRecordedError(InvocationOutcome outcome, io.IOSink err) {
+    final error = outcome.error!;
+    if (outcome.jsonMode) {
+      final json = {...error.toJson(), ...?outcome.extraJson};
+      err.writeln(jsonEncode({'error': json}));
+      return;
+    }
+    err.writeln('Error: ${error.message} [${error.id}]');
+    if (error.details != null && error.details!.isNotEmpty) {
+      for (final entry in error.details!.entries) {
+        err.writeln('  ${entry.key}: ${entry.value}');
+      }
+    }
+    if (outcome.extraText != null) {
       err
         ..writeln()
-        ..writeln(HelpRenderer(_catalog).renderCommand(contract));
-      return exitCode;
+        ..writeln(outcome.extraText);
     }
-
-    err
-      ..writeln()
-      ..writeln(
-        HelpRenderer(
-          completions.isEmpty ? _catalog : _narrowedTo(completions),
-        ).renderCatalog(),
-      );
-    return exitCode;
   }
 
   /// Appends a "did you mean" suggestion to [finalMessage] when [kind] is
@@ -722,21 +756,50 @@ class ModularCli {
     return _catalog.forName(rejection.consumed.join(' '));
   }
 
-  /// The same lookup as [_contractFor], over [_shortcutContractsByRoute]
-  /// instead of [_catalog]: a shortcut's own contract, keyed by both
-  /// identities a [CliRejection] can report, `route.pattern` and, when no
-  /// specific route resolved, the literal words already `consumed`, mount
-  /// prefix included either way (round-5 review finding 1;
-  /// [ModuleBuilder.shortcut] registers both keys). Used only to validate a
-  /// supplied option value before deciding whether `--help` wins (round-4
-  /// review finding 1), never to choose what a rejection's help or JSON
-  /// `contract` field shows, which stays keyed off [_catalog] alone,
-  /// through [_contractFor].
-  CommandContract? _shortcutContractFor(CliRejection rejection) {
+  /// The same lookup as [_contractFor], over [_shortcutContractsByExactRoute]
+  /// and [_shortcutContractsByPrefix] instead of [_catalog]: a shortcut's
+  /// own contract, keyed by both identities a [CliRejection] can report,
+  /// `route.pattern` and, when no specific route resolved, the literal
+  /// words already `consumed`, mount prefix included either way (round-5
+  /// review finding 1; [ModuleBuilder.shortcut] registers both keys). Used
+  /// only to validate a supplied option value before deciding whether
+  /// `--help` wins (round-4 review finding 1), never to choose what a
+  /// rejection's help or JSON `contract` field shows, which stays keyed off
+  /// [_catalog] alone, through [_contractFor].
+  ///
+  /// `route.pattern` names one specific route, so it is looked up in the
+  /// exact map alone: no ambiguity is possible there, by construction (a
+  /// second registration under the same mounted router pattern is a
+  /// build-time [ArgumentError], round-6 review finding 4).
+  ///
+  /// The literal-words fallback, by contrast, can have several shortcuts
+  /// registered under the very same prefix (`s` and `s <id>` both prefix to
+  /// `s`): [ambiguous] reports that case explicitly, rather than this
+  /// method picking one of the candidates arbitrarily or falling back to
+  /// `null` the way an empty result would (round-6 review findings 4
+  /// and 6). Unlike the old single-map lookup, an empty `consumed` (a
+  /// shortcut with no literal words at all, root or mounted) is not
+  /// special-cased away here: [ModuleBuilder._joinMounted] always produces
+  /// a key `cli_router` itself would report back, including the empty
+  /// string, so it must stay reachable (round-6 review finding 5).
+  ({CommandContract? contract, bool ambiguous}) _shortcutContractFor(
+    CliRejection rejection,
+  ) {
     final route = rejection.route;
-    if (route != null) return _shortcutContractsByRoute[route.pattern];
-    if (rejection.consumed.isEmpty) return null;
-    return _shortcutContractsByRoute[rejection.consumed.join(' ')];
+    if (route != null) {
+      return (
+        contract: _shortcutContractsByExactRoute[route.pattern],
+        ambiguous: false,
+      );
+    }
+    final candidates = _shortcutContractsByPrefix[rejection.consumed.join(' ')];
+    if (candidates == null || candidates.isEmpty) {
+      return (contract: null, ambiguous: false);
+    }
+    if (candidates.length == 1) {
+      return (contract: candidates.single, ambiguous: false);
+    }
+    return (contract: null, ambiguous: true);
   }
 
   /// Every registered route that continues [attempted].

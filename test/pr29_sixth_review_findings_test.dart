@@ -378,7 +378,7 @@ CliContract _integerAContract() => CliContract(
   ],
 );
 
-/// A second shortcut's own contract, declaring `a` as a *string* instead —
+/// A second shortcut's own contract, declaring `a` as a *string* instead,
 /// so an invocation with a badly typed `--a` validates fine against this
 /// one, distinguishing "resolved against the right contract" from "resolved
 /// against the wrong one" (review finding 4).
@@ -698,7 +698,10 @@ void main() {
           () async {
         final result = await _runWith(
           _cliWithBareAndPositionalShortcutsSharingAWord(),
-          ['s', '7', '--json', '--a', 'ok', '--help'],
+          // Options go before the trailing positional operand, per
+          // cli_router's own grammar ("options go before the program"): the
+          // `<id>` value goes last, not right after the literal "s".
+          ['s', '--json', '--a', 'ok', '--help', '7'],
         );
 
         // `--a` is declared as a string on this shortcut, so "ok" is a

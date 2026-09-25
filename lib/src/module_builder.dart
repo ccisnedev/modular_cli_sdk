@@ -18,6 +18,7 @@ import 'exit_codes.dart';
 import 'explains_nothing_to_do.dart';
 import 'help_renderer.dart';
 import 'input.dart';
+import 'invocation_outcome.dart';
 import 'output.dart';
 import 'plan.dart';
 import 'query.dart';
@@ -59,13 +60,15 @@ class ModuleBuilder {
     required CliRouter router,
     required CommandCatalog catalog,
     required Map<String, ContractAwareBody> bodiesByName,
-    required Map<String, CommandContract> shortcutContractsByRoute,
+    required Map<String, CommandContract> shortcutContractsByExactRoute,
+    required Map<String, List<CommandContract>> shortcutContractsByPrefix,
     Approver? approver,
     PlanSink? planSink,
   }) : _router = router,
        _catalog = catalog,
        _bodiesByName = bodiesByName,
-       _shortcutContractsByRoute = shortcutContractsByRoute,
+       _shortcutContractsByExactRoute = shortcutContractsByExactRoute,
+       _shortcutContractsByPrefix = shortcutContractsByPrefix,
        _approver = approver,
        _planSink = planSink;
 
@@ -87,13 +90,35 @@ class ModuleBuilder {
   /// it under the shortcut's own contract rather than the target's.
   final Map<String, ContractAwareBody> _bodiesByName;
 
-  /// Every shortcut's own contract, keyed the same way [_bodiesByName]
-  /// keys its body: shared with every other [ModuleBuilder] this SDK
-  /// builds, so [ModularCli] can check a shortcut's own supplied option
-  /// values before letting `--help` win a rejection, even though a
-  /// shortcut is deliberately given no [_catalog] entry of its own. See
-  /// [ModularCli._shortcutContractFor].
-  final Map<String, CommandContract> _shortcutContractsByRoute;
+  /// Every shortcut's own contract, keyed by `cli_router`'s own
+  /// `route.pattern` identity: mount prefix included, a trailing optional
+  /// positional or wildcard stripped, a required one kept. Shared with
+  /// every other [ModuleBuilder] this SDK builds, so [ModularCli] can find
+  /// exactly one shortcut's contract for a rejection that names a specific
+  /// route, even though a shortcut is deliberately given no [_catalog]
+  /// entry of its own. See [ModularCli._shortcutContractFor].
+  ///
+  /// A second shortcut registering under the same mounted router pattern
+  /// as one already here is a registration error (round-6 review finding
+  /// 4): unlike [_shortcutContractsByPrefix], where several shortcuts
+  /// legitimately share a prefix, this identity is meant to name exactly
+  /// one route, and a collision here means two shortcuts would answer to
+  /// the same `cli_router`-reported identity, which nothing could then
+  /// tell apart.
+  final Map<String, CommandContract> _shortcutContractsByExactRoute;
+
+  /// Every shortcut's own contract, keyed by its mounted **literal prefix**
+  /// alone (mount prefix included, every positional dropped, never a
+  /// trailing space when the prefix itself is empty: see [_joinMounted]).
+  /// This is the identity [CliRejection.consumed] reports when
+  /// `cli_router` never resolved a specific route at all. Several
+  /// shortcuts can share a literal prefix (`s` and `s <id>` are both
+  /// prefixed `s`), so this maps to every candidate registered under it,
+  /// not to one; [ModularCli._shortcutContractFor] reports back whether
+  /// exactly one candidate matched or several did, rather than an earlier
+  /// design's single shared map silently letting the later registration
+  /// overwrite the earlier one (round-6 review finding 4).
+  final Map<String, List<CommandContract>> _shortcutContractsByPrefix;
   final Approver? _approver;
   final PlanSink? _planSink;
 
@@ -287,8 +312,15 @@ class ModuleBuilder {
     );
     validateContractPositionals(pattern, shortcutContract);
 
+    // Mount-prefixed exactly as [_register] prefixes a query's or
+    // command's own [CommandContract.route] (round-6 review finding 6: an
+    // earlier draft kept the bare, unprefixed [pattern] here, so a
+    // resolved shortcut invocation's own `--help` answer, rendered by
+    // [_mount] straight off this [entry], showed the bare pattern instead
+    // of the route a caller actually has to type when the shortcut is
+    // mounted under a module).
     final entry = CommandContract(
-      route: pattern,
+      route: moduleName.isEmpty ? pattern : '$moduleName $pattern',
       module: moduleName,
       kind: targetEntry.kind,
       description: description,
@@ -298,36 +330,61 @@ class ModuleBuilder {
 
     // Not registered with [_catalog] (see this method's own doc comment,
     // "deliberately not given its own CommandCatalog entry"), but kept
-    // here so [ModularCli] can still validate a badly typed supplied value
-    // against a shortcut's own contract before letting `--help` win a
-    // rejection (round-4 review finding 1).
+    // here, across two maps, so [ModularCli] can still validate a badly
+    // typed supplied value against a shortcut's own contract before
+    // letting `--help` win a rejection (round-4 review finding 1), and
+    // report an ambiguous partial match honestly rather than guessing
+    // (round-6 review finding 4).
     //
-    // Keyed by [pattern] itself, this map missed every shape but a bare
-    // literal at the root (round-5 review finding 1): a `CliRejection`
-    // reports either `route.pattern`, `cli_router`'s own identity for the
-    // route, mount prefix included, a trailing optional positional or
-    // wildcard stripped, a required one kept, or, when no specific route
-    // resolved at all, `consumed`, the literal words alone (a parameter's
-    // bound value, required or optional, is never in there; grammar G puts
+    // A `CliRejection` reports one of two identities: `route.pattern`,
+    // `cli_router`'s own identity for a specific route it did resolve
+    // (mount prefix included, a trailing optional positional or wildcard
+    // stripped, a required one kept), or, when no specific route resolved
+    // at all, `consumed`, the literal words alone (a parameter's bound
+    // value, required or optional, is never in there; grammar G puts
     // every literal before every parameter, so there is exactly one
-    // literal run, at the front). Both identities are mount-prefixed, so a
-    // shortcut declared inside `module(moduleName, ...)` is registered
-    // under `moduleName`'s own prefix here too, exactly as [_register]
-    // prefixes a query's or command's own [CommandContract.route].
-    // [RoutePattern.routerPattern] and [RoutePattern.literalPrefix] agree
-    // for a shortcut with no required positional (a bare literal, or one
-    // ending in `[<name>]`); only a required positional (`s <id>`) makes
-    // them differ, so the second key is registered only then.
-    final mountedRouterPattern = moduleName.isEmpty
-        ? routePattern.routerPattern
-        : '$moduleName ${routePattern.routerPattern}';
-    final mountedLiteralPrefix = moduleName.isEmpty
-        ? routePattern.literalPrefix
-        : '$moduleName ${routePattern.literalPrefix}';
-    _shortcutContractsByRoute[mountedRouterPattern] = entry;
-    if (mountedLiteralPrefix != mountedRouterPattern) {
-      _shortcutContractsByRoute[mountedLiteralPrefix] = entry;
+    // literal run, at the front). Both identities are mount-prefixed here
+    // via [_joinMounted], which also fixes the second one's own bug
+    // (round-6 review finding 5): a shortcut with no literal words at all
+    // (`<id>` at the root, or `<id>` mounted under a module) has an empty
+    // [RoutePattern.literalPrefix], and naive string concatenation
+    // (`'$moduleName ${routePattern.literalPrefix}'`) left a trailing
+    // space in the registered key that [CliRejection.consumed]'s own
+    // `.join(' ')` (`['m'].join(' ')`, no trailing space) never produces,
+    // so the key was never reachable at all; [_joinMounted] omits the
+    // separator instead of leaving an empty segment on either side.
+    //
+    // [_shortcutContractsByExactRoute] names exactly one shortcut per
+    // mounted router pattern, so a second registration under the same one
+    // is a build-time [ArgumentError] rather than a later registration
+    // silently overwriting an earlier one (round-6 review finding 4: a
+    // single shared map let a positional shortcut like `s <id>` and a
+    // bare one like `s` collide, since the bare one's own exact key and
+    // the positional one's own prefix key were the same string).
+    // [_shortcutContractsByPrefix] is not that kind of map: several
+    // shortcuts legitimately share one literal prefix, so it collects
+    // every candidate under it, and [ModularCli._shortcutContractFor]
+    // decides, at lookup time, whether that is one candidate or several.
+    final mountedRouterPattern = _joinMounted(
+      moduleName,
+      routePattern.routerPattern,
+    );
+    final mountedLiteralPrefix = _joinMounted(
+      moduleName,
+      routePattern.literalPrefix,
+    );
+    final existing = _shortcutContractsByExactRoute[mountedRouterPattern];
+    if (existing != null) {
+      throw ArgumentError(
+        'shortcut("$pattern") registers under the mounted router pattern '
+        '"$mountedRouterPattern", which shortcut("${existing.route}") '
+        'already registered. Two shortcuts cannot share the identity '
+        'cli_router itself would resolve one of them to; give one of '
+        'them a different pattern.',
+      );
     }
+    _shortcutContractsByExactRoute[mountedRouterPattern] = entry;
+    (_shortcutContractsByPrefix[mountedLiteralPrefix] ??= []).add(entry);
 
     _mount(
       pattern,
@@ -335,6 +392,20 @@ class ModuleBuilder {
       globals: globals,
       (req, output) => body(req, output, entry),
     );
+  }
+
+  /// Joins a module prefix and a route's own literal-word string the same
+  /// way `cli_router` reports them back together on a [CliRejection]
+  /// (`moduleName` then the route's own words, space-separated), without
+  /// ever leaving a stray leading, trailing or doubled space when either
+  /// half is empty (round-6 review finding 5): `_joinMounted('m', 's')`
+  /// is `'m s'`, `_joinMounted('', 's')` is `'s'`, and, the case naive
+  /// `'$moduleName $suffix'` concatenation got wrong,
+  /// `_joinMounted('m', '')` is `'m'`, not `'m '`.
+  static String _joinMounted(String moduleName, String suffix) {
+    if (moduleName.isEmpty) return suffix;
+    if (suffix.isEmpty) return moduleName;
+    return '$moduleName $suffix';
   }
 
   CliPositional _positionalFromTarget(
@@ -618,8 +689,12 @@ class ModuleBuilder {
     exitCode: ExitCode.validationFailed,
   );
 
-  /// A rejected invocation is answered with the contract it failed to honour —
-  /// the user was one flag away from succeeding.
+  /// A rejected invocation is answered with the contract it failed to
+  /// honour: the user was one flag away from succeeding. Neither this nor
+  /// [CliOutput.writeError] writes anything itself any more: both only
+  /// record, into the current invocation's own [InvocationOutcome]
+  /// (round-6 review findings 1 through 3), what [ModularCli.run] alone
+  /// renders, exactly once, after the whole dispatch finishes.
   int _reject(
     CommandException error,
     CliRequest req,
@@ -630,9 +705,7 @@ class ModuleBuilder {
     cliOutput.writeError(error);
     if (showsContractOnRejection &&
         error.exitCode == ExitCode.validationFailed) {
-      req.stderr
-        ..writeln()
-        ..writeln(HelpRenderer(_catalog).renderCommand(entry));
+      recordInvocationExtraText(HelpRenderer(_catalog).renderCommand(entry));
     }
     return error.exitCode;
   }

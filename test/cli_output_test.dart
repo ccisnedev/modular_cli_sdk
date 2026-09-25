@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
+import 'package:modular_cli_sdk/src/invocation_outcome.dart';
 import 'package:test/test.dart';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -108,13 +109,20 @@ void main() {
       expect((parsed[0] as Map).containsKey('hidden'), isFalse);
     });
 
-    test('should write error as JSON to stderr', () {
-      buildOutput().writeError(_sampleError());
+    test('should record error for later JSON rendering instead of writing it', () async {
+      // JsonCliOutput.writeError no longer writes anything itself: it only
+      // records the error into the current invocation's own outcome, which
+      // ModularCli.run alone renders, exactly once, after the whole
+      // dispatch finishes (round-6 review findings 1 through 3).
+      await runWithInvocationOutcome(() async {
+        buildOutput().writeError(_sampleError());
 
-      final parsed = jsonDecode(stderrSink.output) as Map<String, dynamic>;
-      final error = parsed['error'] as Map<String, dynamic>;
-      expect(error['id'], 'test-error');
-      expect(error['message'], 'Something failed');
+        final outcome = currentInvocationOutcome();
+        expect(outcome.error?.id, 'test-error');
+        expect(outcome.error?.message, 'Something failed');
+        expect(outcome.jsonMode, isTrue);
+      });
+      expect(stderrSink.output, isEmpty);
     });
 
     test('should suppress messages when quiet is true', () {
@@ -163,11 +171,18 @@ void main() {
       expect(lines[1], contains('--'));
     });
 
-    test('should write error with prefix to stderr sink', () {
-      buildOutput().writeError(_sampleError());
-      expect(stderrSink.output, contains('Error:'));
-      expect(stderrSink.output, contains('Something failed'));
-      expect(stderrSink.output, contains('test-error'));
+    test('should record error for later text rendering instead of writing it', () async {
+      // TextCliOutput.writeError no longer writes anything itself either:
+      // same reasoning as JsonCliOutput's own test above.
+      await runWithInvocationOutcome(() async {
+        buildOutput().writeError(_sampleError());
+
+        final outcome = currentInvocationOutcome();
+        expect(outcome.error?.id, 'test-error');
+        expect(outcome.error?.message, 'Something failed');
+        expect(outcome.jsonMode, isFalse);
+      });
+      expect(stderrSink.output, isEmpty);
     });
 
     test('should write message as plain text', () {
@@ -180,12 +195,16 @@ void main() {
       expect(stdoutSink.output, isEmpty);
     });
 
-    test('should include details in error output', () {
-      buildOutput().writeError(
-        _sampleError(details: {'field': 'name', 'reason': 'required'}),
-      );
-      expect(stderrSink.output, contains('field'));
-      expect(stderrSink.output, contains('required'));
+    test('should record details alongside the error', () async {
+      await runWithInvocationOutcome(() async {
+        buildOutput().writeError(
+          _sampleError(details: {'field': 'name', 'reason': 'required'}),
+        );
+
+        final outcome = currentInvocationOutcome();
+        expect(outcome.error?.details, {'field': 'name', 'reason': 'required'});
+      });
+      expect(stderrSink.output, isEmpty);
     });
 
     test('should use textOverride when provided', () {

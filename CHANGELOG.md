@@ -168,23 +168,44 @@ rejected. No bug or missing API was found in it while building this one.
   under a fixed `id: 'step-failed'` otherwise. The exit code `_carryOut`
   returns is now always the written exception's own `exitCode`, not a
   separate computation that could drift from it
-- **A middleware registered through `ModularCli.use()` that throws a
-  `CommandException` no longer escapes `run()`, and, when middleware is
-  nested, exactly one structured error envelope is rendered for the whole
-  invocation.** Each middleware still runs inside its own error boundary,
-  covering a throw from its own construction as well as one from the
-  handler it returns, but that boundary only records which
-  `CommandException` terminated the invocation and converts it to a plain
-  exit code an outer middleware can still inspect through its own `await
-  next(req)`; the outer boundary's own catch, if it has one, records over
-  that in turn. Rendering happens exactly once, after the whole chain has
-  finished, for whichever exception was recorded last, the one that
-  actually terminates the invocation, an outer middleware's own throw when
-  it escalates a failure of its own, an inner one otherwise. Previously
-  every boundary rendered its own catch immediately: an inner middleware's
+- **No SDK code path writes an error to stderr directly any more; `run()`
+  alone renders it, exactly once, after the whole dispatch has finished.**
+  Every place that used to call `stderr.writeln(...)` (a middleware's own
+  catch, `CliOutput.writeError`, a rejection handled inside `ModularCli`)
+  now records its `CommandException` into an invocation-local outcome kept
+  as a `Zone` value, created fresh by `run()` for that one invocation and
+  threaded automatically across every `await`, instead of an instance field
+  a concurrent `run()` call on the same `ModularCli` could clobber. `run()`
+  decides once, after the whole chain returns: exit code `0` discards
+  whatever was recorded and renders nothing (a handler that recovers from a
+  middleware's failure and still succeeds no longer leaves a stale error
+  behind); a nonzero exit code renders the most recently recorded error,
+  in the `--json` or text mode the request actually used. The former
+  per-middleware error-boundary field, `_pendingMiddlewareError`, is gone
+  along with the patch-by-patch fixes layered on it: an inner middleware's
   construction-time throw, escalated by an outer middleware into a fresh
-  throw of its own, wrote two concatenated JSON documents to stderr instead
-  of one
+  throw of its own, no longer writes two concatenated JSON documents to
+  stderr, and two invocations to the same `ModularCli` running concurrently
+  no longer risk one seeing the other's recorded error
+- **A rejection under a mounted shortcut is now attributed to the right
+  contract, or explicitly reported as ambiguous, never guessed.** The
+  shortcut lookup used to be a single map from a route's bare pattern to its
+  contract, which broke as soon as a shortcut was itself mounted under a
+  prefix: the router's own rejection reports the mounted route, not the bare
+  one, so the lookup missed and `--help` fell through to the catalog instead
+  of the shortcut's own contract. There are now two maps, built at
+  registration time: an exact map from a shortcut's full mounted router
+  pattern to its one contract (registering two shortcuts under the same
+  mounted pattern is a registration-time error, not a silent overwrite), and
+  a prefix map from a mounted literal prefix to every shortcut contract that
+  starts with it. A lookup uses the exact map first when the rejection
+  itself carries a resolved route; otherwise it falls back to the prefix
+  candidates. Exactly one candidate validates against it as before. Several
+  shortcuts sharing a prefix can no longer be attributed to just one of
+  them, so `--help` no longer wins by picking arbitrarily; the router's own
+  rejection error is reported instead, exactly as if no shortcut existed.
+  `--help` on a resolved mounted shortcut now also renders the mounted route
+  in its usage line, not the bare pattern the shortcut was declared with
 - **A constraint (`ExactlyOne`, `MutuallyExclusive`) now counts a bound
   positional by name, the same as an option.** Previously only option
   presence was checked, so `eval rpn '1 2 +'` (the positional alone) ran
