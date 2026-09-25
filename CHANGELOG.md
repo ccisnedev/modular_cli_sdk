@@ -4,6 +4,100 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.6.0
+
+Built against `cli_router: { path: ../cli_router-0.2.0 }` — the constraint
+must become `cli_router: ^0.2.0` once that release is published to pub.dev.
+This entry is written against the API `cli_router` 0.2.0 carries as of this
+release; no bug or missing API was found in it while building this one.
+
+### Added
+
+- **`CliPositional`** — a declared positional argument (`.string`, `.integer`,
+  `.number`), distinct from `CliParam` because it has no `--name`, no
+  abbreviation and no repeatability. Renders in help and is enforced exactly
+  like an option
+- **`CliContract`** — the full declared shape of a route's arguments:
+  `options` (`CliParam`), `positionals` (`CliPositional`) and `constraints`
+  (`CliConstraint`), replacing the bare `List<CliParam>? params`.
+  `CliContract.none` declares nothing; `withOptions()` returns a copy with
+  extra options appended (how the SDK adds `--plan`/`--apply`/`--autoapprove`
+  to a command's own contract without mutating it)
+- **`CliConstraint`, `ExactlyOne`, `MutuallyExclusive`** — cross-field rules
+  checked once every option has been read and defaulted, over the set of
+  option names actually *present* on the invocation (a `DeclaredDefault` does
+  not count as present)
+- **`DeclaredDefault<T>`** — a default value wrapped with a required `reason`,
+  so a default is never silent; help renders `default: <value>` from it
+- **`--help` wins over enforcement.** `<command> --help` on an otherwise
+  invalid or incomplete invocation now always renders that command's contract
+  and exits `0`, instead of failing enforcement first. Concretely: an
+  invocation the router classifies as `incomplete`, `missingArgument` or
+  `missingRequiredOption` is help-eligible; `--help` short-circuits it
+- **A half-typed route says so specifically.** `math` (where only `math add`
+  is registered), `api graphql` (a route prefix, not a module) and a route hit
+  with an unrelated bad option before its own contract could be resolved are
+  now all reported as `'<what you typed>' is not a complete command`, instead
+  of the router's generic `incomplete command` / `does not continue this
+  command` wording — whenever no contract names the exact invocation but at
+  least one registered route continues it
+- **Exit codes `dataError` (65, `EX_DATAERR`) and `configError` (78,
+  `EX_CONFIG`)**, alongside the existing eight — `ExitCode.all` now has 10
+  entries
+- `test/cli_positional_test.dart`, `test/cli_contract_test.dart` — dedicated
+  coverage for the two new declaration types
+
+### Changed — BREAKING
+
+- **`params: List<CliParam>?` is gone; every route declares `contract:
+  CliContract` instead.** `command(...)` / `query(...)` on both `ModularCli`
+  and `ModuleBuilder` take `contract` (defaulting to `CliContract.none`), not
+  `params`. A positional argument, previously undeclarable, is now a
+  `CliPositional` inside the same contract a route's options live in
+- **`Input.schemaFields` and `Output.schemaFields` are removed.** They were
+  reserved surface that predated `CliContract`; a route's `Input` now exposes
+  its contract as a `static final contract`, read by the registration call,
+  not by an interface member every `Input`/`Output` had to carry
+- **A positional always renders a `required` facet in help text.** There is
+  no way to declare an optional positional — the route pattern's
+  `<placeholder>` either exists or it does not — so unlike an option, a
+  positional's help entry does not distinguish required from optional
+- **The JSON error envelope's `error` field is now a machine-readable code,
+  never a raw message.** A router-level rejection (unknown command, missing
+  required option, …) previously surfaced under `--json` as `{"error":
+  "<raw human-readable message>", "kind": ..., "contract": ...}`. It is now
+  `{"error": "INVALID_USAGE" | "VALIDATION_FAILED", "message": "<text>",
+  "exitCode": <int>, "isRetryable": false, "kind": ..., "contract": ...,
+  "details": {"parameter": "<name>"}}` when the SDK can name the offending
+  parameter — the same shape `CommandException.toJson()` already used, so a
+  `--json` caller sees one error vocabulary regardless of whether the
+  rejection came from `cli_router` itself or from a handler. Previously, a
+  caller parsing `--json` output for a *specific* structured error had to
+  match on free text; it now matches on `error`
+- **`help --json`'s `route` and `kind` keys** — `kind` is the route's
+  `CommandKind` (`"query"` / `"command"`); a JSON consumer keying off the
+  wrong field will find one missing rather than silently reading the other's
+  value
+- **The generated `Usage:` line orders options before positionals** —
+  `Usage: notes write [options] <name>`, not `<name> [options]` — because
+  `cli_router`'s grammar requires every option to precede the first
+  positional on the actual command line (an option can never follow an
+  operand); the old order documented an invocation the router would reject
+
+### Deferred
+
+- **`shortcut()` and `suggest()`** — a route responding to an abbreviated or
+  misspelled invocation, from the plugin-system discussion in issue #28 — are
+  **not** part of this release. `cli_router` 0.2.0 has no such API either
+
+### Notes
+
+- `dart analyze` is clean except for the expected `invalid_dependency`
+  warning on the intentional local path dependency on `cli_router`
+- Every invocation in this README, the example app and the test suite that
+  exercises a route with a positional now places its options before the
+  positional, per the grammar rule above
+
 ## 0.5.0
 
 > Prepared as two releases and shipped as one. The version here was raised to

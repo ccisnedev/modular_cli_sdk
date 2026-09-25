@@ -32,7 +32,7 @@ void main(List<String> args) async {
       'list',
       (req) => ListNotes(ListInput.fromCliRequest(req)),
       description: 'List your notes',
-      params: ListInput.params,
+      contract: ListInput.contract,
     );
 
     // Changes something. --plan / --apply / --autoapprove are declared,
@@ -41,7 +41,7 @@ void main(List<String> args) async {
       'write <name>',
       (req) => WriteNote(WriteInput.fromCliRequest(req)),
       description: 'Write a note',
-      params: WriteInput.params,
+      contract: WriteInput.contract,
     );
   });
 
@@ -63,7 +63,9 @@ dart run bin/main.dart notes write today
 #   --apply  show it, ask for approval, then do it
 # exit code 7
 
-dart run bin/main.dart notes write today --plan
+# Options must come before the positional — cli_router's grammar requires
+# it (an option can never follow an operand) — so --plan precedes today.
+dart run bin/main.dart notes write --plan today
 # Plan — notes write
 #
 #   create   notes
@@ -268,25 +270,33 @@ See [Compile to executable](#compile-to-executable) for the layout.
 
 ## Help and the command contract
 
-Each command declares its parameters once, on its `Input`. The SDK introspects
-its own command registry to render help — the CLI counterpart of the OpenAPI
-document `modular_api` generates from its registered use cases.
+Each command declares its arguments once, on its `Input`, as a `CliContract`:
+`CliParam` for its options, `CliPositional` for words read by their place in
+the route rather than by a `--name`, and `CliConstraint` (`ExactlyOne`,
+`MutuallyExclusive`) for rules spanning more than one option. The SDK
+introspects its own command registry to render help — the CLI counterpart of
+the OpenAPI document `modular_api` generates from its registered use cases.
 
 ```dart
 class HelloInput extends Input {
   final String name;
   HelloInput({required this.name});
 
-  static final params = [
-    CliParam.string('name', abbr: 'n', defaultValue: 'World',
-        description: 'Who to greet'),
-  ];
+  static final contract = CliContract(
+    options: [
+      CliParam.string(
+        'name',
+        abbr: 'n',
+        required: false,
+        repeatable: false,
+        defaultValue: const DeclaredDefault('World', reason: 'the name used when nobody gave one'),
+        description: 'Who to greet',
+      ),
+    ],
+  );
 
   factory HelloInput.fromCliRequest(CliRequest req) =>
       HelloInput(name: req.flagString('name')!); // already resolved and defaulted
-
-  @override
-  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {'name': name};
@@ -295,17 +305,29 @@ class HelloInput extends Input {
 
 **Declaring is parsing.** The same declaration that help renders is the one the
 framework enforces before your `Input` reads a flag: it resolves `-n` to
-`--name`, applies the declared default, coerces `--a abc` to a validation error
+`--name`, applies the declared default (with its `reason`, which help renders
+alongside it — `default: World`), coerces `--a abc` to a validation error
 instead of a silent `0`, rejects an option nobody declared, and checks
-`allowed` values. Help therefore cannot describe a contract the CLI does not
-actually apply. A **query** that declares no `params` keeps parsing its
-arguments by hand and is neither described nor enforced.
+`allowed` values. A positional works the same way through `CliPositional`, and
+a route pattern's `<placeholder>` is where it binds. Help therefore cannot
+describe a contract the CLI does not actually apply. A **query** that declares
+`CliContract.none` (the default) is neither described as taking arguments nor
+enforced beyond that; one with a non-empty contract is both.
 
-A **command** is always enforced: omitting `params` does not leave it
-undeclared, it declares that the command takes nothing but `--plan`, `--apply`
-and `--autoapprove`. A route that changes something cannot be the one whose
-arguments nobody checks — and the three flags have to be declared to be typed
-at all.
+A **command** is always enforced: its declared `contract` always gains
+`--plan`, `--apply` and `--autoapprove` from the SDK, even when the command's
+own contract is `CliContract.none`. A route that changes something cannot be
+the one whose arguments nobody checks — and the three flags have to be
+declared to be typed at all.
+
+**cli_router requires every option to precede the first positional** on the
+actual command line — an option can never follow an operand. `notes write
+--plan today` parses; `notes write today --plan` is rejected. The `Usage:`
+line the SDK renders is written in that same order.
+
+`shortcut()` and `suggest()` — a route responding to an abbreviated or
+misspelled invocation — are **not** part of this release. `cli_router` 0.2.0
+has no such API either; there is nothing for the SDK to call yet.
 
 Help is a **success**, not an error:
 
@@ -336,17 +358,19 @@ A `help` command you register yourself always wins over the built-in one.
 - `Command<I, O>` — changes something, as steps that are held to what they said
 - `--plan` / `--apply` / `--autoapprove` — declared, enforced and acted on for every command; neither of the first two is a default
 - `Approver` / `PlanSink` — how approval is taken and where a plan is filed, left to the host
-- `CliParam` — a route's declared contract: renders help *and* enforces parsing
-- Native help — `help`, no args, `--help`/`-h` on stdout with exit 0; `help --json` for machines, with `kind` on every route
+- `CliContract` — a route's declared arguments: `CliParam` (options), `CliPositional` (positionals) and `CliConstraint` (`ExactlyOne`, `MutuallyExclusive`) — renders help *and* enforces parsing
+- `DeclaredDefault<T>` — a default value that carries its own `reason`, which help renders alongside it
+- Native help — `help`, no args, `--help`/`-h` on stdout with exit 0; `help --json` for machines, with `kind` on every route. `--help` wins over enforcement on an otherwise-invalid invocation, so asking how a command is used never requires already knowing
 - `Input` / `Output` — typed DTOs for I/O
 - `CommandException` — structured errors with code, message, exit code, and retryable flag
+- A router-level rejection (unknown command, missing required option, …) is reported through the same JSON error envelope as a `CommandException` — `error` (a machine-readable code), `message`, `exitCode`, `isRetryable`, and `details` when the SDK can name the specific parameter at fault
 - `ModularCli` + `ModuleBuilder` — module registration and routing
 - Root routes — register without a module prefix via `cli.query()` / `cli.command()`
 - `--json` global flag — machine-readable JSON output
 - `--quiet` global flag — suppress informational messages
 - TTY detection — automatic format selection
-- Semantic exit codes — 0 (OK), 1 (error), 4 (not found), 5 (unauthorized), 7 (validation), 64 (usage)
-- Built on `cli_router` — GNU flags, middleware, modular mounting
+- Semantic exit codes — 0 (OK), 1 (error), 2 (API error), 4 (not found), 5 (unauthorized), 6 (conflict), 7 (validation), 64 (usage), 65 (data error), 78 (config error)
+- Built on `cli_router` — GNU flags, middleware, modular mounting, and a grammar where every option precedes the first positional on the command line
 
 ---
 
