@@ -350,7 +350,14 @@ class ModuleBuilder {
     if (!flags.autoapprove) {
       final declined = await _refusalOf(plan);
       if (declined != null) {
-        output.writeObject(declined.toJson(), textOverride: declined.toText());
+        output.writeError(
+          CommandException(
+            id: 'approval-refused',
+            message: declined.reason,
+            exitCode: declined.exitCode,
+            details: {'reason': declined.reason},
+          ),
+        );
         return declined.exitCode;
       }
     }
@@ -367,12 +374,25 @@ class ModuleBuilder {
       req.stderr.writeln('! ${discrepancy.message}');
     }
     if (execution.failure != null) {
-      req.stderr.writeln('! ${execution.failure!.message}');
+      final thrown = execution.failure!.error;
+      // A step that threw its own CommandException keeps that error exactly:
+      // its id and exit code are the most specific thing known about the
+      // failure, and re-wrapping it would throw that away. Anything else is
+      // wrapped in a fixed, kebab-case id, so a --json caller always gets the
+      // same envelope shape regardless of what the step actually threw.
+      final exception = thrown is CommandException
+          ? thrown
+          : CommandException(
+              id: 'step-failed',
+              message: execution.failure!.message,
+              exitCode: result.exitCode == ExitCode.ok
+                  ? ExitCode.genericError
+                  : result.exitCode,
+            );
+      output.writeError(exception);
       // Stopping halfway is a failure of the invocation even when the command
       // found something to report about the part that ran.
-      return result.exitCode == ExitCode.ok
-          ? ExitCode.genericError
-          : result.exitCode;
+      return exception.exitCode;
     }
 
     return result.exitCode;
