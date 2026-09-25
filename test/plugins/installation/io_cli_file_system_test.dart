@@ -122,6 +122,65 @@ void main() {
       },
       skip: io.Platform.isWindows ? false : 'Windows-specific replace path',
     );
+
+    test(
+      'still blames chmod with a FileSystemException when the post-write '
+      'check reports exit code 1 (not executable)',
+      () async {
+        final fs = IoCliFileSystem(
+          executableChecker: _FixedExecutableChecker(exitCode: 1),
+        );
+        final path = pathIn(tempDir, 'cx');
+
+        await expectLater(
+          fs.writeExecutable(path, [1, 2, 3]),
+          throwsA(isA<io.FileSystemException>()),
+        );
+      },
+      skip: io.Platform.isWindows
+          ? 'POSIX chmod/executable-check path only'
+          : false,
+    );
+
+    test(
+      'a post-write check exit code other than 0 or 1 is a typed '
+      'CliExecutableCheckFailure, not the chmod-blamed error',
+      () async {
+        final fs = IoCliFileSystem(
+          executableChecker: _FixedExecutableChecker(exitCode: 2),
+        );
+        final path = pathIn(tempDir, 'cx');
+
+        await expectLater(
+          fs.writeExecutable(path, [1, 2, 3]),
+          throwsA(isA<CliExecutableCheckFailure>()),
+        );
+      },
+      skip: io.Platform.isWindows
+          ? 'POSIX chmod/executable-check path only'
+          : false,
+    );
+
+    test(
+      'the post-write check failing to start at all is a typed '
+      'CliExecutableCheckFailure, not the chmod-blamed error',
+      () async {
+        final fs = IoCliFileSystem(
+          executableChecker: _FixedExecutableChecker(
+            startupError: Exception('no such file or directory'),
+          ),
+        );
+        final path = pathIn(tempDir, 'cx');
+
+        await expectLater(
+          fs.writeExecutable(path, [1, 2, 3]),
+          throwsA(isA<CliExecutableCheckFailure>()),
+        );
+      },
+      skip: io.Platform.isWindows
+          ? 'POSIX chmod/executable-check path only'
+          : false,
+    );
   });
 
   group('writeExecutable (Windows rename-failure restore)', () {
@@ -571,5 +630,28 @@ class _FakeExecutableChecker implements CliExecutableChecker {
       throw StateError('no exit code configured for $path in this test');
     }
     return exitCode;
+  }
+}
+
+/// An injected [CliExecutableChecker] that answers the same way for
+/// whatever path it is asked about, in place of a fixed per-path map: the
+/// temporary file [IoCliFileSystem.writeExecutable] checks has a name built
+/// from the current pid and a microsecond timestamp, which a test cannot
+/// predict ahead of the call.
+class _FixedExecutableChecker implements CliExecutableChecker {
+  _FixedExecutableChecker({this.exitCode, this.startupError});
+
+  final int? exitCode;
+  final Object? startupError;
+
+  @override
+  int exitCodeFor(String path) {
+    final error = startupError;
+    if (error != null) throw error;
+    final code = exitCode;
+    if (code == null) {
+      throw StateError('no exit code configured for this test');
+    }
+    return code;
   }
 }

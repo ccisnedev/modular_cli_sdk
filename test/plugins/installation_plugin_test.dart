@@ -366,6 +366,36 @@ void main() {
     );
 
     test(
+      'a post-write executable-check failure is reported distinctly from a '
+      'plain file-access failure',
+      () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+          ..writeError = const CliExecutableCheckFailure(
+            '/usr/local/bin/cx',
+            'checking whether /usr/local/bin/cx is executable exited with '
+                'unexpected code 2',
+          );
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+          ),
+        );
+
+        final out = MemorySink();
+        final code = await cli.run([
+          'upgrade',
+          '--apply',
+          '--autoapprove',
+        ], stdout: out);
+
+        expect(code, ExitCode.genericError);
+        expect(out.output, contains('executable-check-failed'));
+        expect(out.output, isNot(contains('file-access-denied')));
+      },
+    );
+
+    test(
       'the executable not being on PATH is a file-access-denied build failure',
       () async {
         final cli = _cliWith(
