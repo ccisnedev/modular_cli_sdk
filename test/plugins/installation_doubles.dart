@@ -36,10 +36,21 @@ class FakeDownloader implements CliDownloader {
 
 /// Resolves names against an in-memory `PATH` map, and records writes/deletes
 /// instead of touching disk.
+///
+/// [canonicalTargets] maps a raw path to the canonical target it stands for,
+/// the way a real filesystem's symlink resolution would, so a test can set
+/// up two different `PATH` entries (an executable and a symlinked alias)
+/// that both resolve to the same file without their raw path strings being
+/// equal.
 class FakeFileSystem implements CliFileSystem {
-  FakeFileSystem({Map<String, String>? onPath}) : _onPath = {...?onPath};
+  FakeFileSystem({
+    Map<String, String>? onPath,
+    Map<String, String>? canonicalTargets,
+  }) : _onPath = {...?onPath},
+       _canonicalTargets = {...?canonicalTargets};
 
   final Map<String, String> _onPath;
+  final Map<String, String> _canonicalTargets;
   final Map<String, List<int>> written = {};
   final List<String> deleted = [];
 
@@ -50,6 +61,9 @@ class FakeFileSystem implements CliFileSystem {
   String? resolveOnPath(String name) => _onPath[name];
 
   @override
+  String canonicalize(String path) => _canonicalTargets[path] ?? path;
+
+  @override
   Future<void> writeExecutable(String path, List<int> bytes) async {
     if (writeError != null) throw writeError!;
     written[path] = bytes;
@@ -58,6 +72,14 @@ class FakeFileSystem implements CliFileSystem {
   @override
   Future<void> delete(String path) async {
     if (deleteError != null) throw deleteError!;
+    // A real filesystem's second delete of an already-removed path fails;
+    // this fake rejects it the same way, so a bug that queues the same
+    // entry for removal twice (the alias-and-executable identity bug this
+    // fake exists to catch) fails a test instead of passing one by quietly
+    // recording the same path twice.
+    if (deleted.contains(path)) {
+      throw StateError('$path was already deleted');
+    }
     deleted.add(path);
     _onPath.removeWhere((name, resolved) => resolved == path);
   }

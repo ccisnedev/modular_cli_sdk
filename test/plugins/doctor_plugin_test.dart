@@ -8,12 +8,16 @@ import 'package:test/test.dart';
 import '../doubles.dart';
 
 void main() {
-  test('with no checks contributed, doctor reports none and exits ok', () async {
-    final cli = ModularCli(name: 'x', version: '1.0.0')..plugin(const DoctorPlugin());
+  test(
+    'with no checks contributed, doctor reports none and exits ok',
+    () async {
+      final cli = ModularCli(name: 'x', version: '1.0.0')
+        ..plugin(const DoctorPlugin());
 
-    final code = await cli.run(['doctor'], stdout: MemorySink());
-    expect(code, ExitCode.ok);
-  });
+      final code = await cli.run(['doctor'], stdout: MemorySink());
+      expect(code, ExitCode.ok);
+    },
+  );
 
   test('every check ok exits ok', () async {
     final cli = ModularCli(name: 'x', version: '1.0.0')
@@ -68,27 +72,46 @@ void main() {
     expect(code, ExitCode.ok);
   });
 
-  test('one error exits configError (78), even alongside ok and warning', () async {
-    final cli = ModularCli(name: 'x', version: '1.0.0')
-      ..plugin(const DoctorPlugin())
-      ..plugin(
-        _CheckContributingPlugin([
-          _constantCheck(name: 'binary', status: CliCheckStatus.ok, message: 'found'),
-          _constantCheck(name: 'release', status: CliCheckStatus.warning, message: 'newer available'),
-          _constantCheck(name: 'alias', status: CliCheckStatus.error, message: 'missing'),
-        ]),
-      );
+  test(
+    'one error exits configError (78), even alongside ok and warning',
+    () async {
+      final cli = ModularCli(name: 'x', version: '1.0.0')
+        ..plugin(const DoctorPlugin())
+        ..plugin(
+          _CheckContributingPlugin([
+            _constantCheck(
+              name: 'binary',
+              status: CliCheckStatus.ok,
+              message: 'found',
+            ),
+            _constantCheck(
+              name: 'release',
+              status: CliCheckStatus.warning,
+              message: 'newer available',
+            ),
+            _constantCheck(
+              name: 'alias',
+              status: CliCheckStatus.error,
+              message: 'missing',
+            ),
+          ]),
+        );
 
-    final code = await cli.run(['doctor'], stdout: MemorySink());
-    expect(code, ExitCode.configError);
-  });
+      final code = await cli.run(['doctor'], stdout: MemorySink());
+      expect(code, ExitCode.configError);
+    },
+  );
 
   test('doctor --json reports every check by name', () async {
     final cli = ModularCli(name: 'x', version: '1.0.0')
       ..plugin(const DoctorPlugin())
       ..plugin(
         _CheckContributingPlugin([
-          _constantCheck(name: 'binary', status: CliCheckStatus.ok, message: 'found'),
+          _constantCheck(
+            name: 'binary',
+            status: CliCheckStatus.ok,
+            message: 'found',
+          ),
         ]),
       );
 
@@ -98,13 +121,83 @@ void main() {
     expect(out.output, contains('"binary"'));
     expect(out.output, contains('"status": "ok"'));
   });
+
+  test(
+    'two checks sharing a name are both kept, in order, rather than one overwriting the other',
+    () async {
+      final cli = ModularCli(name: 'x', version: '1.0.0')
+        ..plugin(const DoctorPlugin())
+        ..plugin(
+          _CheckContributingPlugin([
+            _constantCheck(
+              name: 'release',
+              status: CliCheckStatus.error,
+              message: 'first, broken',
+            ),
+            _constantCheck(
+              name: 'release',
+              status: CliCheckStatus.ok,
+              message: 'second, fine',
+            ),
+          ]),
+        );
+
+      final out = MemorySink();
+      final code = await cli.run(['doctor', '--json'], stdout: out);
+
+      // A later ok must not overwrite an earlier error: the exit code is
+      // computed from every result, not just the last one written under a
+      // name two checks happen to share.
+      expect(code, ExitCode.configError);
+      expect(out.output, contains('first, broken'));
+      expect(out.output, contains('second, fine'));
+    },
+  );
+
+  test(
+    'a check that throws is recorded as an error and the rest still run',
+    () async {
+      final cli = ModularCli(name: 'x', version: '1.0.0')
+        ..plugin(const DoctorPlugin())
+        ..plugin(
+          _CheckContributingPlugin([
+            _constantCheck(
+              name: 'binary',
+              status: CliCheckStatus.ok,
+              message: 'found',
+            ),
+            CliDoctorCheck(
+              name: 'alias',
+              run: () async => throw StateError('boom'),
+            ),
+            _constantCheck(
+              name: 'release',
+              status: CliCheckStatus.ok,
+              message: 'up to date',
+            ),
+          ]),
+        );
+
+      final out = MemorySink();
+      final code = await cli.run(['doctor'], stdout: out);
+
+      expect(code, ExitCode.configError);
+      expect(out.output, contains('found'));
+      expect(out.output, contains('alias'));
+      expect(out.output, contains('boom'));
+      expect(out.output, contains('up to date'));
+    },
+  );
 }
 
 CliDoctorCheck _constantCheck({
   required String name,
   required CliCheckStatus status,
   required String message,
-}) => CliDoctorCheck(name: name, run: () async => CliCheckResult(status: status, message: message));
+}) => CliDoctorCheck(
+  name: name,
+  run: () async => CliCheckResult(status: status, message: message),
+);
 
 /// A plugin that declares no extension points of its own and contributes a
 /// fixed list of [CliDoctorCheck]s to `doctor.checks`: it must therefore

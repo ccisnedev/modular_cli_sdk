@@ -8,7 +8,8 @@ import '../doubles.dart';
 
 void main() {
   test('version reports the name and version given to ModularCli', () async {
-    final cli = ModularCli(name: 'demo', version: '1.2.3')..plugin(const VersionPlugin());
+    final cli = ModularCli(name: 'demo', version: '1.2.3')
+      ..plugin(const VersionPlugin());
 
     final out = MemorySink();
     final code = await cli.run(['version'], stdout: out);
@@ -18,7 +19,8 @@ void main() {
   });
 
   test('version --json reports name and version as fields', () async {
-    final cli = ModularCli(name: 'demo', version: '1.2.3')..plugin(const VersionPlugin());
+    final cli = ModularCli(name: 'demo', version: '1.2.3')
+      ..plugin(const VersionPlugin());
 
     final out = MemorySink();
     await cli.run(['version', '--json'], stdout: out);
@@ -31,4 +33,18 @@ void main() {
     final cli = ModularCli()..plugin(const VersionPlugin());
     expect(cli.buildPlugins, throwsStateError);
   });
+
+  test(
+    'a version given to VersionPlugin is reported instead of the host version',
+    () async {
+      final cli = ModularCli(name: 'demo', version: '1.2.3')
+        ..plugin(VersionPlugin(version: '0.8.0'));
+
+      final out = MemorySink();
+      final code = await cli.run(['version'], stdout: out);
+
+      expect(code, ExitCode.ok);
+      expect(out.output, contains('demo: 0.8.0'));
+    },
+  );
 }

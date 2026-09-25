@@ -45,7 +45,13 @@ void main() {
 
       expect(
         cli.buildPlugins,
-        throwsA(isA<CliPluginError>().having((e) => e.code, 'code', 'PLUGIN_DEPENDENCY_CYCLE')),
+        throwsA(
+          isA<CliPluginError>().having(
+            (e) => e.code,
+            'code',
+            'PLUGIN_DEPENDENCY_CYCLE',
+          ),
+        ),
       );
     });
 
@@ -55,7 +61,13 @@ void main() {
 
       expect(
         cli.buildPlugins,
-        throwsA(isA<CliPluginError>().having((e) => e.code, 'code', 'PLUGIN_INCOMPATIBLE_HOST_API')),
+        throwsA(
+          isA<CliPluginError>().having(
+            (e) => e.code,
+            'code',
+            'PLUGIN_INCOMPATIBLE_HOST_API',
+          ),
+        ),
       );
     });
 
@@ -65,7 +77,13 @@ void main() {
 
       expect(
         cli.buildPlugins,
-        throwsA(isA<CliPluginError>().having((e) => e.code, 'code', 'PLUGIN_INCOMPATIBLE_HOST_API')),
+        throwsA(
+          isA<CliPluginError>().having(
+            (e) => e.code,
+            'code',
+            'PLUGIN_INCOMPATIBLE_HOST_API',
+          ),
+        ),
       );
     });
 
@@ -76,7 +94,13 @@ void main() {
 
       expect(
         cli.buildPlugins,
-        throwsA(isA<CliPluginError>().having((e) => e.code, 'code', 'PLUGIN_DUPLICATE_ROUTE')),
+        throwsA(
+          isA<CliPluginError>().having(
+            (e) => e.code,
+            'code',
+            'PLUGIN_DUPLICATE_ROUTE',
+          ),
+        ),
       );
     });
 
@@ -85,7 +109,8 @@ void main() {
         ..plugin(
           _FakePlugin(
             id: 'a',
-            onSetup: (host) => host.contribute<String>('nobody.declared', 'value'),
+            onSetup: (host) =>
+                host.contribute<String>('nobody.declared', 'value'),
           ),
         );
 
@@ -100,6 +125,60 @@ void main() {
         ),
       );
     });
+
+    test(
+      'an extension point declared a second time, with a different type',
+      () {
+        final cli = ModularCli(name: 'x', version: '1.0.0')
+          ..plugin(
+            _FakePlugin(
+              id: 'a',
+              onSetup: (host) {
+                host.declareExtensionPoint<String>('p');
+                host.declareExtensionPoint<int>('p');
+              },
+            ),
+          );
+
+        expect(
+          cli.buildPlugins,
+          throwsA(
+            isA<CliPluginError>().having(
+              (e) => e.code,
+              'code',
+              'PLUGIN_EXTENSION_POINT_DUPLICATE',
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'an extension point declared a second time, with the same type, is still rejected',
+      () {
+        final cli = ModularCli(name: 'x', version: '1.0.0')
+          ..plugin(
+            _FakePlugin(
+              id: 'a',
+              onSetup: (host) {
+                host.declareExtensionPoint<String>('p');
+                host.declareExtensionPoint<String>('p');
+              },
+            ),
+          );
+
+        expect(
+          cli.buildPlugins,
+          throwsA(
+            isA<CliPluginError>().having(
+              (e) => e.code,
+              'code',
+              'PLUGIN_EXTENSION_POINT_DUPLICATE',
+            ),
+          ),
+        );
+      },
+    );
 
     test('a contribution of the wrong type', () {
       final cli = ModularCli(name: 'x', version: '1.0.0')
@@ -139,7 +218,12 @@ void main() {
   group('extension points and contributions', () {
     test('a declared point with no contribution reads back empty', () {
       final cli = ModularCli(name: 'x', version: '1.0.0')
-        ..plugin(_FakePlugin(id: 'a', onSetup: (host) => host.declareExtensionPoint<String>('p')));
+        ..plugin(
+          _FakePlugin(
+            id: 'a',
+            onSetup: (host) => host.declareExtensionPoint<String>('p'),
+          ),
+        );
 
       cli.buildPlugins();
     });
@@ -208,12 +292,30 @@ void main() {
       cli.buildPlugins();
       expect(log, ['c', 'b', 'a']);
     });
+
+    test(
+      'the sort is stable: registration order breaks ties among a plugin\'s own requirements',
+      () {
+        final log = <String>[];
+        final cli = ModularCli(name: 'x', version: '1.0.0')
+          ..plugin(_FakePlugin(id: 'a', requires: const ['c', 'b'], log: log))
+          ..plugin(_FakePlugin(id: 'b', log: log))
+          ..plugin(_FakePlugin(id: 'c', log: log));
+
+        cli.buildPlugins();
+        // a.requires lists c before b, but b was registered before c: setup
+        // still runs in registration order among a's requirements, not in the
+        // order a happened to list them.
+        expect(log, ['b', 'c', 'a']);
+      },
+    );
   });
 
   group('buildPlugins', () {
     test('is idempotent', () {
       final log = <String>[];
-      final cli = ModularCli(name: 'x', version: '1.0.0')..plugin(_FakePlugin(id: 'a', log: log));
+      final cli = ModularCli(name: 'x', version: '1.0.0')
+        ..plugin(_FakePlugin(id: 'a', log: log));
 
       cli.buildPlugins();
       cli.buildPlugins();
@@ -222,7 +324,8 @@ void main() {
 
     test('run() builds the plugin set before dispatching', () async {
       final log = <String>[];
-      final cli = ModularCli(name: 'x', version: '1.0.0')..plugin(_FakePlugin(id: 'a', log: log));
+      final cli = ModularCli(name: 'x', version: '1.0.0')
+        ..plugin(_FakePlugin(id: 'a', log: log));
 
       await cli.run(['help'], stdout: MemorySink(), stderr: MemorySink());
       expect(log, ['a']);
@@ -238,11 +341,55 @@ void main() {
       expect(code, ExitCode.ok);
       expect(out.output, contains('count: 0'));
     });
+
+    test(
+      'a second call after a failed build rethrows the same failure instead of retrying',
+      () {
+        final cli = ModularCli(name: 'x', version: '1.0.0')
+          ..plugin(_FakePlugin(id: 'a', requires: const ['missing']));
+
+        final first = _capture(cli.buildPlugins);
+        final second = _capture(cli.buildPlugins);
+
+        expect(first, isA<CliPluginError>());
+        expect(second, isA<CliPluginError>());
+        expect((second as CliPluginError).code, (first as CliPluginError).code);
+      },
+    );
+
+    test('a second call after a failed build does not run setup again', () {
+      final log = <String>[];
+      final cli = ModularCli(name: 'x', version: '1.0.0')
+        ..plugin(_FakePlugin(id: 'a', log: log))
+        ..plugin(_FakePlugin(id: 'b', requires: const ['missing'], log: log));
+
+      _capture(cli.buildPlugins);
+      _capture(cli.buildPlugins);
+      // Validation fails before any plugin's setup runs, on both attempts.
+      expect(log, isEmpty);
+    });
+
+    test('plugin() after a failed build throws StateError', () {
+      final cli = ModularCli(name: 'x', version: '1.0.0')
+        ..plugin(_FakePlugin(id: 'a', requires: const ['missing']));
+
+      _capture(cli.buildPlugins);
+      expect(() => cli.plugin(_FakePlugin(id: 'b')), throwsStateError);
+    });
+
+    test('plugin() after a successful build throws StateError', () {
+      final cli = ModularCli(name: 'x', version: '1.0.0')
+        ..plugin(_FakePlugin(id: 'a'));
+
+      cli.buildPlugins();
+      expect(() => cli.plugin(_FakePlugin(id: 'b')), throwsStateError);
+    });
   });
 
   group('host metadata', () {
     test('a plugin reading metadata without name/version fails', () {
-      final cli = ModularCli()..plugin(_FakePlugin(id: 'a', onSetup: (host) => host.metadata()));
+      final cli = ModularCli()
+        ..plugin(_FakePlugin(id: 'a', onSetup: (host) => host.metadata()));
 
       expect(cli.buildPlugins, throwsStateError);
     });
@@ -250,7 +397,9 @@ void main() {
     test('a plugin reads the name and version the host declared', () {
       CliHostMetadata? seen;
       final cli = ModularCli(name: 'demo', version: '2.3.4')
-        ..plugin(_FakePlugin(id: 'a', onSetup: (host) => seen = host.metadata()));
+        ..plugin(
+          _FakePlugin(id: 'a', onSetup: (host) => seen = host.metadata()),
+        );
 
       cli.buildPlugins();
       expect(seen?.name, 'demo');
@@ -260,8 +409,22 @@ void main() {
 }
 
 void Function(CliPluginHost) _registerCountQuery(String route) => (host) {
-  host.registerQuery<CountInput, CountOutput>(route, (req) => CountQuery(CountInput(0)));
+  host.registerQuery<CountInput, CountOutput>(
+    route,
+    (req) => CountQuery(CountInput(0)),
+  );
 };
+
+/// Runs [body] and returns whatever it threw, so two failed calls can be
+/// compared to each other rather than merely both being "a throw".
+Object _capture(void Function() body) {
+  try {
+    body();
+  } on Object catch (e) {
+    return e;
+  }
+  throw StateError('expected $body to throw');
+}
 
 /// A plugin whose manifest and behaviour are entirely parameterised, so one
 /// class covers every build-time scenario above without a bespoke plugin per
