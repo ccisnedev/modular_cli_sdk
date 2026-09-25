@@ -293,13 +293,14 @@ class IoCliFileSystem implements CliFileSystem {
     try {
       if (!io.Platform.isWindows) {
         await io.Process.run('chmod', ['+x', tempPath]);
-        bool verified;
-        try {
-          verified = _executableChecker.exitCodeFor(tempPath) == 0;
-        } on Object {
-          verified = false;
-        }
-        if (!verified) {
+        // Reuses the same strict interpretation resolveOnPath's own
+        // executability check applies: exit code 1 (not executable) is the
+        // only outcome chmod is blamed for below. Anything else, including
+        // the checker failing to start at all, is a CliExecutableCheckFailure
+        // that propagates as itself rather than being folded into the same
+        // chmod-blamed error, since a checker that could not answer is not
+        // evidence chmod did anything wrong.
+        if (!_canExecute(tempPath)) {
           throw io.FileSystemException(
             'chmod +x did not set an execute bit on the downloaded file',
             tempPath,

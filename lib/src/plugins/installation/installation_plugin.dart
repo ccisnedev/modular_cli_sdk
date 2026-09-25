@@ -805,6 +805,11 @@ class InstallExecutableStep implements Step {
 
     try {
       await fileSystem.writeExecutable(path, bytes);
+    } on CliExecutableCheckFailure catch (e) {
+      throw CliInstallStepFailure(
+        'executable-check-failed',
+        'Could not check whether $path is executable after writing it: $e',
+      );
     } on Object catch (e) {
       throw CliInstallStepFailure(
         'file-access-denied',
