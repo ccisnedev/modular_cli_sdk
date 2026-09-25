@@ -342,7 +342,7 @@ cli.shortcut('<program>', target: 'eval rpn', globals: false);
 `mycli '1 2 +'` then runs the same handler as `mycli eval rpn '1 2 +'`, but
 through its own, narrower contract: here, with `globals: false`, none of the
 SDK's global options (`--plan`, `--apply`, `--json`, and so on) are accepted
-on the shortcut itself. A shortcut never declares its own positionals —
+on the shortcut itself. A shortcut never declares its own positionals:
 `program` is taken from the target's own declaration, by name, and rebound to
 whichever cardinality `<program>` itself gives it (`required` here, even
 though the target's own `[<program>]` makes it optional). `contract` is
@@ -400,8 +400,8 @@ A `help` command you register yourself always wins over the built-in one.
 - `DeclaredDefault<T>`: a default value that carries its own `reason`, which help renders alongside it
 - Native help: `help`, no args, `--help`/`-h` on stdout with exit 0; `help --json` for machines, with `kind` on every route. `--help` wins over enforcement on an otherwise-invalid invocation, so asking how a command is used never requires already knowing
 - `Input` / `Output` — typed DTOs for I/O
-- `CommandException` — structured errors with a kebab-case `id`, message, required exit code, and optional `details`
-- A router-level rejection (unknown command, missing required option, and so on) is reported through the same JSON error envelope as a `CommandException`: `{"error": {"id", "message", "exitCode", ...}}`, with `contract` and `details` present only when they apply — see [Error handling](#error-handling)
+- `CommandException`: structured errors with a kebab-case `id`, message, required exit code, and optional `details`
+- A router-level rejection (unknown command, missing required option, and so on) is reported through the same JSON error envelope as a `CommandException`: `{"error": {"id", "message", "exitCode", ...}}`, with `contract` and `details` present only when they apply (see [Error handling](#error-handling))
 - `ModularCli` + `ModuleBuilder` — module registration and routing
 - Root routes — register without a module prefix via `cli.query()` / `cli.command()`
 - `--json` global flag — machine-readable JSON output
@@ -451,22 +451,22 @@ With `--json`:
 {"error": {"id": "ticket-not-found", "message": "Ticket #42 not found", "exitCode": 4}}
 ```
 
-Every error written in JSON mode — a `CommandException` thrown from a command,
-a router-level rejection (unknown command, missing required option, and so
-on), a plugin error — uses this one shape, nested under `"error"`:
+Every error written in JSON mode, whether a `CommandException` thrown from a
+command, a router-level rejection (unknown command, missing required option,
+and so on), or a plugin error, uses this one shape, nested under `"error"`:
 
 ```json
 {"error": {"id": "<kebab-case id>", "message": "...", "exitCode": <int>, "contract": {...}, "details": {...}}}
 ```
 
 `id` is always kebab-case. `contract` (the failing route's contract, when one
-is known) and `details` (a typed map of extra fields — a validation
+is known) and `details` (a typed map of extra fields: a validation
 failure's `parameter`, or a domain error's own fields, such as a calculatrix
 parse error's `token` and `position`) are both optional: present only when
 they apply. There is no `kind` field and no `isRetryable` field.
 
 A `CommandException`'s own `id` is chosen by the code that throws it (and
-must be kebab-case — the constructor throws `ArgumentError` otherwise). A
+must be kebab-case, or the constructor throws `ArgumentError`). A
 router-level rejection's `id` comes from a fixed table, one entry per
 `CliRejectionKind`:
 
@@ -486,8 +486,8 @@ router-level rejection's `id` comes from a fixed table, one entry per
 
 A contract violation the SDK itself enforces (a required option missing, a
 value of the wrong type, an allow-list mismatch, a failed `CliConstraint`)
-raises a `CommandException` with `id: 'validation-failed'` — the one `id`
-this table does not list, because it is not a router rejection.
+raises a `CommandException` with `id: 'validation-failed'` (the one `id`
+this table does not list, because it is not a router rejection).
 
 ---
 

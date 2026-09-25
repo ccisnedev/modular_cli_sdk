@@ -200,7 +200,7 @@ class ModuleBuilder {
   /// [contract] must declare only options and constraints: a shortcut's
   /// positionals are not declared by the caller but taken from [target]'s
   /// own positional declarations, matched by name, and bound to whichever
-  /// cardinality [pattern] itself gives them — the exact line from issue
+  /// cardinality [pattern] itself gives them. The exact line from issue
   /// #27, `shortcut('<program>', target: 'eval rpn', globals: false)`,
   /// works with no explicit [contract] at all, because `program` is looked
   /// up on the target and rebound `required` (the shorter spelling has no

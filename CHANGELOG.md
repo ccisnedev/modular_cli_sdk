@@ -33,7 +33,7 @@ rejected. No bug or missing API was found in it while building this one.
   not registered, or if it is ambiguous (matches more than one route). A
   shortcut never declares its own positionals: they are derived from
   `target`'s own declaration, by name, and rebound to whichever cardinality
-  `pattern` itself gives them — declaring one directly in `contract` is an
+  `pattern` itself gives them: declaring one directly in `contract` is an
   `ArgumentError`. `contract` is optional and defaults to `CliContract.none`,
   so issue #27's own example, `shortcut('<program>', target: 'eval rpn',
   globals: false)`, works with no `contract:` argument at all. Like every
@@ -100,7 +100,7 @@ rejected. No bug or missing API was found in it while building this one.
   ..., "contract": ...}`, a different shape from `CommandException.toJson()`,
   and carried a `kind` field and an `isRetryable` flag. Both are now:
   `{"error": {"id": "<kebab-case-id>", "message": "<text>", "exitCode":
-  <int>, "contract": ..., "details": {...}}}` — `contract` and `details` are
+  <int>, "contract": ..., "details": {...}}}`. `contract` and `details` are
   only present when they apply, and there is no `kind` and no `isRetryable`.
   A router rejection's `id` comes from a fixed table (documented in
   README.md's "Error handling" section): `unknown-command`,
@@ -118,8 +118,8 @@ rejected. No bug or missing API was found in it while building this one.
   `required`, kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`), and throws
   `ArgumentError` at construction otherwise; `exitCode` is now `required`
   with no default. `details` (`Map<String, dynamic>?`, optional, free-form)
-  replaces the old fixed field set, so a domain error — for example
-  calculatrix's — can carry `token`/`position` through it. `isRetryable` is
+  replaces the old fixed field set, so a domain error (calculatrix's, for
+  example) can carry `token`/`position` through it. `isRetryable` is
   removed entirely; nothing in either CLI built on this SDK read it
 - **`help --json`'s `route` and `kind` keys**: `kind` is the route's
   `CommandKind` (`"query"` / `"command"`); a JSON consumer keying off the
@@ -183,8 +183,8 @@ rejected. No bug or missing API was found in it while building this one.
   empty-name module's routes are registered directly on the root router
   instead of being mounted
 - **The catalog's handler map is keyed by route, not by bare name.** Two
-  routes that share a leading word but differ in arity — `show` and `show
-  <id>` — previously collided in a name-keyed map, so registering both left
+  routes that share a leading word but differ in arity (`show` and `show
+  <id>`) previously collided in a name-keyed map, so registering both left
   only one dispatchable; each is now keyed by its own `CliRoute` and both
   dispatch correctly
 - **`repeat --count bad --help` is now a validation failure, not a help
