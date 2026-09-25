@@ -399,6 +399,7 @@ ModularCli _cliWith(
     cli.command<TouchInput, TouchOutput>(
       'touch',
       (req) => command,
+      globals: true,
       description: 'Touch things',
       contract: contract,
     );
@@ -406,6 +407,7 @@ ModularCli _cliWith(
     cli.command<TouchInput, TouchOutput>(
       'misreport',
       (req) => command as _MisreportingCommand,
+      globals: true,
       contract: contract,
     );
   }

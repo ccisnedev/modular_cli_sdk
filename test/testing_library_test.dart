@@ -97,6 +97,7 @@ void main() {
             'touch',
             (req) =>
                 TouchCommand(TouchInput(), targets: const ['a.txt', 'b.txt']),
+            globals: true,
           ))
           .run(['touch', '--apply', '--autoapprove', '--json'], stdout: out);
 
@@ -113,6 +114,7 @@ void main() {
             'touch',
             (req) =>
                 TouchCommand(TouchInput(), targets: const ['a.txt', 'b.txt']),
+            globals: true,
           ))
           .run(['touch', '--plan', '--json'], stdout: out);
 

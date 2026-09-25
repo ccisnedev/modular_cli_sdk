@@ -14,6 +14,7 @@ void main() {
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
+          globals: true,
           description: 'Count things',
         );
 
@@ -29,6 +30,7 @@ void main() {
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
+          globals: true,
         );
 
       final err = MemorySink();
@@ -43,6 +45,7 @@ void main() {
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
+          globals: true,
         );
 
       final err = MemorySink();
@@ -57,6 +60,7 @@ void main() {
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(-1)),
+          globals: true,
         );
 
       final err = MemorySink();
@@ -72,6 +76,7 @@ void main() {
           m.query<CountInput, CountOutput>(
             'count',
             (req) => CountQuery(CountInput(7)),
+            globals: true,
           );
         });
 
@@ -89,6 +94,7 @@ void main() {
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
+          globals: true,
         );
 
       expect(cli.catalog.forRoute('count')!.kind, CommandKind.query);
@@ -99,6 +105,7 @@ void main() {
         ..command<TouchInput, TouchOutput>(
           'touch',
           (req) => TouchCommand(TouchInput()),
+          globals: true,
         );
 
       expect(cli.catalog.forRoute('touch')!.kind, CommandKind.command);
@@ -109,6 +116,7 @@ void main() {
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
+          globals: true,
         );
 
       expect(cli.catalog.forRoute('count')!.toJson()['kind'], 'query');

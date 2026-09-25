@@ -20,11 +20,13 @@ void main() {
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
+          globals: true,
           description: 'Count things',
         )
         ..command<TouchInput, TouchOutput>(
           'touch',
           (req) => TouchCommand(TouchInput()),
+          globals: true,
           description: 'Touch things',
         );
 
@@ -66,6 +68,7 @@ void main() {
           ..query<CountInput, CountOutput>(
             'count',
             (req) => CountQuery(CountInput(3)),
+            globals: true,
             description: 'Count things',
           );
 
@@ -84,10 +87,12 @@ void main() {
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
+          globals: true,
         )
         ..command<TouchInput, TouchOutput>(
           'touch',
           (req) => TouchCommand(TouchInput()),
+          globals: true,
         );
 
       final out = MemorySink();
@@ -100,10 +105,10 @@ void main() {
       // way the catalog itself resolves `help` to `help *`.
       final kinds = {
         for (final c in commands.cast<Map<String, dynamic>>())
-          (c['route'] as String).replaceAll(
-            RegExp(r'\s*(<[^>]+>|\*)'),
-            '',
-          ).trim(): c['kind'],
+          (c['route'] as String)
+                  .replaceAll(RegExp(r'\s*(<[^>]+>|\*)'), '')
+                  .trim():
+              c['kind'],
       };
 
       expect(kinds['count'], 'query');

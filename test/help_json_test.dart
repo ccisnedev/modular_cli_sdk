@@ -23,7 +23,10 @@ class _AddInput extends Input {
         'b',
         required: false,
         repeatable: false,
-        defaultValue: const DeclaredDefault(10, reason: 'the usual second term'),
+        defaultValue: const DeclaredDefault(
+          10,
+          reason: 'the usual second term',
+        ),
         description: 'Second operand',
       ),
     ],
@@ -65,6 +68,7 @@ ModularCli _buildCli() {
     m.query<_AddInput, _SumOutput>(
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      globals: true,
       description: 'Add two numbers',
       contract: _AddInput.contract,
     );

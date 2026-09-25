@@ -23,7 +23,10 @@ class _AddInput extends Input {
         'b',
         required: false,
         repeatable: false,
-        defaultValue: const DeclaredDefault(10, reason: 'the usual second term'),
+        defaultValue: const DeclaredDefault(
+          10,
+          reason: 'the usual second term',
+        ),
         description: 'Second operand',
       ),
     ],
@@ -64,7 +67,9 @@ class _ShowInput extends Input {
   _ShowInput(this.id);
 
   static final contract = CliContract(
-    positionals: [CliPositional.integer('id', description: 'Record id')],
+    positionals: [
+      CliPositional.integer('id', required: true, description: 'Record id'),
+    ],
   );
 
   factory _ShowInput.fromCliRequest(CliRequest req) =>
@@ -92,6 +97,7 @@ ModularCli _buildCli() {
   cli.query<_ShowInput, _SumOutput>(
     'show <id>',
     (req) => _ShowCommand(_ShowInput.fromCliRequest(req)),
+    globals: true,
     description: 'Show a record',
     contract: _ShowInput.contract,
   );
@@ -100,12 +106,14 @@ ModularCli _buildCli() {
     m.query<_AddInput, _SumOutput>(
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      globals: true,
       description: 'Add two numbers',
       contract: _AddInput.contract,
     );
     m.query<_AddInput, _SumOutput>(
       'multiply',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      globals: true,
       description: 'Multiply two numbers',
       contract: _AddInput.contract,
     );

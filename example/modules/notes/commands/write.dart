@@ -29,7 +29,13 @@ class WriteNoteInput extends Input {
   /// them to every command, and adding them by hand is how twelve commands in
   /// one CLI ended up each declaring the same three flags.
   static final contract = CliContract(
-    positionals: [CliPositional.string('name', description: 'Name of the note')],
+    positionals: [
+      CliPositional.string(
+        'name',
+        required: true,
+        description: 'Name of the note',
+      ),
+    ],
     options: [
       CliParam.string(
         'dir',

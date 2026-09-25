@@ -120,6 +120,7 @@ Future<int> runBesideExecutable(
   cli.query<GreetInput, GreetOutput>(
     'greet',
     (req) => GreetQuery(GreetInput.fromCliRequest(req)),
+    globals: true,
     description: 'Read the greeting shipped beside this executable',
   );
 

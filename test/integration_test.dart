@@ -13,8 +13,12 @@ class _GreetInput extends Input {
 
   static final contract = CliContract(
     options: [
-      CliParam.string('name', required: false, repeatable: false,
-          description: 'Who to greet'),
+      CliParam.string(
+        'name',
+        required: false,
+        repeatable: false,
+        description: 'Who to greet',
+      ),
     ],
   );
 
@@ -55,8 +59,12 @@ class _RequiredInput extends Input {
 
   static final contract = CliContract(
     options: [
-      CliParam.string('value', required: false, repeatable: false,
-          description: 'The value to echo'),
+      CliParam.string(
+        'value',
+        required: false,
+        repeatable: false,
+        description: 'The value to echo',
+      ),
     ],
   );
 
@@ -158,12 +166,14 @@ ModularCli _buildTestCli() {
     m.query<_GreetInput, _GreetOutput>(
       'hello',
       (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
+      globals: true,
       description: 'Say hello',
       contract: _GreetInput.contract,
     );
     m.query<_GreetInput, _GreetOutput>(
       'fail',
       (req) => _FailingCommand(_GreetInput.fromCliRequest(req)),
+      globals: true,
       description: 'Always fails',
       contract: _GreetInput.contract,
     );
@@ -173,6 +183,7 @@ ModularCli _buildTestCli() {
     m.query<_RequiredInput, _EchoOutput>(
       'echo',
       (req) => _ValidatingCommand(_RequiredInput.fromCliRequest(req)),
+      globals: true,
       description: 'Echo a value',
       contract: _RequiredInput.contract,
     );
@@ -324,6 +335,7 @@ void main() {
         m.query<_GreetInput, _GreetOutput>(
           'cmd',
           (req) => _GreetCommand(_GreetInput(name: 'MW')),
+          globals: true,
           description: 'Test middleware order',
         );
       });
@@ -343,6 +355,7 @@ void main() {
       cli.query<_GreetInput, _GreetOutput>(
         'ping',
         (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
+        globals: true,
         description: 'Root-level ping',
         contract: _GreetInput.contract,
       );
@@ -350,6 +363,7 @@ void main() {
       cli.query<_RequiredInput, _EchoOutput>(
         'validate-me',
         (req) => _ValidatingCommand(_RequiredInput.fromCliRequest(req)),
+        globals: true,
         description: 'Root command with validation',
         contract: _RequiredInput.contract,
       );
@@ -358,6 +372,7 @@ void main() {
         m.query<_GreetInput, _GreetOutput>(
           'hello',
           (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
+          globals: true,
           description: 'Say hello (module)',
           contract: _GreetInput.contract,
         );

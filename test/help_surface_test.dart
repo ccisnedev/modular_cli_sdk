@@ -90,6 +90,7 @@ ModularCli _buildCli() {
   cli.query<_VersionInput, _VersionOutput>(
     'version',
     (req) => _VersionCommand(_VersionInput()),
+    globals: true,
     description: 'Print application version',
   );
 
@@ -97,6 +98,7 @@ ModularCli _buildCli() {
     m.query<_AddInput, _SumOutput>(
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      globals: true,
       description: 'Add two numbers',
       contract: _AddInput.contract,
     );
@@ -165,6 +167,7 @@ void main() {
         _buildCli()..query<_VersionInput, _VersionOutput>(
           '',
           (req) => _VersionCommand(_VersionInput()),
+          globals: true,
           description: 'Show the dashboard',
         );
 
@@ -225,6 +228,7 @@ void main() {
         cli.query<_VersionInput, _VersionOutput>(
           'help',
           (req) => _VersionCommand(_VersionInput()),
+          globals: true,
           description: 'My own help',
         );
 

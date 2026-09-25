@@ -58,6 +58,7 @@ Future<int> runExample(
   cli.query<StatusInput, StatusOutput>(
     '',
     (req) => StatusQuery(StatusInput.fromCliRequest(req)),
+    globals: true,
     description: 'Show the CLI status',
   );
 
@@ -65,6 +66,7 @@ Future<int> runExample(
   cli.query<VersionInput, VersionOutput>(
     'version',
     (req) => VersionQuery(VersionInput.fromCliRequest(req)),
+    globals: true,
     description: 'Print application version',
   );
 

@@ -161,10 +161,7 @@ void main() {
         CliParam.string('n', required: false, repeatable: false).parse('World'),
         equals('World'),
       );
-      expect(
-        CliParam.flag('v', repeatable: false).parse(''),
-        isTrue,
-      );
+      expect(CliParam.flag('v', repeatable: false).parse(''), isTrue);
     });
 
     test('reports a value it cannot coerce', () {

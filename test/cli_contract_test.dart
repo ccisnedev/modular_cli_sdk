@@ -79,30 +79,43 @@ void main() {
       expect(extended.options.map((o) => o.name), ['verbose', 'plan']);
     });
 
-    test('toOptionSpecs mirrors the declared options as router OptionSpecs', () {
-      final contract = CliContract(
-        options: [
-          CliParam.string('name', abbr: 'n', required: true, repeatable: false),
-        ],
-      );
+    test(
+      'toOptionSpecs mirrors the declared options as router OptionSpecs',
+      () {
+        final contract = CliContract(
+          options: [
+            CliParam.string(
+              'name',
+              abbr: 'n',
+              required: true,
+              repeatable: false,
+            ),
+          ],
+        );
 
-      final specs = contract.toOptionSpecs();
-      expect(specs, hasLength(1));
-      expect(specs.single.name, 'name');
-      expect(specs.single.required, isTrue);
-    });
+        final specs = contract.toOptionSpecs();
+        expect(specs, hasLength(1));
+        expect(specs.single.name, 'name');
+        expect(specs.single.required, isTrue);
+      },
+    );
 
-    test('validateConstraints passes silently when every rule is satisfied', () {
-      final contract = CliContract(
-        options: [
-          CliParam.flag('plan', abbr: null, repeatable: false),
-          CliParam.flag('apply', abbr: null, repeatable: false),
-        ],
-        constraints: const [ExactlyOne(['plan', 'apply'])],
-      );
+    test(
+      'validateConstraints passes silently when every rule is satisfied',
+      () {
+        final contract = CliContract(
+          options: [
+            CliParam.flag('plan', abbr: null, repeatable: false),
+            CliParam.flag('apply', abbr: null, repeatable: false),
+          ],
+          constraints: const [
+            ExactlyOne(['plan', 'apply']),
+          ],
+        );
 
-      expect(() => contract.validateConstraints({'plan'}), returnsNormally);
-    });
+        expect(() => contract.validateConstraints({'plan'}), returnsNormally);
+      },
+    );
 
     test('validateConstraints throws on the first violated rule', () {
       final contract = CliContract(
@@ -110,7 +123,9 @@ void main() {
           CliParam.flag('plan', abbr: null, repeatable: false),
           CliParam.flag('apply', abbr: null, repeatable: false),
         ],
-        constraints: const [ExactlyOne(['plan', 'apply'])],
+        constraints: const [
+          ExactlyOne(['plan', 'apply']),
+        ],
       );
 
       expect(
@@ -126,8 +141,10 @@ void main() {
     test('toJson carries options, positionals and constraints', () {
       final contract = CliContract(
         options: [CliParam.flag('plan', abbr: null, repeatable: false)],
-        positionals: [CliPositional.string('name')],
-        constraints: const [MutuallyExclusive(['plan', 'apply'])],
+        positionals: [CliPositional.string('name', required: true)],
+        constraints: const [
+          MutuallyExclusive(['plan', 'apply']),
+        ],
       );
 
       final json = contract.toJson();

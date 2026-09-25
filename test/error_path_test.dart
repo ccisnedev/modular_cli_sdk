@@ -65,6 +65,7 @@ ModularCli _buildCli() {
     m.query<_AddInput, _SumOutput>(
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      globals: true,
       description: 'Add two numbers',
       contract: _AddInput.contract,
     );
@@ -75,6 +76,7 @@ ModularCli _buildCli() {
     m.query<_AddInput, _SumOutput>(
       'graphql compile',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      globals: true,
       description: 'Compile GraphQL artifacts',
       contract: _AddInput.contract,
     );
@@ -161,12 +163,24 @@ void main() {
       expect(result.stderr, isNot(contains('math add')));
     });
 
-    test('a flag does not change what is missing', () async {
-      final result = await _run(['math', '--verbose']);
+    // `math --verbose` is not `incomplete` — the router rejects the
+    // undeclared `--verbose` on its own terms (`unknownOption`), before it
+    // ever gets to judge whether `math` alone continues a route. The
+    // "is not a complete command" rewrite is keyed on kind == incomplete
+    // only (see `ModularCli._emitRejectionError`), so a different kind of
+    // rejection under an incomplete prefix keeps the router's own message —
+    // it still narrows the shown commands to what `math` could complete
+    // into, it just does not relabel *why* the invocation failed.
+    test(
+      'an unrelated rejection under an incomplete prefix keeps its own kind',
+      () async {
+        final result = await _run(['math', '--verbose']);
 
-      expect(result.stderr, contains('not a complete command'));
-      expect(result.stderr, contains('math add'));
-    });
+        expect(result.stderr, isNot(contains('not a complete command')));
+        expect(result.stderr, contains("unknown option '--verbose'"));
+        expect(result.stderr, contains('math add'));
+      },
+    );
 
     test(
       'it stays an invalid usage, with the same exit code as before',
