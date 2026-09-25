@@ -194,6 +194,99 @@ ModularCli _buildShortcutCli() {
   return cli;
 }
 
+// ── Finding 4 (third review) fixture: a shortcut whose own declared
+//    default differs from its target's, so the value that reaches the
+//    handler on a bare invocation the router accepts under either
+//    contract proves which contract dispatch actually used ──────────────
+
+class _TagInput extends Input {
+  _TagInput(this.tag);
+  final String tag;
+
+  static final targetContract = CliContract(
+    options: [
+      CliParam.string(
+        'tag',
+        abbr: null,
+        required: false,
+        repeatable: false,
+        defaultValue: const DeclaredDefault(
+          'target-default',
+          reason: "the target's own default",
+        ),
+        description: 'A tag, defaulted differently by the target and a '
+            'shortcut to it',
+      ),
+    ],
+  );
+
+  factory _TagInput.fromCliRequest(CliRequest req) =>
+      _TagInput(req.flagString('tag')!);
+
+  @override
+  Map<String, dynamic> toJson() => {'tag': tag};
+}
+
+class _TagOutput extends Output {
+  _TagOutput(this.tag);
+  final String tag;
+
+  @override
+  Map<String, dynamic> toJson() => {'tag': tag};
+
+  @override
+  int get exitCode => ExitCode.ok;
+
+  @override
+  String? toText() => 'tag: $tag';
+}
+
+class _TagQuery implements Query<_TagInput, _TagOutput> {
+  _TagQuery(this.input);
+
+  @override
+  final _TagInput input;
+
+  @override
+  String? validate() => null;
+
+  @override
+  Future<_TagOutput> execute() async => _TagOutput(input.tag);
+}
+
+ModularCli _buildTagShortcutCli() {
+  final cli = ModularCli(suggestionDistance: 2);
+  cli.query<_TagInput, _TagOutput>(
+    'labelled',
+    (req) => _TagQuery(_TagInput.fromCliRequest(req)),
+    globals: true,
+    description: 'Reports its --tag, defaulted by the target',
+    contract: _TagInput.targetContract,
+  );
+  cli.shortcut(
+    'lbl',
+    target: 'labelled',
+    globals: true,
+    contract: CliContract(
+      options: [
+        CliParam.string(
+          'tag',
+          abbr: null,
+          required: false,
+          repeatable: false,
+          defaultValue: const DeclaredDefault(
+            'shortcut-default',
+            reason: "the shortcut's own default",
+          ),
+          description: 'The same tag, defaulted differently by the '
+              'shortcut',
+        ),
+      ],
+    ),
+  );
+  return cli;
+}
+
 // ── Finding 4 fixture: `show <id>`, the exact "typo" case from the
 //    review, plus a `note [<name>]` route for the optional-cardinality
 //    cases ────────────────────────────────────────────────────────────────
@@ -536,33 +629,28 @@ void main() {
       expect(result.stdout, contains('source: program'));
     });
 
-    // The target's own contract (_RpnInput.constraintContract) declares
-    // --file and --stdin, plus ExactlyOne(['program', 'file', 'stdin']).
-    // The shortcut's contract (built from CliContract.none) declares
-    // neither: only the derived `program` positional. Supplying `--file`
-    // tells the two apart. Dispatched under the target's wider contract,
-    // --file would be a route-local option the router accepts outright;
-    // dispatched under the shortcut's own, narrower contract (the fixed
-    // behavior), the router itself refuses it as belonging to a
-    // different route (`eval rpn`, still visible to `cli_router` in the
-    // wider trie) rather than to this one, `CliRejectionKind
-    // .misplacedOption`. A bare positional alone satisfies either
-    // contract, which is exactly why the test above cannot tell them
-    // apart; this one can, because only one of the two contracts
-    // declares --file at all.
+    // Third review, finding 4: the test this replaced supplied --file,
+    // which cli_router itself refuses as belonging to a different route
+    // (eval rpn, still visible to cli_router in the wider trie) before the
+    // shortcut's own handler body ever runs. That proves the two
+    // contracts declare different *options*, not which contract dispatch
+    // actually applied once an invocation resolves. This version instead sends `lbl` with no `--tag` at all:
+    // cli_router accepts that identically under either contract (neither
+    // requires `--tag`), so the only way to tell which one ran is by which
+    // contract's own DeclaredDefault reached the handler. The target's own
+    // default is 'target-default'; the shortcut's own, narrower contract
+    // (built by ModuleBuilder.shortcut, never the target's) declares
+    // 'shortcut-default'. Seeing the shortcut's own default in the output
+    // is the only thing that can prove the shortcut's own contract ran.
     test(
-      "an option the target declares but the shortcut's own contract "
-      "does not is refused as belonging to a different route, proving "
-      "the shortcut's own contract ran, not the wider target one",
+      'a bare invocation the router accepts identically under either '
+      "contract still runs under the shortcut's own contract: its own "
+      "declared default reaches the handler, not the target's",
       () async {
-        final result = await _runWith(_buildShortcutCli(), [
-          '--file',
-          '1 2 +',
-        ]);
+        final result = await _runWith(_buildTagShortcutCli(), ['lbl']);
 
-        expect(result.exitCode, equals(ExitCode.validationFailed));
-        expect(result.stderr, contains("belongs to 'eval rpn'"));
-        expect(result.stderr, isNot(contains('Choose one of')));
+        expect(result.exitCode, equals(ExitCode.ok));
+        expect(result.stdout, contains('tag: shortcut-default'));
       },
     );
 
