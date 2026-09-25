@@ -28,6 +28,7 @@
 
 import 'dart:convert';
 
+import 'package:cli_router/cli_router.dart' show CliMiddleware;
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 import 'package:test/test.dart';
 
@@ -116,8 +117,11 @@ class _RecursiveCapture {
   String? innerStderr;
 }
 
-/// A query that calls `cli.run()` again, with its own sinks, before
-/// throwing its own error.
+/// A query that calls `cli.run()` again, with its own sinks, for a route
+/// that fails there, and then completes successfully itself. The point is
+/// the *outer* call: it does no throwing of its own, so nothing about its
+/// own dispatch should record or render any error at all, regardless of
+/// what the nested call recorded and already rendered into its own sinks.
 class _RecursiveRunQuery implements Query<_WidgetInput, _WidgetOutput> {
   _RecursiveRunQuery(this.cli, this.capture);
 
@@ -140,11 +144,7 @@ class _RecursiveRunQuery implements Query<_WidgetInput, _WidgetOutput> {
     );
     capture.innerExitCode = innerCode;
     capture.innerStderr = innerErr.output;
-    throw CommandException(
-      id: 'outer-run-failed',
-      message: 'the outer run also failed',
-      exitCode: ExitCode.genericError,
-    );
+    return _WidgetOutput();
   }
 }
 
@@ -159,6 +159,27 @@ CliMiddleware _escalatingMiddleware() => (next) {
       throw CommandException(
         id: 'outer-escalated-the-failure',
         message: 'the outer middleware escalated a nonzero result',
+        exitCode: ExitCode.conflict,
+      );
+    }
+    return result;
+  };
+};
+
+/// Like [_escalatingMiddleware], but tags the escalated error's id with the
+/// route word that was actually invoked, so a test with more than one
+/// failing route through the same middleware can tell which call's error
+/// it is looking at.
+CliMiddleware _escalatingMiddlewareTaggedByRoute() => (next) {
+  return (req) async {
+    final result = await next(req);
+    if (result != 0) {
+      final tag = req.originalArgs.isNotEmpty
+          ? req.originalArgs.first
+          : 'unknown';
+      throw CommandException(
+        id: 'escalated-$tag',
+        message: 'the outer middleware escalated a nonzero result for $tag',
         exitCode: ExitCode.conflict,
       );
     }
@@ -265,6 +286,13 @@ ModularCli _cliRetryThatSucceeds(_FlakyState state) {
   return cli;
 }
 
+/// A CLI with an escalating middleware wired globally (the only thing that
+/// ever touches the pending-error state), so a nested `cli.run()` call
+/// through the `inner-fail` route exercises the exact mechanism finding 3
+/// is about: the outer route's own dispatch goes through that same
+/// middleware, and, since it does not itself throw, nothing about its own
+/// dispatch should touch whatever the nested call already recorded and
+/// rendered for itself.
 ModularCli _cliForRecursiveRun(_RecursiveCapture capture) {
   final cli = ModularCli(suggestionDistance: 2);
   cli.query<_WidgetInput, _WidgetOutput>(
@@ -285,9 +313,13 @@ ModularCli _cliForRecursiveRun(_RecursiveCapture capture) {
     globals: true,
     contract: CliContract.none,
   );
+  cli.use(_escalatingMiddlewareTaggedByRoute());
   return cli;
 }
 
+/// A CLI with the same route-tagged escalating middleware wired globally,
+/// and two routes that each fail through it, for two `run()` calls issued
+/// together via `Future.wait` on the same instance.
 ModularCli _cliForConcurrentRuns() {
   final cli = ModularCli(suggestionDistance: 2);
   cli.query<_WidgetInput, _WidgetOutput>(
@@ -316,6 +348,7 @@ ModularCli _cliForConcurrentRuns() {
     globals: true,
     contract: CliContract.none,
   );
+  cli.use(_escalatingMiddlewareTaggedByRoute());
   return cli;
 }
 
@@ -400,7 +433,9 @@ ModularCli _cliWithRootPositionalOnlyShortcut() {
     'widget2 <id>',
     (req) => _OkQuery(),
     globals: true,
-    contract: CliContract(positionals: [CliPositional.string('id')]),
+    contract: CliContract(
+      positionals: [CliPositional.string('id', required: true)],
+    ),
   );
   cli.shortcut(
     '<id>',
@@ -421,7 +456,9 @@ ModularCli _cliWithModuleMountedPositionalOnlyShortcut() {
       'widget2 <id>',
       (req) => _OkQuery(),
       globals: true,
-      contract: CliContract(positionals: [CliPositional.string('id')]),
+      contract: CliContract(
+        positionals: [CliPositional.string('id', required: true)],
+      ),
     );
     m.shortcut(
       '<id>',
@@ -435,7 +472,13 @@ ModularCli _cliWithModuleMountedPositionalOnlyShortcut() {
 
 /// Finding 6: a literal shortcut `s` mounted under module `m`, so it must
 /// render its own `--help` (both text and JSON) as `m s`, not the bare `s`
-/// it was declared with.
+/// it was declared with. No required option of its own: `--help` on a
+/// *resolved* invocation is answered by [ModuleBuilder]'s own handler
+/// (`entry.toJson()` / `HelpRenderer.renderCommand(entry)`, keyed by the
+/// shortcut's own `entry.route`), a different path than a *rejected*
+/// invocation's focused help, which by design never shows a shortcut's own
+/// contract (round-4 review finding 1) and is not what this finding is
+/// about.
 ModularCli _cliWithModuleMountedLiteralShortcut() {
   final cli = ModularCli(suggestionDistance: 2);
   cli.query<_WidgetInput, _WidgetOutput>(
@@ -449,7 +492,7 @@ ModularCli _cliWithModuleMountedLiteralShortcut() {
       's',
       target: 'widget',
       globals: true,
-      contract: _integerAContract(),
+      contract: CliContract.none,
     );
   });
   return cli;
@@ -467,7 +510,9 @@ ModularCli _cliWithAmbiguousSharedPrefixShortcuts() {
     'widget <id>',
     (req) => _OkQuery(),
     globals: true,
-    contract: CliContract(positionals: [CliPositional.string('id')]),
+    contract: CliContract(
+      positionals: [CliPositional.string('id', required: true)],
+    ),
   );
   cli.query<_WidgetInput, _WidgetOutput>(
     'widget2 <id> <sub>',
@@ -475,8 +520,8 @@ ModularCli _cliWithAmbiguousSharedPrefixShortcuts() {
     globals: true,
     contract: CliContract(
       positionals: [
-        CliPositional.string('id'),
-        CliPositional.string('sub'),
+        CliPositional.string('id', required: true),
+        CliPositional.string('sub', required: true),
       ],
     ),
   );
@@ -575,58 +620,59 @@ void main() {
     'finding 3: the recorded error is invocation-local, not shared '
     'instance state',
     () {
-      test('a recursive cli.run() call with its own sinks renders only its '
-          'own error in each sink', () async {
-        final capture = _RecursiveCapture();
-        final outerErr = MemorySink();
-        final outerCode = await _cliForRecursiveRun(capture).run(
-          ['outer', '--json'],
-          stdout: MemorySink(),
-          stderr: outerErr,
-        );
+      test(
+        'a recursive cli.run() call that fails does not leak into the '
+        'outer call that went on to finish, legitimately, at exit 0',
+        () async {
+          final capture = _RecursiveCapture();
+          final outerErr = MemorySink();
+          final outerCode = await _cliForRecursiveRun(capture).run(
+            ['outer', '--json'],
+            stdout: MemorySink(),
+            stderr: outerErr,
+          );
 
-        expect(outerCode, equals(ExitCode.genericError));
-        final outerEnvelope =
-            jsonDecode(outerErr.output) as Map<String, dynamic>;
-        expect(
-          (outerEnvelope['error'] as Map<String, dynamic>)['id'],
-          equals('outer-run-failed'),
-        );
+          // The nested call genuinely failed, escalated by the same
+          // middleware the outer call also goes through.
+          expect(capture.innerExitCode, equals(ExitCode.conflict));
+          expect(capture.innerStderr, contains('escalated-inner-fail'));
 
-        expect(capture.innerExitCode, equals(ExitCode.dataError));
-        final innerEnvelope =
-            jsonDecode(capture.innerStderr!) as Map<String, dynamic>;
-        expect(
-          (innerEnvelope['error'] as Map<String, dynamic>)['id'],
-          equals('inner-run-failed'),
-        );
-      });
+          // The outer call did no throwing of its own: it must finish at
+          // exit 0 and render nothing, regardless of what the nested call
+          // already recorded and rendered for itself.
+          expect(outerCode, equals(ExitCode.ok));
+          expect(outerErr.output, isEmpty);
+        },
+      );
 
-      test('two concurrent run() calls on the same instance each render '
-          'only their own error', () async {
-        final cli = _cliForConcurrentRuns();
-        final errA = MemorySink();
-        final errB = MemorySink();
+      test(
+        'two concurrent run() calls on the same instance each render only '
+        'their own error, not the other\'s',
+        () async {
+          final cli = _cliForConcurrentRuns();
+          final errA = MemorySink();
+          final errB = MemorySink();
 
-        final results = await Future.wait([
-          cli.run(['fail-a', '--json'], stdout: MemorySink(), stderr: errA),
-          cli.run(['fail-b', '--json'], stdout: MemorySink(), stderr: errB),
-        ]);
+          final results = await Future.wait([
+            cli.run(['fail-a', '--json'], stdout: MemorySink(), stderr: errA),
+            cli.run(['fail-b', '--json'], stdout: MemorySink(), stderr: errB),
+          ]);
 
-        expect(results[0], equals(ExitCode.notFound));
-        expect(results[1], equals(ExitCode.unauthorized));
+          expect(results[0], equals(ExitCode.conflict));
+          expect(results[1], equals(ExitCode.conflict));
 
-        final envelopeA = jsonDecode(errA.output) as Map<String, dynamic>;
-        expect(
-          (envelopeA['error'] as Map<String, dynamic>)['id'],
-          equals('error-a'),
-        );
-        final envelopeB = jsonDecode(errB.output) as Map<String, dynamic>;
-        expect(
-          (envelopeB['error'] as Map<String, dynamic>)['id'],
-          equals('error-b'),
-        );
-      });
+          final envelopeA = jsonDecode(errA.output) as Map<String, dynamic>;
+          expect(
+            (envelopeA['error'] as Map<String, dynamic>)['id'],
+            equals('escalated-fail-a'),
+          );
+          final envelopeB = jsonDecode(errB.output) as Map<String, dynamic>;
+          expect(
+            (envelopeB['error'] as Map<String, dynamic>)['id'],
+            equals('escalated-fail-b'),
+          );
+        },
+      );
     },
   );
 
