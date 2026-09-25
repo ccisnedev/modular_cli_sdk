@@ -25,12 +25,11 @@ class CliPositional {
   CliPositional._({
     required this.name,
     required this.type,
+    required this.required,
     this.values,
     this.description,
   }) {
-    if (type == CliPositionalType.string &&
-        values != null &&
-        values!.isEmpty) {
+    if (type == CliPositionalType.string && values != null && values!.isEmpty) {
       throw ArgumentError(
         'Positional "$name" declares an empty allow-list; omit "values" to '
         'accept any string.',
@@ -43,6 +42,12 @@ class CliPositional {
 
   final CliPositionalType type;
 
+  /// Whether this positional must be present. Must agree with the route
+  /// pattern it is declared against: `true` for a required `<name>`
+  /// segment, `false` for a trailing optional `[<name>]` segment — checked
+  /// at registration, not left to be discovered at runtime.
+  final bool required;
+
   /// When set, the closed list of strings this positional accepts.
   /// Only meaningful for [CliPositionalType.string].
   final List<String>? values;
@@ -51,28 +56,38 @@ class CliPositional {
 
   factory CliPositional.string(
     String name, {
+    required bool required,
     List<String>? values,
     String? description,
   }) => CliPositional._(
     name: name,
     type: CliPositionalType.string,
+    required: required,
     values: values,
     description: description,
   );
 
-  factory CliPositional.integer(String name, {String? description}) =>
-      CliPositional._(
-        name: name,
-        type: CliPositionalType.integer,
-        description: description,
-      );
+  factory CliPositional.integer(
+    String name, {
+    required bool required,
+    String? description,
+  }) => CliPositional._(
+    name: name,
+    type: CliPositionalType.integer,
+    required: required,
+    description: description,
+  );
 
-  factory CliPositional.number(String name, {String? description}) =>
-      CliPositional._(
-        name: name,
-        type: CliPositionalType.number,
-        description: description,
-      );
+  factory CliPositional.number(
+    String name, {
+    required bool required,
+    String? description,
+  }) => CliPositional._(
+    name: name,
+    type: CliPositionalType.number,
+    required: required,
+    description: description,
+  );
 
   /// Coerce the raw word `cli_router` bound to [name] into the declared
   /// type.
@@ -115,6 +130,7 @@ class CliPositional {
     'name': name,
     'kind': 'positional',
     'type': type.name,
+    'required': required,
     if (values != null) 'allowed': values,
     if (description != null) 'description': description,
   };

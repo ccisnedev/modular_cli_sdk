@@ -88,6 +88,16 @@ class CliParam {
         'Parameter "$name" is an enumeration and must declare its values.',
       );
     }
+    final default_ = defaultValue;
+    if (type == CliParamType.enumeration &&
+        default_ != null &&
+        !values!.contains(default_.value)) {
+      throw ArgumentError(
+        'Parameter "$name" declares a default of "${default_.value}", '
+        'which is not one of its own allowed values: '
+        '${values!.join(', ')}.',
+      );
+    }
   }
 
   /// Long name, written `--name` on the command line.

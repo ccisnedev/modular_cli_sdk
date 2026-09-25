@@ -20,6 +20,7 @@ import 'input.dart';
 import 'output.dart';
 import 'plan.dart';
 import 'query.dart';
+import 'route_pattern.dart';
 
 /// Registers [Query]s and [Command]s within a named module.
 ///
@@ -41,10 +42,12 @@ class ModuleBuilder {
     required this.moduleName,
     required CliRouter router,
     required CommandCatalog catalog,
+    required Map<String, CliHandler> handlersByName,
     Approver? approver,
     PlanSink? planSink,
   }) : _router = router,
        _catalog = catalog,
+       _handlersByName = handlersByName,
        _approver = approver,
        _planSink = planSink;
 
@@ -53,6 +56,13 @@ class ModuleBuilder {
 
   final CliRouter _router;
   final CommandCatalog _catalog;
+
+  /// Every registered route's actual dispatch handler, keyed by
+  /// [CommandContract.name] — shared with every other [ModuleBuilder] this
+  /// SDK builds (all backed by the same [ModularCli]), so [ModularCli.shortcut]
+  /// can look a target route's handler up regardless of which module
+  /// registered it.
+  final Map<String, CliHandler> _handlersByName;
   final Approver? _approver;
   final PlanSink? _planSink;
 
@@ -67,6 +77,7 @@ class ModuleBuilder {
   void query<I extends Input, O extends Output>(
     String route,
     Query<I, O> Function(CliRequest req) queryFactory, {
+    required bool globals,
     String? description,
     CliContract contract = CliContract.none,
   }) {
@@ -77,7 +88,7 @@ class ModuleBuilder {
       contract: contract,
     );
 
-    _mount(route, entry, (req, output) async {
+    _mount(route, entry, globals: globals, (req, output) async {
       final unit = queryFactory(applyDeclaredContract(req, entry.contract));
 
       final invalid = unit.validate();
@@ -102,6 +113,7 @@ class ModuleBuilder {
   void command<I extends Input, O extends Output>(
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
+    required bool globals,
     String? description,
     CliContract contract = CliContract.none,
   }) {
@@ -112,7 +124,7 @@ class ModuleBuilder {
       contract: contract.withOptions(ChangeFlags.params),
     );
 
-    _mount(route, entry, (req, output) async {
+    _mount(route, entry, globals: globals, (req, output) async {
       final applied = applyDeclaredContract(req, entry.contract);
       final unit = commandFactory(applied);
 
@@ -224,6 +236,11 @@ class ModuleBuilder {
     required String? description,
     required CliContract contract,
   }) {
+    // Build-time, not runtime: a route/contract mismatch — missing, extra,
+    // misnamed, duplicate or wrongly-required/optional positional — is an
+    // authoring mistake, caught the moment the route is declared, not
+    // something a caller could ever trigger by what they typed.
+    validateContractPositionals(route, contract);
     final entry = CommandContract(
       route: moduleName.isEmpty ? route : '$moduleName $route',
       module: moduleName,
@@ -248,54 +265,63 @@ class ModuleBuilder {
   void _mount(
     String route,
     CommandContract entry,
-    Future<int> Function(CliRequest req, CliOutput output) body,
-  ) {
+    Future<int> Function(CliRequest req, CliOutput output) body, {
+    required bool globals,
+  }) {
+    Future<int> handler(CliRequest req) async {
+      final isJsonMode = req.flagBool('json');
+      final isQuiet = req.flagBool('quiet');
+
+      final CliOutput output = isJsonMode
+          ? JsonCliOutput(
+              stdout: req.stdout,
+              stderr: req.stderr,
+              isQuiet: isQuiet,
+            )
+          : TextCliOutput(
+              stdout: req.stdout,
+              stderr: req.stderr,
+              isQuiet: isQuiet,
+            );
+
+      // Asked for the contract, not for the work: help short-circuits a
+      // resolved invocation before enforcement or the handler ever run, so
+      // `--help` alongside other options answers with the contract rather
+      // than acting on it.
+      if (req.flagBool('help')) {
+        output.writeObject(
+          entry.toJson(),
+          textOverride: HelpRenderer(_catalog).renderCommand(entry),
+        );
+        return ExitCode.ok;
+      }
+
+      try {
+        return await body(req, output);
+      } on CommandException catch (e) {
+        return _reject(
+          e,
+          req,
+          output,
+          entry,
+          showsContractOnRejection: !isJsonMode,
+        );
+      }
+    }
+
     _router.cmd(
       route,
-      (req) async {
-        final isJsonMode = req.flagBool('json');
-        final isQuiet = req.flagBool('quiet');
-
-        final CliOutput output = isJsonMode
-            ? JsonCliOutput(
-                stdout: req.stdout,
-                stderr: req.stderr,
-                isQuiet: isQuiet,
-              )
-            : TextCliOutput(
-                stdout: req.stdout,
-                stderr: req.stderr,
-                isQuiet: isQuiet,
-              );
-
-        // Asked for the contract, not for the work: help short-circuits a
-        // resolved invocation before enforcement or the handler ever run, so
-        // `--help` alongside other options answers with the contract rather
-        // than acting on it.
-        if (req.flagBool('help')) {
-          output.writeObject(
-            entry.toJson(),
-            textOverride: HelpRenderer(_catalog).renderCommand(entry),
-          );
-          return ExitCode.ok;
-        }
-
-        try {
-          return await body(req, output);
-        } on CommandException catch (e) {
-          return _reject(
-            e,
-            req,
-            output,
-            entry,
-            showsContractOnRejection: !isJsonMode,
-          );
-        }
-      },
+      handler,
       options: entry.contract.toOptionSpecs(),
-      globals: true,
+      globals: globals,
       description: entry.description,
     );
+
+    // Shared across every `ModuleBuilder` this SDK builds, so
+    // `ModularCli.shortcut` can dispatch to a route's exact handler —
+    // `--help` handling, `CommandException` rejection and all — regardless
+    // of which module registered it.
+    _handlersByName[entry.name] = handler;
   }
 
   CommandException _rejection(String message) => CommandException(

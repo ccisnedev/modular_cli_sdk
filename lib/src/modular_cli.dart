@@ -16,6 +16,7 @@ import 'module_builder.dart';
 import 'output.dart';
 import 'plan.dart';
 import 'query.dart';
+import 'route_pattern.dart';
 
 /// Entry point for a modular CLI application.
 ///
@@ -62,6 +63,12 @@ class ModularCli {
   late final CliRouter _root = CliRouter(globalOptions: globalOptionSpecs);
   final CommandCatalog _catalog = CommandCatalog();
 
+  /// Every registered route's dispatch handler, keyed by
+  /// [CommandContract.name]. Shared by every [ModuleBuilder] this instance
+  /// builds, so [shortcut] can find a target route's handler no matter
+  /// which module registered it.
+  final Map<String, CliHandler> _handlersByName = {};
+
   /// Every registered route with its declared contract — the single source help
   /// is rendered from.
   CommandCatalog get catalog => _catalog;
@@ -69,7 +76,18 @@ class ModularCli {
   /// Register a named module with its routes.
   ///
   /// [name] becomes the first segment: `name subcommand`.
+  ///
+  /// An empty [name] is the CLI's own root: `cli.module('', (m) { ... })`
+  /// registers its routes directly on the root router, exactly as
+  /// top-level [query]/[command] calls do. `cli_router.mount` requires its
+  /// prefix to be exactly one literal word, and `''` splits into zero — so
+  /// an empty module is handled here, before `mount` is ever called,
+  /// rather than by trying to mount under a prefix that cannot exist.
   ModularCli module(String name, void Function(ModuleBuilder) build) {
+    if (name.isEmpty) {
+      build(_builderFor('', _root));
+      return this;
+    }
     final moduleRouter = CliRouter(globalOptions: globalOptionSpecs);
     build(_builderFor(name, moduleRouter));
     _root.mount(name, moduleRouter);
@@ -82,12 +100,14 @@ class ModularCli {
   ModularCli query<I extends Input, O extends Output>(
     String route,
     Query<I, O> Function(CliRequest req) queryFactory, {
+    required bool globals,
     String? description,
     CliContract contract = CliContract.none,
   }) {
     _builderFor('', _root).query<I, O>(
       route,
       queryFactory,
+      globals: globals,
       description: description,
       contract: contract,
     );
@@ -103,22 +123,88 @@ class ModularCli {
   ModularCli command<I extends Input, O extends Output>(
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
+    required bool globals,
     String? description,
     CliContract contract = CliContract.none,
   }) {
     _builderFor('', _root).command<I, O>(
       route,
       commandFactory,
+      globals: globals,
       description: description,
       contract: contract,
     );
     return this;
   }
 
+  /// Registers [pattern] as a route that dispatches to the same handler
+  /// already registered for [target] — the full name of a route already
+  /// registered via [query], [command] or [ModuleBuilder], e.g. `'eval
+  /// rpn'` — but under [pattern]'s own, independently declared [contract]
+  /// and [globals] scope (issue #27 section 4: "a declared route that runs
+  /// the target's handler with a narrower contract").
+  ///
+  /// This is for a route that means the same thing as a longer one but is
+  /// spelled differently and more narrowly —
+  /// `cli.shortcut('&lt;program&gt;', target: 'eval rpn', globals: false)`
+  /// lets a bare program argument alone run exactly what
+  /// `eval rpn --program &lt;program&gt;` would, without exposing
+  /// `eval rpn`'s other options (`--file`, `--stdin`) or accepting global
+  /// options at all when `globals: false` (`cli_router.cmd` itself refuses
+  /// a global option on a route declared `globals: false`, so nothing
+  /// further has to be done here to enforce that).
+  ///
+  /// [contract]'s positionals are validated against [pattern] exactly as an
+  /// ordinary [query]/[command] registration's are (missing, extra,
+  /// misnamed, duplicate or wrongly required/optional is an [ArgumentError]
+  /// at registration).
+  ///
+  /// A shortcut is deliberately **not** given its own [CommandCatalog]
+  /// entry: it is another way to spell an existing command, not a second
+  /// command, and it would otherwise show up in `help` as if it needed its
+  /// own explanation when the one at [target] already is that explanation.
+  /// One consequence: `--help` and JSON error `contract` fields are not
+  /// available through a shortcut route itself; a caller is directed to
+  /// [target]'s own help.
+  ///
+  /// Throws [ArgumentError] if [target] has not been registered yet —
+  /// shortcuts must be declared after their target.
+  ModularCli shortcut(
+    String pattern, {
+    required String target,
+    required bool globals,
+    CliContract contract = CliContract.none,
+    String? description,
+  }) {
+    final handler = _handlersByName[target];
+    if (handler == null) {
+      throw ArgumentError(
+        'shortcut("$pattern") targets "$target", which is not a '
+        'registered route. Register the target with query(), command() or '
+        'a ModuleBuilder before declaring a shortcut to it.',
+      );
+    }
+    validateContractPositionals(pattern, contract);
+    _root.cmd(
+      pattern,
+      handler,
+      options: contract.toOptionSpecs(),
+      globals: globals,
+      description: description,
+    );
+    return this;
+  }
+
+  /// The registered route word closest to [word] — see
+  /// [CommandCatalog.suggest].
+  String? suggest(String word, {int maxDistance = 2}) =>
+      _catalog.suggest(word, maxDistance: maxDistance);
+
   ModuleBuilder _builderFor(String name, CliRouter router) => ModuleBuilder(
     moduleName: name,
     router: router,
     catalog: _catalog,
+    handlersByName: _handlersByName,
     approver: _approver,
     planSink: _planSink,
   );
@@ -172,6 +258,7 @@ class ModularCli {
     query<HelpInput, HelpOutput>(
       'help *',
       (req) => HelpQuery(HelpInput(_catalog, focus: req.rest)),
+      globals: true,
       description: 'Show the commands this CLI accepts',
     );
   }
@@ -299,7 +386,9 @@ class ModularCli {
     _writeHelp(
       out,
       jsonMode: jsonMode,
-      json: {'commands': [for (final c in scoped.commands) c.toJson()]},
+      json: {
+        'commands': [for (final c in scoped.commands) c.toJson()],
+      },
       text: HelpRenderer(scoped).renderCatalog(),
     );
     return ExitCode.ok;
@@ -344,9 +433,23 @@ class ModularCli {
     // one registered route continues it. That is not the generic
     // "incomplete command" / "'x' does not continue this command" the
     // router itself would say — it is a specific, answerable thing.
-    final message = contract == null && completions.isNotEmpty
-        ? "'$attempted' is not a complete command"
-        : (rejection.message ?? rejection.kind.name);
+    //
+    // This rewrite applies to [CliRejectionKind.incomplete] alone: it is
+    // the one kind that means "trails off partway through a real route",
+    // which is exactly what "is not a complete command" describes. Every
+    // other kind — `eval --json --bogus` is `unknownOption`, not
+    // `incomplete` — keeps the router's own message untouched: nothing
+    // here rewrites a message keyed on anything but the kind.
+    final routerMessage = rejection.message ?? rejection.kind.name;
+    final message = _withSuggestion(
+      rejection.kind,
+      routerMessage,
+      rejection.kind == CliRejectionKind.incomplete &&
+              contract == null &&
+              completions.isNotEmpty
+          ? "'$attempted' is not a complete command"
+          : routerMessage,
+    );
 
     if (jsonMode) {
       final details = _detailsFor(rejection, contract);
@@ -381,6 +484,37 @@ class ModularCli {
         ).renderCatalog(),
       );
     return exitCode;
+  }
+
+  /// Appends a "did you mean" suggestion to [finalMessage] when [kind] is
+  /// one naming an offending word — [CliRejectionKind.unknownCommand]
+  /// (`"unknown command 'shwo'"`) or [CliRejectionKind.incomplete]
+  /// (`"'shwo' does not continue this command"`) — and [CommandCatalog.suggest]
+  /// finds a close enough registered word for it.
+  ///
+  /// The word is read from [routerMessage] — the router's own, original
+  /// message, always quoted the same way for these two kinds — never from
+  /// [finalMessage], which may already have been rewritten (the "is not a
+  /// complete command" case above) into text that no longer quotes a
+  /// single word. Gated on [kind] alone, exactly like the rewrite above: it
+  /// is an addition, not a substitution, so it cannot change what the
+  /// router itself reported, only add a suggestion after it.
+  String _withSuggestion(
+    CliRejectionKind kind,
+    String routerMessage,
+    String finalMessage,
+  ) {
+    if (kind != CliRejectionKind.unknownCommand &&
+        kind != CliRejectionKind.incomplete) {
+      return finalMessage;
+    }
+    final match = RegExp("'([^']*)'").firstMatch(routerMessage);
+    if (match == null) return finalMessage;
+    final offending = match.group(1)!;
+    if (offending.isEmpty) return finalMessage;
+    final suggestion = _catalog.suggest(offending);
+    if (suggestion == null) return finalMessage;
+    return "$finalMessage. Did you mean '$suggestion'?";
   }
 
   /// The contract a rejection points at: the route `cli_router` itself named

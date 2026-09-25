@@ -166,7 +166,7 @@ class HelpRenderer {
 
   String _positionalFacetsOf(CliPositional positional) {
     final facets = <String>[
-      'required',
+      if (positional.required) 'required' else 'optional',
       if (positional.values != null) 'one of: ${positional.values!.join(', ')}',
     ];
     final description = positional.description ?? '';
@@ -176,9 +176,12 @@ class HelpRenderer {
 
   String _usageOf(CommandContract contract) {
     final positionals = contract.positionals
-        .map((p) => '<${p.name}>')
+        .map((p) => p.required ? '<${p.name}>' : '[<${p.name}>]')
         .join(' ');
-    final route = contract.route.replaceAll(RegExp(r'\s*<[^>]+>'), '');
+    final route = contract.route.replaceAll(
+      RegExp(r'\s*(\[<[^>]+>\]|<[^>]+>|\*)'),
+      '',
+    );
     // `cli_router`'s grammar requires every option to precede the first
     // positional on the actual command line (spec 8.2: "options go before
     // the program") — so the usage line is written in that same order,

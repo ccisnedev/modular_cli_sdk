@@ -19,24 +19,53 @@ import 'cli_contract.dart';
 /// declares nothing — so there is no undeclared branch left to skip.
 CliRequest applyDeclaredContract(CliRequest req, CliContract contract) {
   final resolvedOptions = <ParsedOption>[...req.options];
-  final present = <String>{for (final o in req.options) o.spec.name};
+
+  // A constraint (spec's `ExactlyOne`/`MutuallyExclusive`) is checked over
+  // every field the caller actually chose — and a bound positional is
+  // exactly as much a choice as a `--flag` is: `eval rpn '1 2 +'` chose
+  // `program` precisely as deliberately as `eval rpn --stdin '1 2 +'`
+  // chose `stdin`. Leaving positionals out of `present` made a constraint
+  // spanning a positional and an option unsatisfiable through the
+  // positional side alone.
+  final present = <String>{
+    for (final o in req.options) o.spec.name,
+    for (final p in contract.positionals)
+      if (req.param(p.name) != null) p.name,
+  };
 
   for (final param in contract.options) {
-    final existing = _find(resolvedOptions, param.name);
-    if (existing != null) {
-      // Type, enumeration and path-existence checks; throws on failure.
-      // Router already guaranteed presence/required/repeat-count.
-      param.parse(existing.value ?? '');
+    // A repeatable option can occur more than once on the invocation —
+    // `cli_router` allows every occurrence through once it has confirmed
+    // the option itself is declared repeatable, but it does not know this
+    // SDK's own type/enum/path rules, so every occurrence, not just the
+    // first, must be checked against them: `repeat --count 1 --count bad`
+    // is only caught by validating the second occurrence too.
+    final occurrences = _findAll(resolvedOptions, param.name);
+    if (occurrences.isNotEmpty) {
+      for (final occurrence in occurrences) {
+        // Type, enumeration and path-existence checks; throws on failure.
+        // Router already guaranteed presence/required/repeat-count.
+        param.parse(occurrence.value ?? '');
+      }
       continue;
     }
     final declaredDefault = param.defaultValue;
     if (declaredDefault != null) {
+      final rawValue = '${declaredDefault.value}';
+      // A declared default must satisfy the same declaration it is a
+      // default *for*: an enum default outside its own `values` is already
+      // rejected at registration (`CliParam`'s constructor), but a
+      // `mustExist` path default can only be checked against the
+      // filesystem as it stands right now — so it is validated here, the
+      // same way a value the caller actually typed would be, rather than
+      // trusted unchecked because nobody typed it.
+      param.parse(rawValue);
       resolvedOptions.add(
         ParsedOption(
           spec: param.toOptionSpec(),
           written: '--${param.name}',
           argvIndex: -1,
-          value: '${declaredDefault.value}',
+          value: rawValue,
           attached: false,
         ),
       );
@@ -61,9 +90,7 @@ CliRequest applyDeclaredContract(CliRequest req, CliContract contract) {
   );
 }
 
-ParsedOption? _find(List<ParsedOption> options, String name) {
-  for (final option in options) {
-    if (option.spec.name == name) return option;
-  }
-  return null;
-}
+List<ParsedOption> _findAll(List<ParsedOption> options, String name) => [
+  for (final option in options)
+    if (option.spec.name == name) option,
+];

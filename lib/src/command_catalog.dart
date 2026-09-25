@@ -1,6 +1,7 @@
 import 'cli_contract.dart';
 import 'cli_param.dart';
 import 'cli_positional.dart';
+import 'route_pattern.dart';
 
 /// Which of the two kinds of unit a route was registered as.
 ///
@@ -34,8 +35,22 @@ class CommandContract {
   /// the tokens a user types to name the command: `records show`, `help`.
   /// This is how a command is *named*, as opposed to how it is *invoked*,
   /// and it is what help is asked about.
+  ///
+  /// Strips a trailing optional `[<name>]` placeholder exactly as it strips
+  /// a required `<name>` one: `eval rpn [<program>]` is named `eval rpn`,
+  /// the same name a caller types whether or not they go on to supply the
+  /// optional positional.
   String get name =>
-      route.replaceAll(RegExp(r'\s*(<[^>]+>|\*)'), '').trim();
+      route.replaceAll(RegExp(r'\s*(\[<[^>]+>\]|<[^>]+>|\*)'), '').trim();
+
+  /// The route exactly as `cli_router`'s own `CliRoute.pattern` reports it:
+  /// every segment except a trailing optional positional or wildcard, which
+  /// `cli_router` never includes there. Unlike [route] (this SDK's own
+  /// record of the full pattern) and [name] (words only, no placeholders at
+  /// all), this is what [CommandCatalog.forRoute] must match a
+  /// [CliRejection]'s `route.pattern` against — the router reports
+  /// `eval rpn`, never `eval rpn [<program>]`.
+  String get routerPattern => RoutePattern(route).routerPattern;
 
   /// Module the command belongs to; empty for a root command.
   final String module;
@@ -82,10 +97,13 @@ class CommandCatalog {
 
   void register(CommandContract contract) => _contracts.add(contract);
 
-  /// The contract for an exact route, or `null` if the route is not registered.
-  CommandContract? forRoute(String route) {
+  /// The contract for an exact route, matched against [routerPattern] —
+  /// `cli_router`'s own [CliRoute.pattern] never includes a trailing
+  /// optional positional or wildcard, so neither does this match, even
+  /// though [CommandContract.route] (this SDK's full record) does.
+  CommandContract? forRoute(String routerPattern) {
     for (final contract in _contracts) {
-      if (contract.route == route) return contract;
+      if (contract.routerPattern == routerPattern) return contract;
     }
     return null;
   }
@@ -116,4 +134,83 @@ class CommandCatalog {
       _contracts.any((c) => c.kind == CommandKind.command);
 
   bool get isEmpty => _contracts.isEmpty;
+
+  /// The registered route word closest to [word], for a rejection message
+  /// like "did you mean 'show'?" — or `null` when nothing registered is
+  /// close enough.
+  ///
+  /// The candidate vocabulary is every distinct literal word that appears
+  /// anywhere across every registered command's [CommandContract.name]
+  /// (split on whitespace), so `eval rpn` contributes both `eval` and
+  /// `rpn`. This is scoped to the whole catalog, not to where in the route
+  /// tree the typo actually occurred — `cli_router`'s trie is private and
+  /// not introspectable from this SDK, so a suggestion can, in principle,
+  /// name a word that is not reachable from the caller's actual position.
+  /// In practice route vocabularies rarely collide across unrelated
+  /// modules, and a wrong-but-plausible suggestion is still more useful
+  /// than none.
+  ///
+  /// Closeness is the restricted edit distance between [word] and each
+  /// candidate — Levenshtein distance (insertion, deletion, substitution)
+  /// plus one more operation, transposing two adjacent characters, counted
+  /// as a single edit (the "Damerau" part of Damerau-Levenshtein, in its
+  /// cheaper OSA/restricted form: each substring is only ever transposed
+  /// once). A candidate must be within [maxDistance] edits to be returned
+  /// at all — the default, 2, catches a typo like `shwo` -> `show`
+  /// (distance 1, transposition) without also matching words that merely
+  /// happen to share a few letters. Ties — more than one candidate at the
+  /// minimum distance found — are broken by catalog order: the order
+  /// routes were registered in, the same order [commands] reports.
+  String? suggest(String word, {int maxDistance = 2}) {
+    final vocabulary = <String>[];
+    final seen = <String>{};
+    for (final contract in _contracts) {
+      for (final w in contract.name.split(' ')) {
+        if (w.isEmpty) continue;
+        if (seen.add(w)) vocabulary.add(w);
+      }
+    }
+
+    String? best;
+    var bestDistance = maxDistance + 1;
+    for (final candidate in vocabulary) {
+      final distance = _restrictedEditDistance(word, candidate);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = candidate;
+      }
+    }
+    return bestDistance <= maxDistance ? best : null;
+  }
+}
+
+/// Restricted edit distance (a.k.a. optimal string alignment / OSA):
+/// Levenshtein distance extended with one more edit, transposing two
+/// adjacent characters, each substring transposed at most once. Standard
+/// dynamic-programming table, `O(|a| * |b|)`.
+int _restrictedEditDistance(String a, String b) {
+  final m = a.length;
+  final n = b.length;
+  final d = List.generate(m + 1, (_) => List<int>.filled(n + 1, 0));
+  for (var i = 0; i <= m; i++) {
+    d[i][0] = i;
+  }
+  for (var j = 0; j <= n; j++) {
+    d[0][j] = j;
+  }
+  for (var i = 1; i <= m; i++) {
+    for (var j = 1; j <= n; j++) {
+      final cost = a[i - 1] == b[j - 1] ? 0 : 1;
+      var value = [
+        d[i - 1][j] + 1, // deletion
+        d[i][j - 1] + 1, // insertion
+        d[i - 1][j - 1] + cost, // substitution
+      ].reduce((x, y) => x < y ? x : y);
+      if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1]) {
+        value = value < d[i - 2][j - 2] + 1 ? value : d[i - 2][j - 2] + 1;
+      }
+      d[i][j] = value;
+    }
+  }
+  return d[m][n];
 }

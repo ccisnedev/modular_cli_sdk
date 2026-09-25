@@ -9,7 +9,11 @@ import 'cli_param.dart';
 /// they are in scope everywhere, and `ModuleBuilder` acts on them when it
 /// picks the output mode.
 final List<CliParam> globalOptions = [
-  CliParam.flag('json', repeatable: false, description: 'Emit machine-readable JSON'),
+  CliParam.flag(
+    'json',
+    repeatable: false,
+    description: 'Emit machine-readable JSON',
+  ),
   CliParam.flag(
     'quiet',
     abbr: 'q',
