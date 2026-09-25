@@ -4,6 +4,8 @@
 /// deletes anything real.
 library;
 
+import 'dart:io' as io;
+
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 import 'package:test/test.dart';
 
@@ -301,6 +303,130 @@ void main() {
         expect(err.output, contains('file-access-denied'));
       },
     );
+
+    test('installs to the resolved target, not a symlinked PATH entry, when '
+        'the executable on PATH is a symlink', () async {
+      // `cx` on PATH is a symlink to a versioned install directory (as a
+      // package manager, or a previous upgrade, might leave it): writing
+      // to the raw PATH entry would replace the link itself with a plain
+      // file rather than upgrading what it points at, and sever the link.
+      final fileSystem = FakeFileSystem(
+        onPath: {'cx': '/usr/local/bin/cx'},
+        canonicalTargets: {'/usr/local/bin/cx': '/opt/calculatrix/cx-1.0.0'},
+      );
+      final downloader = FakeDownloader(bytes: const [9, 9, 9]);
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+          downloader: downloader,
+        ),
+      );
+
+      final code = await cli.run([
+        'upgrade',
+        '--apply',
+        '--autoapprove',
+      ], stdout: MemorySink());
+
+      expect(code, ExitCode.ok);
+      expect(fileSystem.written, {
+        '/opt/calculatrix/cx-1.0.0': [9, 9, 9],
+      });
+    });
+
+    test(
+      '--plan reports the resolved target, not the symlinked PATH entry',
+      () async {
+        final fileSystem = FakeFileSystem(
+          onPath: {'cx': '/usr/local/bin/cx'},
+          canonicalTargets: {'/usr/local/bin/cx': '/opt/calculatrix/cx-1.0.0'},
+        );
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+          ),
+        );
+
+        final out = MemorySink();
+        final code = await cli.run(['upgrade', '--plan'], stdout: out);
+
+        expect(code, ExitCode.ok);
+        expect(out.output, contains('/opt/calculatrix/cx-1.0.0'));
+      },
+    );
+
+    test('a resolution failure reports file-access-denied rather than '
+        'installing over the symlink', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+        ..canonicalizeError = Exception('too many levels of symbolic links');
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+        ),
+      );
+
+      final err = MemorySink();
+      final code = await cli.run([
+        'upgrade',
+        '--apply',
+        '--autoapprove',
+      ], stderr: err);
+
+      expect(code, ExitCode.genericError);
+      expect(err.output, contains('file-access-denied'));
+    });
+
+    test(
+      'a real symlinked install target: both the alias and the resolved '
+      'binary reach the new content after --apply',
+      () async {
+        final tempDir = io.Directory.systemTemp.createTempSync(
+          'upgrade_symlink_test_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+
+        final targetPath = '${tempDir.path}${io.Platform.pathSeparator}cx-real';
+        final linkPath = '${tempDir.path}${io.Platform.pathSeparator}cx';
+        io.File(targetPath).writeAsBytesSync([1, 2, 3]);
+        io.Process.runSync('chmod', ['+x', targetPath]);
+        try {
+          io.Link(linkPath).createSync(targetPath);
+        } on io.FileSystemException {
+          return;
+        }
+
+        final fileSystem = IoCliFileSystem(pathDirectories: [tempDir.path]);
+        final downloader = FakeDownloader(bytes: const [9, 9, 9]);
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+            downloader: downloader,
+          ),
+        );
+
+        final code = await cli.run([
+          'upgrade',
+          '--apply',
+          '--autoapprove',
+        ], stdout: MemorySink());
+
+        expect(code, ExitCode.ok);
+        // The link itself is untouched; the file it points at was replaced,
+        // so both names now read the new content.
+        expect(io.File(targetPath).readAsBytesSync(), [9, 9, 9]);
+        expect(io.File(linkPath).readAsBytesSync(), [9, 9, 9]);
+        expect(io.Link(linkPath).targetSync(), targetPath);
+      },
+      skip: io.Platform.isWindows
+          ? 'symlink creation needs a privilege this environment may lack'
+          : false,
+    );
   });
 
   group('uninstall', () {
@@ -372,10 +498,13 @@ void main() {
           '--autoapprove',
         ], stdout: MemorySink());
 
+        // The alias is removed before the executable: deleting the
+        // executable first would leave the symlinked alias dangling, and a
+        // real filesystem's delete of a dangling symlink fails on Linux.
         expect(code, ExitCode.ok);
         expect(fileSystem.deleted, [
-          '/usr/local/bin/cx',
           '/usr/local/bin/calculatrix',
+          '/usr/local/bin/cx',
         ]);
       },
     );
@@ -445,6 +574,117 @@ void main() {
         expect(code, ExitCode.genericError);
         expect(out.output, contains('file-access-denied'));
       },
+    );
+
+    test('on Windows, the running executable is moved aside and a detached '
+        'process is started to remove it once this process exits', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+      final processLauncher = FakeProcessLauncher(pid: 4242);
+      final cli = _cliWith(
+        _upgradePlugin(
+          fileSystem: fileSystem,
+          platform: const FakePlatform('windows'),
+          processLauncher: processLauncher,
+        ),
+      );
+
+      final out = MemorySink();
+      final code = await cli.run([
+        'uninstall',
+        '--apply',
+        '--autoapprove',
+      ], stdout: out);
+
+      expect(code, ExitCode.ok);
+      // It is renamed aside, never deleted directly: Windows will not let
+      // a running executable delete itself.
+      expect(fileSystem.deleted, isEmpty);
+      expect(fileSystem.renamed, [
+        ('/usr/local/bin/cx', '/usr/local/bin/cx.uninstall-4242.old'),
+      ]);
+      expect(processLauncher.started, hasLength(1));
+      final (executable, arguments) = processLauncher.started.single;
+      expect(executable, 'cmd');
+      expect(arguments.first, '/c');
+      expect(arguments.join(' '), contains('4242'));
+      expect(
+        arguments.join(' '),
+        contains('/usr/local/bin/cx.uninstall-4242.old'),
+      );
+      // No silent success: the plan says explicitly that removal is
+      // deferred, rather than implying the file is already gone.
+      expect(
+        out.output,
+        contains('/usr/local/bin/cx will be removed when this process exits'),
+      );
+    });
+
+    test('on Windows, if the detached process cannot be started, uninstall '
+        'fails with file-access-denied instead of a silent success', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+      final processLauncher = FakeProcessLauncher(
+        startError: Exception('no shell available'),
+      );
+      final cli = _cliWith(
+        _upgradePlugin(
+          fileSystem: fileSystem,
+          platform: const FakePlatform('windows'),
+          processLauncher: processLauncher,
+        ),
+      );
+
+      final out = MemorySink();
+      final code = await cli.run([
+        'uninstall',
+        '--apply',
+        '--autoapprove',
+      ], stdout: out);
+
+      expect(code, ExitCode.genericError);
+      expect(out.output, contains('file-access-denied'));
+      // The rename already happened; the failure message says where the
+      // file ended up rather than leaving it unaccounted for.
+      expect(out.output, contains('/usr/local/bin/cx.uninstall-4242.old'));
+    });
+
+    test(
+      'a real symlinked alias: removing the alias before the target avoids '
+      'the dangling-symlink delete failure',
+      () async {
+        final tempDir = io.Directory.systemTemp.createTempSync(
+          'uninstall_symlink_test_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+
+        final binaryPath = '${tempDir.path}${io.Platform.pathSeparator}cx';
+        final aliasPath =
+            '${tempDir.path}${io.Platform.pathSeparator}calculatrix';
+        io.File(binaryPath).writeAsBytesSync([1]);
+        io.Process.runSync('chmod', ['+x', binaryPath]);
+        try {
+          io.Link(aliasPath).createSync(binaryPath);
+        } on io.FileSystemException {
+          return;
+        }
+
+        final fileSystem = IoCliFileSystem(pathDirectories: [tempDir.path]);
+        final cli = _cliWith(_upgradePlugin(fileSystem: fileSystem));
+
+        final code = await cli.run([
+          'uninstall',
+          '--apply',
+          '--autoapprove',
+        ], stdout: MemorySink());
+
+        expect(code, ExitCode.ok);
+        expect(io.File(binaryPath).existsSync(), isFalse);
+        expect(io.Link(aliasPath).existsSync(), isFalse);
+      },
+      skip: io.Platform.isWindows
+          ? 'symlink creation needs a privilege this environment may lack'
+          : false,
     );
   });
 
@@ -588,8 +828,10 @@ void main() {
 InstallationPlugin _upgradePlugin({
   List<CliRelease> releases = const [],
   Object? releaseError,
-  FakeFileSystem? fileSystem,
+  CliFileSystem? fileSystem,
   FakeDownloader? downloader,
+  CliPlatform? platform,
+  CliProcessLauncher? processLauncher,
   String tagPrefix = 'cli-v',
 }) => InstallationPlugin(
   config: CliInstallationConfig(
@@ -607,7 +849,8 @@ InstallationPlugin _upgradePlugin({
   downloader: downloader ?? FakeDownloader(),
   fileSystem:
       fileSystem ?? FakeFileSystem(onPath: const {'cx': '/usr/local/bin/cx'}),
-  platform: const FakePlatform('linux'),
+  platform: platform ?? const FakePlatform('linux'),
+  processLauncher: processLauncher,
 );
 
 CliRelease _release(

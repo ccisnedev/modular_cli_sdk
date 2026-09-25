@@ -9,7 +9,7 @@ import '../doubles.dart';
 void main() {
   test('version reports the name and version given to ModularCli', () async {
     final cli = ModularCli(name: 'demo', version: '1.2.3')
-      ..plugin(const VersionPlugin());
+      ..plugin(const VersionPlugin(version: '1.2.3'));
 
     final out = MemorySink();
     final code = await cli.run(['version'], stdout: out);
@@ -20,7 +20,7 @@ void main() {
 
   test('version --json reports name and version as fields', () async {
     final cli = ModularCli(name: 'demo', version: '1.2.3')
-      ..plugin(const VersionPlugin());
+      ..plugin(const VersionPlugin(version: '1.2.3'));
 
     final out = MemorySink();
     await cli.run(['version', '--json'], stdout: out);
@@ -30,21 +30,22 @@ void main() {
   });
 
   test('registering it without host name/version fails at build time', () {
-    final cli = ModularCli()..plugin(const VersionPlugin());
+    final cli = ModularCli()..plugin(const VersionPlugin(version: '1.2.3'));
     expect(cli.buildPlugins, throwsStateError);
   });
 
-  test(
-    'a version given to VersionPlugin is reported instead of the host version',
-    () async {
-      final cli = ModularCli(name: 'demo', version: '1.2.3')
-        ..plugin(VersionPlugin(version: '0.8.0'));
+  test('a VersionPlugin version that disagrees with ModularCli\'s own fails at '
+      'build time, rather than one silently overriding the other', () {
+    final cli = ModularCli(name: 'demo', version: '1.2.3')
+      ..plugin(const VersionPlugin(version: '0.8.0'));
 
-      final out = MemorySink();
-      final code = await cli.run(['version'], stdout: out);
-
-      expect(code, ExitCode.ok);
-      expect(out.output, contains('demo: 0.8.0'));
-    },
-  );
+    expect(
+      cli.buildPlugins,
+      throwsA(
+        isA<CliPluginError>()
+            .having((e) => e.code, 'code', 'PLUGIN_VERSION_MISMATCH')
+            .having((e) => e.pluginId, 'pluginId', 'modular_cli.version'),
+      ),
+    );
+  });
 }

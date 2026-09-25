@@ -309,6 +309,26 @@ void main() {
         expect(log, ['b', 'c', 'a']);
       },
     );
+
+    test(
+      'Kahn\'s algorithm always picks the earliest-registered eligible '
+      'plugin over the whole remaining set, not just a\'s own requirements',
+      () {
+        final log = <String>[];
+        final cli = ModularCli(name: 'x', version: '1.0.0')
+          ..plugin(_FakePlugin(id: 'a', requires: const ['c'], log: log))
+          ..plugin(_FakePlugin(id: 'b', log: log))
+          ..plugin(_FakePlugin(id: 'c', log: log));
+
+        cli.buildPlugins();
+        // b does not depend on anything and was registered before c, so it
+        // is eligible from the start and must come out before c, even
+        // though c is what unblocks a. A depth-first visit in registration
+        // order gets this wrong: visiting a first pulls in c (a's own
+        // requirement) ahead of b, producing [c, a, b] instead.
+        expect(log, ['b', 'c', 'a']);
+      },
+    );
   });
 
   group('buildPlugins', () {

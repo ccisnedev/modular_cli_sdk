@@ -124,6 +124,107 @@ void main() {
     );
   });
 
+  group('writeExecutable (Windows rename-failure restore)', () {
+    test(
+      'restores the previous executable when the final rename into place fails',
+      () async {
+        final fs = _FailingRenameFileSystem();
+        final path = pathIn(tempDir, 'cx.exe');
+        io.File(path).writeAsBytesSync([9, 9, 9]);
+
+        await expectLater(
+          fs.writeExecutable(path, [1, 2, 3]),
+          throwsA(isA<io.FileSystemException>()),
+        );
+
+        // The installation is restored, not gone: the whole point of
+        // keeping the backup until the rename succeeds is that a failed
+        // rename must not leave [path] missing.
+        expect(io.File(path).readAsBytesSync(), [9, 9, 9]);
+      },
+      skip: io.Platform.isWindows ? false : 'Windows-specific replace path',
+    );
+
+    test(
+      'leaves no leftover backup or temp file once the restore has run',
+      () async {
+        final fs = _FailingRenameFileSystem();
+        final path = pathIn(tempDir, 'cx.exe');
+        io.File(path).writeAsBytesSync([9, 9, 9]);
+
+        await expectLater(
+          fs.writeExecutable(path, [1, 2, 3]),
+          throwsA(isA<io.FileSystemException>()),
+        );
+
+        final leftovers = tempDir
+            .listSync()
+            .where((e) => e.path != path)
+            .toList();
+        expect(leftovers, isEmpty);
+      },
+      skip: io.Platform.isWindows ? false : 'Windows-specific replace path',
+    );
+  });
+
+  group('delete', () {
+    test('deletes an ordinary file', () async {
+      const fs = IoCliFileSystem();
+      final path = pathIn(tempDir, 'plain');
+      io.File(path).writeAsBytesSync([1]);
+
+      await fs.delete(path);
+
+      expect(io.File(path).existsSync(), isFalse);
+    });
+
+    test(
+      'deletes a dangling symlink, which File.delete alone cannot',
+      () async {
+        final target = pathIn(tempDir, 'target');
+        io.File(target).writeAsBytesSync([1]);
+        final linkPath = pathIn(tempDir, 'link');
+        try {
+          io.Link(linkPath).createSync(target);
+        } on io.FileSystemException {
+          return;
+        }
+        io.File(target).deleteSync();
+
+        const fs = IoCliFileSystem();
+        // dart:io's File.delete resolves the path through a stat before
+        // removing it, which fails on a dangling symlink even though
+        // unlinking the symlink entry itself has nothing to do with
+        // whether its target exists.
+        await fs.delete(linkPath);
+
+        expect(io.Link(linkPath).existsSync(), isFalse);
+      },
+      skip: io.Platform.isWindows ? 'POSIX symlink semantics only' : false,
+    );
+
+    test(
+      'deletes a valid symlink itself, leaving its target in place',
+      () async {
+        final target = pathIn(tempDir, 'target');
+        io.File(target).writeAsBytesSync([1]);
+        final linkPath = pathIn(tempDir, 'link');
+        try {
+          io.Link(linkPath).createSync(target);
+        } on io.FileSystemException {
+          return;
+        }
+
+        const fs = IoCliFileSystem();
+        await fs.delete(linkPath);
+
+        expect(io.Link(linkPath).existsSync(), isFalse);
+        expect(io.File(target).existsSync(), isTrue);
+      },
+      skip: io.Platform.isWindows ? 'POSIX symlink semantics only' : false,
+    );
+  });
+
   group('resolveOnPath', () {
     test('finds a name in an injected PATH directory', () {
       final binDir = io.Directory(pathIn(tempDir, 'bin'))..createSync();
@@ -182,6 +283,81 @@ void main() {
       },
       skip: io.Platform.isWindows ? false : 'Windows PATHEXT only',
     );
+
+    test(
+      'rejects a file whose only execute bit belongs to someone else',
+      () {
+        final binDir = io.Directory(pathIn(tempDir, 'bin'))..createSync();
+        final path = pathIn(binDir, 'cx');
+        io.File(path).writeAsBytesSync([1]);
+        // 0641: owner rw-, group r--, other --x. The file is owned by this
+        // process (it just created it), so the only bit that matters is the
+        // owner bit, which is unset here even though an execute bit is set
+        // somewhere in the mode.
+        io.Process.runSync('chmod', ['0641', path]);
+
+        final fs = IoCliFileSystem(pathDirectories: [binDir.path]);
+        expect(fs.resolveOnPath('cx'), isNull);
+      },
+      skip: io.Platform.isWindows ? 'POSIX execute bit only' : false,
+    );
+  });
+
+  group('sameFile', () {
+    test('a path is the same file as itself', () {
+      const fs = IoCliFileSystem();
+      final path = pathIn(tempDir, 'cx');
+      io.File(path).writeAsBytesSync([1]);
+      expect(fs.sameFile(path, path), isTrue);
+    });
+
+    test('two unrelated files are not the same file', () {
+      const fs = IoCliFileSystem();
+      final a = pathIn(tempDir, 'a');
+      final b = pathIn(tempDir, 'b');
+      io.File(a).writeAsBytesSync([1]);
+      io.File(b).writeAsBytesSync([1]);
+      expect(fs.sameFile(a, b), isFalse);
+    });
+
+    test(
+      'a symlink is the same file as its target',
+      () {
+        final target = pathIn(tempDir, 'real');
+        io.File(target).writeAsBytesSync([1]);
+        final linkPath = pathIn(tempDir, 'link');
+        try {
+          io.Link(linkPath).createSync(target);
+        } on io.FileSystemException {
+          return;
+        }
+
+        const fs = IoCliFileSystem();
+        expect(fs.sameFile(linkPath, target), isTrue);
+      },
+      skip: io.Platform.isWindows ? 'POSIX symlink semantics only' : false,
+    );
+
+    test('a hard link is the same file as its target, even though canonicalize '
+        'alone disagrees', () {
+      final target = pathIn(tempDir, 'real');
+      io.File(target).writeAsBytesSync([1]);
+      final hardLinkPath = pathIn(tempDir, 'hardlink');
+      final result = io.Process.runSync('ln', [target, hardLinkPath]);
+      if (result.exitCode != 0) {
+        // Creating a hard link can fail for reasons outside this test's
+        // control (a filesystem that does not support them); the platform
+        // rule under test does not apply in that environment.
+        return;
+      }
+
+      const fs = IoCliFileSystem();
+      // canonicalize only resolves symlinks: a hard link has no symlink
+      // target to resolve through, so it reports these as two different
+      // files even though they are the same inode.
+      expect(fs.canonicalize(hardLinkPath), isNot(fs.canonicalize(target)));
+      expect(fs.sameFile(hardLinkPath, target), isTrue);
+    }, skip: io.Platform.isWindows ? 'POSIX hard link semantics only' : false);
   });
 
   group('canonicalize', () {
@@ -209,4 +385,17 @@ void main() {
       expect(fs.canonicalize(missing), missing);
     });
   });
+}
+
+/// Fails the final rename-into-place step of a Windows self-replacing write,
+/// without needing a second process to actually hold the target file open.
+/// [IoCliFileSystem.renameIntoPlace] exists as a public, overridable seam for
+/// exactly this: exercising the backup-restore-on-failure path from a test.
+class _FailingRenameFileSystem extends IoCliFileSystem {
+  const _FailingRenameFileSystem();
+
+  @override
+  Future<void> renameIntoPlace(io.File temp, String path) async {
+    throw io.FileSystemException('simulated rename failure', path);
+  }
 }

@@ -54,14 +54,26 @@ class FakeFileSystem implements CliFileSystem {
   final Map<String, List<int>> written = {};
   final List<String> deleted = [];
 
+  /// Every rename this fake performed, as `(from, to)` pairs, in order.
+  final List<(String, String)> renamed = [];
+
   Object? writeError;
   Object? deleteError;
+  Object? renameError;
+  Object? canonicalizeError;
 
   @override
   String? resolveOnPath(String name) => _onPath[name];
 
   @override
-  String canonicalize(String path) => _canonicalTargets[path] ?? path;
+  String canonicalize(String path) {
+    if (canonicalizeError != null) throw canonicalizeError!;
+    return _canonicalTargets[path] ?? path;
+  }
+
+  @override
+  bool sameFile(String a, String b) =>
+      a == b || canonicalize(a) == canonicalize(b);
 
   @override
   Future<void> writeExecutable(String path, List<int> bytes) async {
@@ -83,6 +95,16 @@ class FakeFileSystem implements CliFileSystem {
     deleted.add(path);
     _onPath.removeWhere((name, resolved) => resolved == path);
   }
+
+  @override
+  Future<void> rename(String from, String to) async {
+    if (renameError != null) throw renameError!;
+    renamed.add((from, to));
+    // Mirrors [delete]'s own bookkeeping: whatever used to resolve to
+    // [from] resolves to [to] afterwards, since that is what a real rename
+    // does to anything already looked up on `PATH`.
+    _onPath.updateAll((name, resolved) => resolved == from ? to : resolved);
+  }
 }
 
 class FakePlatform implements CliPlatform {
@@ -90,4 +112,25 @@ class FakePlatform implements CliPlatform {
 
   @override
   final String operatingSystem;
+}
+
+/// Records what would have been launched instead of starting a real
+/// detached process, so a test of the Windows self-delete step can assert
+/// what it launches without a real `cmd.exe` and a real second PID.
+class FakeProcessLauncher implements CliProcessLauncher {
+  FakeProcessLauncher({int pid = 4242, this.startError}) : currentPid = pid;
+
+  @override
+  final int currentPid;
+
+  final Object? startError;
+
+  /// Every call to [start], as `(executable, arguments)` pairs, in order.
+  final List<(String, List<String>)> started = [];
+
+  @override
+  Future<void> start(String executable, List<String> arguments) async {
+    if (startError != null) throw startError!;
+    started.add((executable, arguments));
+  }
 }

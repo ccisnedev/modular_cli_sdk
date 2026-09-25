@@ -2,6 +2,8 @@
 /// and reports them together, exiting non-zero only when one of them errors.
 library;
 
+import 'dart:convert';
+
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 import 'package:test/test.dart';
 
@@ -120,6 +122,57 @@ void main() {
 
     expect(out.output, contains('"binary"'));
     expect(out.output, contains('"status": "ok"'));
+  });
+
+  test('doctor --json reports the exact ordered checks array', () async {
+    final cli = ModularCli(name: 'x', version: '1.0.0')
+      ..plugin(const DoctorPlugin())
+      ..plugin(
+        _CheckContributingPlugin([
+          _constantCheck(
+            name: 'binary',
+            status: CliCheckStatus.ok,
+            message: 'cx found at /usr/local/bin/cx',
+          ),
+          _constantCheck(
+            name: 'alias',
+            status: CliCheckStatus.error,
+            message: 'calculatrix was not found on PATH',
+          ),
+          _constantCheck(
+            name: 'release',
+            status: CliCheckStatus.warning,
+            message: 'a newer release is available',
+          ),
+        ]),
+      );
+
+    final out = MemorySink();
+    await cli.run(['doctor', '--json'], stdout: out);
+
+    // The whole array, in check-run order, with nothing extra and nothing
+    // missing: a substring `contains` check (as the rest of this file
+    // uses) cannot tell an array in the right shape but the wrong order
+    // apart from one that happens to contain the same substrings.
+    expect(jsonDecode(out.output), {
+      'checks': [
+        {
+          'name': 'binary',
+          'status': 'ok',
+          'detail': 'cx found at /usr/local/bin/cx',
+        },
+        {
+          'name': 'alias',
+          'status': 'error',
+          'detail': 'calculatrix was not found on PATH',
+        },
+        {
+          'name': 'release',
+          'status': 'warning',
+          'detail': 'a newer release is available',
+        },
+      ],
+    });
   });
 
   test(
