@@ -26,7 +26,7 @@ import 'command_exception.dart';
 /// actual output, exactly once, after the fact.
 class InvocationOutcome {
   /// The most recently recorded error, or `null` when nothing has been
-  /// recorded yet (or a later recording overwrote it — see
+  /// recorded yet (or a later recording overwrote it, see
   /// [recordInvocationError]).
   CommandException? error;
 
@@ -73,7 +73,7 @@ Future<T> runWithInvocationOutcome<T>(Future<T> Function() body) {
 ///
 /// Throws [StateError] outside a [runWithInvocationOutcome] zone: there is
 /// no fallback outcome to hand back, silently, to code that calls this
-/// without having gone through [ModularCli.run] first — that would be
+/// without having gone through [ModularCli.run] first, that would be
 /// exactly the kind of silent default this SDK's error rendering must not
 /// have.
 InvocationOutcome currentInvocationOutcome() {
