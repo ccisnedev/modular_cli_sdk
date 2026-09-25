@@ -379,11 +379,47 @@ void main() {
       expect(fs.canonicalize(linkPath), fs.canonicalize(target));
     });
 
-    test('returns the path itself when nothing exists there', () {
-      const fs = IoCliFileSystem();
-      final missing = pathIn(tempDir, 'does-not-exist');
-      expect(fs.canonicalize(missing), missing);
-    });
+    // Strict on purpose: a resolution failure swallowed here and papered
+    // over with the original path is exactly how an upgrade ends up
+    // replacing a symlink itself instead of what it points at. The caller
+    // (UpgradeCommand.steps, UninstallCommand.steps) is the one that turns
+    // this into a file-access-denied failure; canonicalize's own job is
+    // only to surface the failure rather than hide it.
+    test(
+      'propagates the failure rather than returning the path itself when '
+      'nothing exists there',
+      () {
+        const fs = IoCliFileSystem();
+        final missing = pathIn(tempDir, 'does-not-exist');
+        expect(
+          () => fs.canonicalize(missing),
+          throwsA(isA<io.FileSystemException>()),
+        );
+      },
+    );
+
+    test(
+      'propagates the failure for a dangling symlink instead of returning '
+      'the link path itself',
+      () {
+        final target = pathIn(tempDir, 'real');
+        io.File(target).writeAsBytesSync([1]);
+        final linkPath = pathIn(tempDir, 'link');
+        try {
+          io.Link(linkPath).createSync(target);
+        } on io.FileSystemException {
+          return;
+        }
+        io.File(target).deleteSync();
+
+        const fs = IoCliFileSystem();
+        expect(
+          () => fs.canonicalize(linkPath),
+          throwsA(isA<io.FileSystemException>()),
+        );
+      },
+      skip: io.Platform.isWindows ? 'POSIX symlink semantics only' : false,
+    );
   });
 }
 

@@ -648,6 +648,34 @@ void main() {
     });
 
     test(
+      'a resolution failure while comparing the alias to the executable '
+      'reports file-access-denied rather than crashing the run',
+      () async {
+        // sameFile resolves both paths through canonicalize before comparing
+        // them; a canonicalize that cannot resolve one of them (a broken
+        // symlink chain, permission denied partway through) must not be
+        // allowed to escape as a raw, unhandled exception.
+        final fileSystem = FakeFileSystem(
+          onPath: {
+            'cx': '/usr/local/bin/cx',
+            'calculatrix': '/usr/local/bin/calculatrix',
+          },
+        )..canonicalizeError = Exception('too many levels of symbolic links');
+        final cli = _cliWith(_upgradePlugin(fileSystem: fileSystem));
+
+        final err = MemorySink();
+        final code = await cli.run([
+          'uninstall',
+          '--apply',
+          '--autoapprove',
+        ], stderr: err);
+
+        expect(code, ExitCode.genericError);
+        expect(err.output, contains('file-access-denied'));
+      },
+    );
+
+    test(
       'a real symlinked alias: removing the alias before the target avoids '
       'the dangling-symlink delete failure',
       () async {
