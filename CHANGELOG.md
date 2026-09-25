@@ -339,6 +339,68 @@ hard-link identity check.
   was already there. macOS remains deliberately deferred, as recorded by
   the comment citing issue #15, not an oversight this round addresses.)
 
+### Fixed (fifth review round)
+
+A fifth pass over #30, focused on the same Windows cleanup worker.
+
+- **The worker's claim over its own ready marker is now decided by a
+  single atomic rename, not by comparing two independently read
+  clocks.** An absolute deadline alone could not close the race:
+  `IoCliProcessLauncher` could suspend right up to its own deadline and
+  resume after it, disagreeing with a worker that had already created
+  its marker in time. The worker now creates a `ready` marker and
+  waits; `IoCliProcessLauncher`, if still within its own timeout,
+  claims it by renaming `ready` to `accepted`; the worker, past its own
+  `claimDeadlineUnixMs`, claims abandonment by renaming `ready` to
+  `abandoned` with `[System.IO.File]::Move`. Exactly one of the two
+  renames can ever succeed, since renaming a source that no longer
+  exists always fails. The worker arms deletion only once it actually
+  observes the `accepted` marker, whether while still polling for it
+  or, after its own abandon rename failed, as confirmation that the
+  failure really was the CLI's claim winning first. The claim is always
+  attempted before either side checks its own deadline, on both sides
+  of the race, so a CLI thread resuming from suspension after its own
+  deadline still gets a genuine attempt at a marker the worker created
+  in time. `tryClaimReadyMarker` and `pollForClaim` carry this protocol
+  as pure, directly testable functions; neither is exported from the
+  public barrel
+- **Removing the worker's private temporary directory on a successful
+  claim is now the worker's own responsibility, not
+  `IoCliProcessLauncher`'s.** Removing it from the CLI side immediately
+  after a successful claim would race the worker's own, still-pending,
+  first look at the `accepted` marker. The worker now removes its
+  private directory itself, after deleting the target paths, once it
+  has confirmed the parent process exited. `IoCliProcessLauncher` still
+  removes the directory itself on every path where its own claim never
+  succeeds, the same as before there was a claim to make at all. This
+  retires the fourth round's `startCleanupWorker` warning-on-success:
+  the post-success private-directory cleanup failure it existed to
+  surface can no longer happen on the CLI side, so
+  `CliProcessLauncher.startCleanupWorker`, `IoCliProcessLauncher`,
+  `FakeProcessLauncher` and `SelfDeleteExecutableStep` all revert to a
+  plain `Future<void>`
+- **The bootstrap script's own comments were removed.** With the added
+  claim protocol, the commented script's Base64-encoded, UTF-16LE form
+  pushed the full `cmd.exe` command line past its roughly
+  8191-character limit, which surfaced as every cleanup worker test
+  that launches a real process failing with "The command line is too
+  long." The intent those comments carried already lives in this
+  file's own Dart doc comments; the script itself does not need it
+  duplicated at four times the byte cost
+- **The cleanup worker now retrieves the parent process handle through
+  the explicit `get_Handle()` accessor, and validates the result,
+  instead of trusting the bare `.Handle` property.** Windows PowerShell
+  5.1's property-getter syntax has been observed, and reproduced
+  against pid 4, to return `$null` instead of throwing on an
+  access-denied process, even under `$ErrorActionPreference = 'Stop'`,
+  letting the worker reach the ready marker without actually holding a
+  usable handle. The script now calls `$parent.get_Handle()` and checks
+  the result is neither `$null` nor `[IntPtr]::Zero` before creating
+  the marker, stopping the worker first instead. The equivalent test
+  probe, which used the same bare property access to decide whether to
+  self-skip on this machine, is fixed the same way, and now actually
+  runs against pid 4 rather than reporting itself skipped
+
 ### Notes
 
 - **No archive format.** An asset is assumed to be the executable itself;
