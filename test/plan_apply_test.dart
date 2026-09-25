@@ -164,12 +164,15 @@ void main() {
       final command = TouchCommand(TouchInput());
       final cli = _cliWith(command, approver: (_) async => false);
 
-      final out = MemorySink();
-      final code = await cli.run(['touch', '--apply'], stdout: out);
+      // The refusal is a structured error, not a plain object: it goes
+      // through CliOutput.writeError, hence to stderr, exactly like any
+      // other CommandException.
+      final err = MemorySink();
+      final code = await cli.run(['touch', '--apply'], stderr: err);
 
       expect(command.built.single.performed, isFalse);
       expect(code, ExitCode.genericError);
-      expect(out.output, contains('Nothing was changed'));
+      expect(err.output, contains('Nothing was changed'));
     });
 
     test('refuses rather than hanging when there is nobody to ask', () async {
@@ -179,12 +182,30 @@ void main() {
         approver: (_) async => throw const NoApproverAvailable(),
       );
 
-      final out = MemorySink();
-      final code = await cli.run(['touch', '--apply'], stdout: out);
+      final err = MemorySink();
+      final code = await cli.run(['touch', '--apply'], stderr: err);
 
       expect(command.built.single.performed, isFalse);
       expect(code, ExitCode.genericError);
-      expect(out.output, contains('--autoapprove'));
+      expect(err.output, contains('--autoapprove'));
+    });
+
+    test('answers a refusal with a structured error under --json', () async {
+      final command = TouchCommand(TouchInput());
+      final cli = _cliWith(command, approver: (_) async => false);
+
+      final err = MemorySink();
+      final code = await cli.run(
+        ['touch', '--apply', '--json'],
+        stderr: err,
+      );
+
+      expect(code, ExitCode.genericError);
+      final envelope = jsonDecode(err.output) as Map<String, dynamic>;
+      final error = envelope['error'] as Map<String, dynamic>;
+      expect(error['id'], equals('approval-refused'));
+      expect(error['exitCode'], equals(ExitCode.genericError));
+      expect(error['message'], contains('Nothing was changed'));
     });
 
     test('with --autoapprove does not ask at all', () async {
@@ -330,6 +351,61 @@ void main() {
       expect(err.output, contains('the disk went away'));
       expect(code, ExitCode.genericError);
     });
+
+    test(
+      'wraps a plain thrown error with a synthesized id, under --json',
+      () async {
+        final cli = _cliWith(
+          TouchCommand(
+            TouchInput(),
+            targets: const ['a.txt'],
+            error: StateError('the disk went away'),
+          ),
+        );
+
+        final err = MemorySink();
+        final code = await cli.run(
+          ['touch', '--apply', '--autoapprove', '--json'],
+          stderr: err,
+        );
+
+        expect(code, ExitCode.genericError);
+        final envelope = jsonDecode(err.output) as Map<String, dynamic>;
+        final error = envelope['error'] as Map<String, dynamic>;
+        expect(error['id'], equals('step-failed'));
+        expect(error['message'], contains('the disk went away'));
+      },
+    );
+
+    test(
+      'keeps a thrown CommandException\'s own id and exit code',
+      () async {
+        final cli = _cliWith(
+          TouchCommand(
+            TouchInput(),
+            targets: const ['a.txt', 'b.txt'],
+            error: CommandException(
+              id: 'disk-full',
+              message: 'no space left on device',
+              exitCode: ExitCode.dataError,
+            ),
+          ),
+        );
+
+        final err = MemorySink();
+        final code = await cli.run(
+          ['touch', '--apply', '--autoapprove', '--json'],
+          stderr: err,
+        );
+
+        expect(code, equals(ExitCode.dataError));
+        final envelope = jsonDecode(err.output) as Map<String, dynamic>;
+        final error = envelope['error'] as Map<String, dynamic>;
+        expect(error['id'], equals('disk-full'));
+        expect(error['exitCode'], equals(ExitCode.dataError));
+        expect(error['message'], contains('no space left'));
+      },
+    );
 
     test('still lets the command report what it managed', () async {
       final cli = _cliWith(
