@@ -27,7 +27,24 @@ abstract class CliFileSystem {
   /// running process with `ETXTBSY` and, on a platform where the truncate is
   /// allowed to start, destroys the installation the moment the write after
   /// it fails.
-  Future<void> writeExecutable(String path, List<int> bytes);
+  ///
+  /// [revalidate] is called once the new content has finished staging (the
+  /// temporary file written and flushed, and on POSIX chmodded and its
+  /// execute bit verified) but immediately before the destructive step that
+  /// commits it into place (POSIX: the atomic rename; Windows: moving the
+  /// current target aside). A caller uses it to re-check that [path] is
+  /// still the target it planned to replace: staging is the slow,
+  /// asynchronous part of this call, and re-checking before it rather than
+  /// immediately before the commit leaves a window, open for exactly as
+  /// long as staging takes, in which the target can change without being
+  /// caught. If [revalidate] throws, nothing is committed: the temporary
+  /// file is removed and the throw propagates, leaving [path] exactly as it
+  /// was.
+  Future<void> writeExecutable(
+    String path,
+    List<int> bytes, {
+    required Future<void> Function() revalidate,
+  });
 
   /// Remove the file at [path].
   ///
@@ -284,7 +301,11 @@ class IoCliFileSystem implements CliFileSystem {
       io.FileSystemEntityType.file;
 
   @override
-  Future<void> writeExecutable(String path, List<int> bytes) async {
+  Future<void> writeExecutable(
+    String path,
+    List<int> bytes, {
+    required Future<void> Function() revalidate,
+  }) async {
     final tempPath =
         '$path.tmp-${io.pid}-${DateTime.now().microsecondsSinceEpoch}';
     final temp = io.File(tempPath);
@@ -306,6 +327,12 @@ class IoCliFileSystem implements CliFileSystem {
             tempPath,
           );
         }
+        // Staging (the write above, plus chmod and its verification) is
+        // the slow, asynchronous part of this call: re-checking the target
+        // immediately before the commit below, rather than before staging
+        // started, is what keeps that window from being one in which the
+        // target can change unnoticed.
+        await revalidate();
         // rename(2) is atomic and, on POSIX, replaces the destination even
         // while another process (this one, mid self-upgrade) has it open
         // or mapped for execution: existing handles keep the old inode
@@ -320,7 +347,12 @@ class IoCliFileSystem implements CliFileSystem {
       // free to move since Vista (FILE_SHARE_DELETE), so the exe currently
       // executing can be renamed aside; it cannot be overwritten in place
       // while mapped, which is why the new file only takes [path]'s name
-      // after the old one has been moved out of the way.
+      // after the old one has been moved out of the way. Revalidated here,
+      // immediately before this first destructive step, for the same
+      // reason as the POSIX branch above: staging (the write above) is
+      // already done by this point, so this is as close to the commit as
+      // the check can run.
+      await revalidate();
       final destination = io.File(path);
       String? backupPath;
       if (destination.existsSync()) {

@@ -161,8 +161,13 @@ class FakeFileSystem implements CliFileSystem {
   bool isRegularFile(String path) => !nonRegularFiles.contains(path);
 
   @override
-  Future<void> writeExecutable(String path, List<int> bytes) async {
+  Future<void> writeExecutable(
+    String path,
+    List<int> bytes, {
+    required Future<void> Function() revalidate,
+  }) async {
     if (writeError != null) throw writeError!;
+    await revalidate();
     written[path] = bytes;
   }
 

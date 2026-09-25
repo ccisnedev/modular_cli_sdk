@@ -725,86 +725,100 @@ class InstallExecutableStep implements Step {
     final bytes = context.outcomeOf(download).values['bytes'] as List<int>;
 
     // Re-resolve the original PATH entry and require it still resolves to
-    // [path], the exact target this plan showed. Nothing is written on any
-    // mismatch: the entry disappearing from PATH, resolving somewhere else
-    // now, or the target no longer being a plain file are all reported as
-    // install-target-changed rather than risking a write through whatever
-    // is there now.
-    final String? reResolvedInstallPath;
-    try {
-      reResolvedInstallPath = fileSystem.resolveOnPath(config.executable);
-    } on Object catch (e) {
-      throw CliInstallStepFailure(
-        'executable-check-failed',
-        'Could not check whether ${config.executable} is on PATH: $e',
-      );
-    }
-    if (reResolvedInstallPath == null) {
-      throw CliInstallStepFailure(
-        'install-target-changed',
-        '${config.executable} is no longer on PATH; it resolved to $path '
-            'when this plan was built.',
-      );
+    // [path], the exact target this plan showed. Nothing is committed on
+    // any mismatch: the entry disappearing from PATH, resolving somewhere
+    // else now, or the target no longer being a plain file are all
+    // reported as install-target-changed rather than risking a write
+    // through whatever is there now.
+    //
+    // Run by [CliFileSystem.writeExecutable] itself, immediately before its
+    // destructive commit rather than before it starts staging the new
+    // content: staging is the slow, asynchronous part of that call, and
+    // checking before it instead of immediately before the commit would
+    // leave that whole window open for the target to change unnoticed.
+    Future<void> revalidate() async {
+      final String? reResolvedInstallPath;
+      try {
+        reResolvedInstallPath = fileSystem.resolveOnPath(config.executable);
+      } on Object catch (e) {
+        throw CliInstallStepFailure(
+          'executable-check-failed',
+          'Could not check whether ${config.executable} is on PATH: $e',
+        );
+      }
+      if (reResolvedInstallPath == null) {
+        throw CliInstallStepFailure(
+          'install-target-changed',
+          '${config.executable} is no longer on PATH; it resolved to $path '
+              'when this plan was built.',
+        );
+      }
+
+      final String reResolvedTarget;
+      try {
+        reResolvedTarget = fileSystem.canonicalize(reResolvedInstallPath);
+      } on Object catch (e) {
+        throw CliInstallStepFailure(
+          'install-target-changed',
+          'Could not resolve $reResolvedInstallPath to an install target '
+              'any more: $e. It resolved to $path when this plan was '
+              'built.',
+        );
+      }
+      if (reResolvedTarget != path) {
+        throw CliInstallStepFailure(
+          'install-target-changed',
+          '${config.executable} now resolves to $reResolvedTarget, not '
+              '$path as it did when this plan was built.',
+        );
+      }
+
+      if (!fileSystem.isRegularFile(path)) {
+        throw CliInstallStepFailure(
+          'install-target-changed',
+          '$path is no longer a regular file; refusing to write over it.',
+        );
+      }
+
+      // Checked again here, not only when the plan was built: the alias
+      // could have been turned into a hard link to the executable in the
+      // same window a symlinked PATH entry could have been repointed in.
+      String? aliasPath;
+      try {
+        aliasPath = fileSystem.resolveOnPath(config.alias);
+      } on Object catch (e) {
+        throw CliInstallStepFailure(
+          'executable-check-failed',
+          'Could not check whether ${config.alias} is on PATH: $e',
+        );
+      }
+      final String? hardLinkIssue;
+      try {
+        hardLinkIssue = hardLinkedAliasIssue(
+          fileSystem,
+          config,
+          aliasPath,
+          reResolvedInstallPath,
+        );
+      } on AliasIdentityCheckFailure catch (e) {
+        throw CliInstallStepFailure(
+          'executable-check-failed',
+          'Could not check whether ${config.alias} is a hard link to '
+              '${config.executable}: $e',
+        );
+      }
+      if (hardLinkIssue != null) {
+        throw CliInstallStepFailure(
+          'alias-hard-link-unsupported',
+          hardLinkIssue,
+        );
+      }
     }
 
-    final String reResolvedTarget;
     try {
-      reResolvedTarget = fileSystem.canonicalize(reResolvedInstallPath);
-    } on Object catch (e) {
-      throw CliInstallStepFailure(
-        'install-target-changed',
-        'Could not resolve $reResolvedInstallPath to an install target any '
-            'more: $e. It resolved to $path when this plan was built.',
-      );
-    }
-    if (reResolvedTarget != path) {
-      throw CliInstallStepFailure(
-        'install-target-changed',
-        '${config.executable} now resolves to $reResolvedTarget, not $path '
-            'as it did when this plan was built.',
-      );
-    }
-
-    if (!fileSystem.isRegularFile(path)) {
-      throw CliInstallStepFailure(
-        'install-target-changed',
-        '$path is no longer a regular file; refusing to write over it.',
-      );
-    }
-
-    // Checked again here, not only when the plan was built: the alias could
-    // have been turned into a hard link to the executable in the same
-    // window a symlinked PATH entry could have been repointed in.
-    String? aliasPath;
-    try {
-      aliasPath = fileSystem.resolveOnPath(config.alias);
-    } on Object catch (e) {
-      throw CliInstallStepFailure(
-        'executable-check-failed',
-        'Could not check whether ${config.alias} is on PATH: $e',
-      );
-    }
-    final String? hardLinkIssue;
-    try {
-      hardLinkIssue = hardLinkedAliasIssue(
-        fileSystem,
-        config,
-        aliasPath,
-        reResolvedInstallPath,
-      );
-    } on AliasIdentityCheckFailure catch (e) {
-      throw CliInstallStepFailure(
-        'executable-check-failed',
-        'Could not check whether ${config.alias} is a hard link to '
-            '${config.executable}: $e',
-      );
-    }
-    if (hardLinkIssue != null) {
-      throw CliInstallStepFailure('alias-hard-link-unsupported', hardLinkIssue);
-    }
-
-    try {
-      await fileSystem.writeExecutable(path, bytes);
+      await fileSystem.writeExecutable(path, bytes, revalidate: revalidate);
+    } on CliInstallStepFailure {
+      rethrow;
     } on CliExecutableCheckFailure catch (e) {
       throw CliInstallStepFailure(
         'executable-check-failed',
