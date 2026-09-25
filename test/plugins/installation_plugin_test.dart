@@ -453,6 +453,190 @@ void main() {
           ? 'symlink creation needs a privilege this environment may lack'
           : false,
     );
+
+    test(
+      'apply refuses to write when the install target disappears from PATH '
+      'between this run\'s own plan and its own replace step',
+      () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final downloader = FakeDownloader(
+          bytes: const [9, 9, 9],
+          onDownload: () => fileSystem.setOnPath('cx', null),
+        );
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+            downloader: downloader,
+          ),
+        );
+
+        final out = MemorySink();
+        final code = await cli.run([
+          'upgrade',
+          '--apply',
+          '--autoapprove',
+        ], stdout: out);
+
+        expect(code, ExitCode.genericError);
+        expect(out.output, contains('install-target-changed'));
+        expect(fileSystem.written, isEmpty);
+      },
+    );
+
+    test(
+      'apply refuses to write when the install target resolves to a '
+      'different file between this run\'s own plan and its own replace '
+      'step',
+      () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final downloader = FakeDownloader(
+          bytes: const [9, 9, 9],
+          onDownload: () => fileSystem.setCanonicalTarget(
+            '/usr/local/bin/cx',
+            '/usr/local/bin/cx-swapped',
+          ),
+        );
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+            downloader: downloader,
+          ),
+        );
+
+        final out = MemorySink();
+        final code = await cli.run([
+          'upgrade',
+          '--apply',
+          '--autoapprove',
+        ], stdout: out);
+
+        expect(code, ExitCode.genericError);
+        expect(out.output, contains('install-target-changed'));
+        expect(fileSystem.written, isEmpty);
+      },
+    );
+
+    test(
+      'apply refuses to write when the install target is no longer a '
+      'regular file by the time of its own replace step',
+      () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final downloader = FakeDownloader(
+          bytes: const [9, 9, 9],
+          onDownload: () => fileSystem.nonRegularFiles.add(
+            '/usr/local/bin/cx',
+          ),
+        );
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+            downloader: downloader,
+          ),
+        );
+
+        final out = MemorySink();
+        final code = await cli.run([
+          'upgrade',
+          '--apply',
+          '--autoapprove',
+        ], stdout: out);
+
+        expect(code, ExitCode.genericError);
+        expect(out.output, contains('install-target-changed'));
+        expect(fileSystem.written, isEmpty);
+      },
+    );
+
+    test(
+      '--plan fails with a typed error when the install target cannot be '
+      'resolved',
+      () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+          ..canonicalizeError = Exception('permission denied');
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+          ),
+        );
+
+        final err = MemorySink();
+        final code = await cli.run(['upgrade', '--plan'], stderr: err);
+
+        expect(code, ExitCode.genericError);
+        expect(err.output, contains('file-access-denied'));
+      },
+    );
+
+    test(
+      'upgrade refuses to plan when the alias is a hard link to the '
+      'executable rather than a symlink',
+      () async {
+        final fileSystem =
+            FakeFileSystem(
+              onPath: {
+                'cx': '/usr/local/bin/cx',
+                'calculatrix': '/usr/local/bin/calculatrix',
+              },
+            )..markHardLinked(
+              '/usr/local/bin/calculatrix',
+              '/usr/local/bin/cx',
+            );
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+          ),
+        );
+
+        final err = MemorySink();
+        final code = await cli.run(['upgrade', '--plan'], stderr: err);
+
+        expect(code, ExitCode.genericError);
+        expect(err.output, contains('alias-hard-link-unsupported'));
+      },
+    );
+
+    test(
+      'apply refuses to write when the alias becomes a hard link to the '
+      'executable between this run\'s own plan and its own replace step',
+      () async {
+        final fileSystem = FakeFileSystem(
+          onPath: {
+            'cx': '/usr/local/bin/cx',
+            'calculatrix': '/usr/local/bin/calculatrix',
+          },
+        );
+        final downloader = FakeDownloader(
+          bytes: const [9, 9, 9],
+          onDownload: () => fileSystem.markHardLinked(
+            '/usr/local/bin/calculatrix',
+            '/usr/local/bin/cx',
+          ),
+        );
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+            downloader: downloader,
+          ),
+        );
+
+        final out = MemorySink();
+        final code = await cli.run([
+          'upgrade',
+          '--apply',
+          '--autoapprove',
+        ], stdout: out);
+
+        expect(code, ExitCode.genericError);
+        expect(out.output, contains('alias-hard-link-unsupported'));
+        expect(fileSystem.written, isEmpty);
+      },
+    );
   });
 
   group('uninstall', () {
@@ -864,6 +1048,30 @@ void main() {
       final code = await cli.run(['doctor'], stdout: MemorySink());
       expect(code, ExitCode.configError);
     });
+
+    test(
+      'an alias that is a hard link to the binary, not a symlink, is a '
+      'doctor error',
+      () async {
+        final fileSystem =
+            FakeFileSystem(
+              onPath: {
+                'cx': '/usr/local/bin/cx',
+                'calculatrix': '/usr/local/bin/calculatrix',
+              },
+            )..markHardLinked(
+              '/usr/local/bin/calculatrix',
+              '/usr/local/bin/cx',
+            );
+        final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
+
+        final out = MemorySink();
+        final code = await cli.run(['doctor'], stdout: out);
+
+        expect(code, ExitCode.configError);
+        expect(out.output, contains('hard link'));
+      },
+    );
 
     test('a newer release is a warning, not an error', () async {
       final fileSystem = FakeFileSystem(
