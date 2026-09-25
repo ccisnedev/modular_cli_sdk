@@ -72,7 +72,12 @@ export 'src/plugins/doctor_plugin.dart'
 export 'src/plugins/installation/cli_downloader.dart'
     show CliDownloadFailure, CliDownloader, HttpCliDownloader;
 export 'src/plugins/installation/cli_file_system.dart'
-    show CliFileSystem, IoCliFileSystem;
+    show
+        CliExecutableCheckFailure,
+        CliExecutableChecker,
+        CliFileSystem,
+        IoCliExecutableChecker,
+        IoCliFileSystem;
 export 'src/plugins/installation/cli_platform.dart'
     show CliPlatform, IoCliPlatform;
 export 'src/plugins/installation/cli_process_launcher.dart'

@@ -19,16 +19,25 @@ class FakeReleaseSource implements CliReleaseSource {
 }
 
 class FakeDownloader implements CliDownloader {
-  FakeDownloader({this.bytes = const [1, 2, 3], this.error});
+  FakeDownloader({this.bytes = const [1, 2, 3], this.error, this.onDownload});
 
   final List<int> bytes;
   final Object? error;
+
+  /// Called at the point a real download would have happened, before
+  /// [download] returns. A test uses this to mutate a shared [FakeFileSystem]
+  /// (a target's resolved path, its canonical target, whether it is still a
+  /// regular file) at exactly the moment between an `--apply` run's own plan
+  /// and its own install step, since a single `steps()` invocation gives a
+  /// test no other seam to act at that specific point.
+  final void Function()? onDownload;
 
   final List<String> requested = [];
 
   @override
   Future<List<int>> download(String url) async {
     requested.add(url);
+    onDownload?.call();
     if (error != null) throw error!;
     return bytes;
   }
@@ -57,6 +66,17 @@ class FakeFileSystem implements CliFileSystem {
   /// Every rename this fake performed, as `(from, to)` pairs, in order.
   final List<(String, String)> renamed = [];
 
+  /// Paths this fake reports as not a regular file (a directory, a symlink,
+  /// or nothing at all) from [isRegularFile]. Every other path is reported
+  /// as a regular file, matching a freshly written install target.
+  final Set<String> nonRegularFiles = {};
+
+  /// Pairs this fake reports as [sameFile] true despite canonicalizing to
+  /// different strings, the way a hard link (as opposed to a symlink) does:
+  /// [sameFile] resolves it, but [canonicalize] alone cannot, since a hard
+  /// link has no symlink target for it to follow.
+  final Set<(String, String)> _hardLinkedPairs = {};
+
   Object? writeError;
   Object? deleteError;
   Object? renameError;
@@ -69,6 +89,39 @@ class FakeFileSystem implements CliFileSystem {
     return _onPath[name];
   }
 
+  /// Sets what [name] resolves to on the fake `PATH`, or removes it when
+  /// [path] is null. Used to simulate a target that disappears from, or
+  /// changes on, `PATH` between an `--apply` run's own plan and its own
+  /// replace step.
+  void setOnPath(String name, String? path) {
+    if (path == null) {
+      _onPath.remove(name);
+    } else {
+      _onPath[name] = path;
+    }
+  }
+
+  /// Sets what [path] canonicalizes to, or removes the override (so it
+  /// canonicalizes to itself) when [target] is null. Used to simulate a
+  /// `PATH` entry that starts pointing somewhere else between an `--apply`
+  /// run's own plan and its own replace step.
+  void setCanonicalTarget(String path, String? target) {
+    if (target == null) {
+      _canonicalTargets.remove(path);
+    } else {
+      _canonicalTargets[path] = target;
+    }
+  }
+
+  /// Marks [a] and [b] as a hard-linked pair: [sameFile] reports them as the
+  /// same file, but [canonicalize] does not, since a hard link has no
+  /// symlink target for [canonicalize] to resolve. Symmetric: it does not
+  /// matter which of [a], [b] is passed first.
+  void markHardLinked(String a, String b) {
+    _hardLinkedPairs.add((a, b));
+    _hardLinkedPairs.add((b, a));
+  }
+
   @override
   String canonicalize(String path) {
     if (canonicalizeError != null) throw canonicalizeError!;
@@ -77,7 +130,12 @@ class FakeFileSystem implements CliFileSystem {
 
   @override
   bool sameFile(String a, String b) =>
-      a == b || canonicalize(a) == canonicalize(b);
+      a == b ||
+      canonicalize(a) == canonicalize(b) ||
+      _hardLinkedPairs.contains((a, b));
+
+  @override
+  bool isRegularFile(String path) => !nonRegularFiles.contains(path);
 
   @override
   Future<void> writeExecutable(String path, List<int> bytes) async {

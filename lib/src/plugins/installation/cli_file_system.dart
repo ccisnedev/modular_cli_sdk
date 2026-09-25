@@ -58,7 +58,7 @@ abstract class CliFileSystem {
   /// before writing to it relies on that failure surfacing, since silently
   /// falling back to the un-resolved path is how an upgrade ends up
   /// replacing a symlink itself instead of what it points at.
-  String canonicalize(String path) => path;
+  String canonicalize(String path);
 
   /// Whether [a] and [b] name the same file on disk, however they got there:
   /// the same raw path, a symlink to the other, or a hard link sharing the
@@ -67,6 +67,85 @@ abstract class CliFileSystem {
   /// hard-linked paths as different files, since neither is a symlink
   /// pointing at the other.
   bool sameFile(String a, String b);
+
+  /// Whether [path] is a regular file, as opposed to a directory, a symlink
+  /// (even one that ultimately points at a regular file), a device, or
+  /// nothing at all. Symlinks are deliberately not followed: a caller
+  /// revalidating an install target immediately before replacing it needs to
+  /// know it is about to write through a plain file, not through whatever a
+  /// symlink someone swapped in at the last moment happens to point at.
+  bool isRegularFile(String path);
+}
+
+/// Thrown when whether a path is executable could not be determined: the
+/// fixed platform test executable ([IoCliExecutableChecker]) exited with
+/// something other than 0 (executable) or 1 (not executable), could not be
+/// started at all, or this platform has no fixed test executable path
+/// configured for it. Never folded into a plain true/false: a caller that
+/// cannot tell must be told that, not handed a guess.
+class CliExecutableCheckFailure implements Exception {
+  const CliExecutableCheckFailure(this.path, this.message);
+
+  /// The path the check was for. Empty when the failure is about the
+  /// platform itself rather than about a specific path (no fixed test
+  /// executable is known for it).
+  final String path;
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// Determines whether a path is executable by running the platform's own
+/// fixed test executable against it, in place of reading and interpreting
+/// mode bits and ownership. Injectable so a test can exercise
+/// [IoCliFileSystem.resolveOnPath]'s handling of exit code 0, 1, anything
+/// else, and a startup failure, without depending on a real `/bin/test` or
+/// `/usr/bin/test`.
+abstract class CliExecutableChecker {
+  /// The exit code of running the platform's fixed test executable with
+  /// `-x` against [path]: conventionally 0 for executable, 1 for not.
+  /// Interpreting anything else is the caller's job, not this method's,
+  /// except when the checker cannot start at all, which it reports by
+  /// throwing rather than returning a made-up code.
+  int exitCodeFor(String path);
+}
+
+/// Shells out to a fixed, non-searched path per platform: `/bin/test` on
+/// macOS, `/usr/bin/test` on Linux. Neither `PATH` search nor any
+/// alternative path is tried: a platform this does not have a fixed path
+/// for is a configuration gap to report through
+/// [CliExecutableCheckFailure], not a guess to make by falling back to
+/// mode bits or trying other locations.
+class IoCliExecutableChecker implements CliExecutableChecker {
+  const IoCliExecutableChecker();
+
+  @override
+  int exitCodeFor(String path) {
+    final testExecutable = _testExecutablePath(path);
+    final io.ProcessResult result;
+    try {
+      result = io.Process.runSync(testExecutable, ['-x', path]);
+    } on Object catch (e) {
+      throw CliExecutableCheckFailure(
+        path,
+        'Could not start $testExecutable to check whether $path is '
+            'executable: $e',
+      );
+    }
+    return result.exitCode;
+  }
+
+  String _testExecutablePath(String path) {
+    if (io.Platform.isMacOS) return '/bin/test';
+    if (io.Platform.isLinux) return '/usr/bin/test';
+    throw CliExecutableCheckFailure(
+      path,
+      'No fixed executable-check path is known for platform '
+          '"${io.Platform.operatingSystem}".',
+    );
+  }
 }
 
 /// Resolves against the real `PATH` and writes to the real filesystem.
@@ -83,10 +162,18 @@ class IoCliFileSystem implements CliFileSystem {
   /// mutate the environment of its own running process, so this is what a
   /// test uses to exercise the real walking-and-executable-checking logic
   /// against a temporary directory without spawning a subprocess.
-  const IoCliFileSystem({List<String>? pathDirectories})
-    : _pathDirectories = pathDirectories;
+  ///
+  /// [executableChecker] overrides how a POSIX candidate's executability is
+  /// determined, in place of the real `/bin/test` or `/usr/bin/test`. A test
+  /// uses this to inject exit codes without spawning a real process.
+  const IoCliFileSystem({
+    List<String>? pathDirectories,
+    CliExecutableChecker? executableChecker,
+  }) : _pathDirectories = pathDirectories,
+       _executableChecker = executableChecker ?? const IoCliExecutableChecker();
 
   final List<String>? _pathDirectories;
+  final CliExecutableChecker _executableChecker;
 
   List<String> get _directories {
     final override = _pathDirectories;
@@ -105,9 +192,8 @@ class IoCliFileSystem implements CliFileSystem {
       if (dir.isEmpty) continue;
       for (final candidateName in candidateNames) {
         final candidate = '$dir${io.Platform.pathSeparator}$candidateName';
-        final file = io.File(candidate);
-        if (!file.existsSync()) continue;
-        if (isWindows || _canExecute(candidate, file.statSync().mode)) {
+        if (!io.File(candidate).existsSync()) continue;
+        if (isWindows || _canExecute(candidate)) {
           return candidate;
         }
       }
@@ -135,88 +221,43 @@ class IoCliFileSystem implements CliFileSystem {
     return [for (final ext in extensions) '$name$ext'];
   }
 
-  /// Owner, group, or other execute bit: `0o111`. Used as a permissive
-  /// fallback by [_canExecute] when ownership cannot be determined, and by
-  /// [writeExecutable] to verify a `chmod +x` it just ran itself (where the
-  /// calling user is, by construction, the file's own owner, so "any
-  /// execute bit" and "the owner's execute bit" agree).
-  bool _hasExecuteBit(int mode) => (mode & 0x49) != 0;
-
-  /// Whether the calling process may execute the file at [path], given its
-  /// already-read [mode]. Checks the one bit that actually governs this
-  /// process, the way the kernel does: the owner bit when this process's uid
-  /// owns [path], the group bit when one of this process's gids matches
-  /// [path]'s gid, otherwise the other bit. "Any execute bit is set" (the
-  /// previous check) is wrong here: mode `0641` (owner `rw-`, group `r--`,
-  /// other `--x`) has an execute bit set, but the file's own owner cannot
-  /// run it.
+  /// Whether the calling process may execute the file at [path], determined
+  /// by asking the platform itself (through [_executableChecker]) rather
+  /// than reading and interpreting the file's mode bits and ownership: the
+  /// kernel already knows the rule (effective uid/gid, ACLs, anything else a
+  /// given POSIX system layers on top), and re-deriving it from `stat` and
+  /// `id` output is exactly the kind of guess that goes wrong on a platform
+  /// this was not written against.
   ///
-  /// Falls back to [_hasExecuteBit] when ownership cannot be determined at
-  /// all (no working `stat` on this platform), rather than reporting every
-  /// file as non-executable.
-  bool _canExecute(String path, int mode) {
-    final owner = _ownerOf(path);
-    if (owner == null) return _hasExecuteBit(mode);
-    final (uid, gid) = owner;
-
-    final currentUid = _currentUid();
-    if (currentUid != null && currentUid == uid) {
-      return (mode & 0x40) != 0; // owner: 0o100
-    }
-    final currentGids = _currentGids();
-    if (currentGids != null && currentGids.contains(gid)) {
-      return (mode & 0x08) != 0; // group: 0o010
-    }
-    return (mode & 0x01) != 0; // other: 0o001
-  }
-
-  int? _currentUid() {
+  /// Exit code 0 means executable, 1 means not. Anything else, including
+  /// the checker failing to start at all, is surfaced as
+  /// [CliExecutableCheckFailure] rather than folded into a boolean: a
+  /// caller that cannot tell whether [path] is executable must be told
+  /// that, not handed a guess.
+  bool _canExecute(String path) {
+    final int exitCode;
     try {
-      final result = io.Process.runSync('id', const ['-u']);
-      if (result.exitCode != 0) return null;
-      return int.tryParse((result.stdout as String).trim());
-    } on Object {
-      return null;
+      exitCode = _executableChecker.exitCodeFor(path);
+    } on CliExecutableCheckFailure {
+      rethrow;
+    } on Object catch (e) {
+      throw CliExecutableCheckFailure(
+        path,
+        'Could not check whether $path is executable: $e',
+      );
     }
-  }
-
-  Set<int>? _currentGids() {
-    try {
-      final result = io.Process.runSync('id', const ['-G']);
-      if (result.exitCode != 0) return null;
-      return (result.stdout as String)
-          .trim()
-          .split(RegExp(r'\s+'))
-          .map(int.tryParse)
-          .whereType<int>()
-          .toSet();
-    } on Object {
-      return null;
+    switch (exitCode) {
+      case 0:
+        return true;
+      case 1:
+        return false;
+      default:
+        throw CliExecutableCheckFailure(
+          path,
+          'Checking whether $path is executable exited with unexpected '
+              'code $exitCode.',
+        );
     }
-  }
-
-  /// The owning `(uid, gid)` of the file at [path], or null when it cannot
-  /// be determined. Tries GNU coreutils' `stat -c`, then BSD/macOS's
-  /// `stat -f`, since [IoCliFileSystem] itself does not know which `stat`
-  /// this machine has.
-  (int, int)? _ownerOf(String path) {
-    for (final args in [
-      ['-c', '%u:%g', path],
-      ['-f', '%u:%g', path],
-    ]) {
-      try {
-        final result = io.Process.runSync('stat', args);
-        if (result.exitCode != 0) continue;
-        final parts = (result.stdout as String).trim().split(':');
-        if (parts.length != 2) continue;
-        final uid = int.tryParse(parts[0]);
-        final gid = int.tryParse(parts[1]);
-        if (uid != null && gid != null) return (uid, gid);
-      } on Object {
-        continue;
-      }
-    }
-    return null;
   }
 
   @override
@@ -238,6 +279,11 @@ class IoCliFileSystem implements CliFileSystem {
   }
 
   @override
+  bool isRegularFile(String path) =>
+      io.FileSystemEntity.typeSync(path, followLinks: false) ==
+      io.FileSystemEntityType.file;
+
+  @override
   Future<void> writeExecutable(String path, List<int> bytes) async {
     final tempPath =
         '$path.tmp-${io.pid}-${DateTime.now().microsecondsSinceEpoch}';
@@ -247,7 +293,13 @@ class IoCliFileSystem implements CliFileSystem {
     try {
       if (!io.Platform.isWindows) {
         await io.Process.run('chmod', ['+x', tempPath]);
-        if (!_hasExecuteBit(temp.statSync().mode)) {
+        bool verified;
+        try {
+          verified = _executableChecker.exitCodeFor(tempPath) == 0;
+        } on Object {
+          verified = false;
+        }
+        if (!verified) {
           throw io.FileSystemException(
             'chmod +x did not set an execute bit on the downloaded file',
             tempPath,

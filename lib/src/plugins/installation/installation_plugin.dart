@@ -100,7 +100,16 @@ class InstallationPlugin implements CliPlugin {
   }
 
   Future<CliCheckResult> _checkBinary() async {
-    final path = fileSystem.resolveOnPath(config.executable);
+    final String? path;
+    try {
+      path = fileSystem.resolveOnPath(config.executable);
+    } on Object catch (e) {
+      return CliCheckResult(
+        status: CliCheckStatus.error,
+        message:
+            'could not check whether ${config.executable} is on PATH: $e',
+      );
+    }
     return path != null
         ? CliCheckResult(
             status: CliCheckStatus.ok,
@@ -113,8 +122,17 @@ class InstallationPlugin implements CliPlugin {
   }
 
   Future<CliCheckResult> _checkAlias() async {
-    final aliasPath = fileSystem.resolveOnPath(config.alias);
-    final binaryPath = fileSystem.resolveOnPath(config.executable);
+    final String? aliasPath;
+    final String? binaryPath;
+    try {
+      aliasPath = fileSystem.resolveOnPath(config.alias);
+      binaryPath = fileSystem.resolveOnPath(config.executable);
+    } on Object catch (e) {
+      return CliCheckResult(
+        status: CliCheckStatus.error,
+        message: 'could not check whether ${config.alias} is on PATH: $e',
+      );
+    }
     if (aliasPath == null) {
       return CliCheckResult(
         status: CliCheckStatus.error,
@@ -136,6 +154,15 @@ class InstallationPlugin implements CliPlugin {
         message:
             '${config.alias} resolves to $aliasPath, not ${config.executable}',
       );
+    }
+    final hardLinkIssue = hardLinkedAliasIssue(
+      fileSystem,
+      config,
+      aliasPath,
+      binaryPath,
+    );
+    if (hardLinkIssue != null) {
+      return CliCheckResult(status: CliCheckStatus.error, message: hardLinkIssue);
     }
     return CliCheckResult(
       status: CliCheckStatus.ok,
@@ -284,6 +311,61 @@ CliReleaseAsset? assetForPlatform(
   return null;
 }
 
+/// Whether [config]'s alias is currently a hard link to its executable
+/// rather than a symlink, or the exact same raw path, or not resolving to
+/// the same file at all.
+///
+/// [CliFileSystem.sameFile] reports a hard link as the same file as its
+/// target, but [CliFileSystem.canonicalize], which only ever resolves
+/// symlinks, still reports the two raw paths as different: neither is a
+/// symlink pointing at the other for it to follow. That combination -
+/// [CliFileSystem.sameFile] true, the two raw paths unequal, and
+/// [CliFileSystem.canonicalize] disagreeing on them - is exactly what a hard
+/// link looks like and a symlinked alias does not.
+///
+/// A hard-linked alias is the one alias shape this plugin does not support:
+/// it can exist on disk (a package manager, a previous manual install, may
+/// have created one) but this plugin only ever creates, and only ever
+/// updates, a symlinked alias, so a hard-linked one is reported rather than
+/// silently accepted as-is or silently rewritten into something else.
+///
+/// Returns null when [aliasPath] or [executablePath] is null, when they are
+/// the same raw path, when they do not resolve to the same file at all, or
+/// when they resolve to the same file by way of a symlink rather than a
+/// hard link: none of those is the hard-link problem this checks for, and
+/// each is either fine or a different, already-reported problem.
+String? hardLinkedAliasIssue(
+  CliFileSystem fileSystem,
+  CliInstallationConfig config,
+  String? aliasPath,
+  String? executablePath,
+) {
+  if (aliasPath == null || executablePath == null) return null;
+  if (aliasPath == executablePath) return null;
+
+  final bool isSameFile;
+  try {
+    isSameFile = fileSystem.sameFile(aliasPath, executablePath);
+  } on Object {
+    return null;
+  }
+  if (!isSameFile) return null;
+
+  final bool sameCanonicalTarget;
+  try {
+    sameCanonicalTarget =
+        fileSystem.canonicalize(aliasPath) ==
+        fileSystem.canonicalize(executablePath);
+  } on Object {
+    return null;
+  }
+  if (sameCanonicalTarget) return null;
+
+  return '${config.alias} is a hard link to ${config.executable}, not a '
+      'symlink. Hard-linked aliases are not supported: recreate '
+      '${config.alias} as a symlink to ${config.executable}.';
+}
+
 // ── upgrade ──────────────────────────────────────────────────────────────
 
 class UpgradeInput extends Input {
@@ -426,7 +508,16 @@ class UpgradeCommand
       );
     }
 
-    final installPath = fileSystem.resolveOnPath(config.executable);
+    final String? installPath;
+    try {
+      installPath = fileSystem.resolveOnPath(config.executable);
+    } on Object catch (e) {
+      throw CommandException(
+        code: 'executable-check-failed',
+        message: 'Could not check whether ${config.executable} is on PATH: $e',
+        exitCode: ExitCode.genericError,
+      );
+    }
     if (installPath == null) {
       throw CommandException(
         code: 'file-access-denied',
@@ -455,6 +546,35 @@ class UpgradeCommand
       );
     }
 
+    // Checked at plan time, and checked again inside InstallExecutableStep
+    // immediately before the actual write: an alias that is a hard link to
+    // the executable, rather than a symlink, is not a shape this plugin
+    // supports creating or updating, and is reported rather than silently
+    // accepted or silently rewritten.
+    String? aliasPath;
+    try {
+      aliasPath = fileSystem.resolveOnPath(config.alias);
+    } on Object catch (e) {
+      throw CommandException(
+        code: 'executable-check-failed',
+        message: 'Could not check whether ${config.alias} is on PATH: $e',
+        exitCode: ExitCode.genericError,
+      );
+    }
+    final hardLinkIssue = hardLinkedAliasIssue(
+      fileSystem,
+      config,
+      aliasPath,
+      installPath,
+    );
+    if (hardLinkIssue != null) {
+      throw CommandException(
+        code: 'alias-hard-link-unsupported',
+        message: hardLinkIssue,
+        exitCode: ExitCode.genericError,
+      );
+    }
+
     final download = DownloadAssetStep(
       downloader: downloader,
       url: asset.downloadUrl,
@@ -462,6 +582,7 @@ class UpgradeCommand
     );
     final install = InstallExecutableStep(
       fileSystem: fileSystem,
+      config: config,
       path: resolvedPath,
       download: download,
     );
@@ -532,12 +653,22 @@ class DownloadAssetStep implements Step {
 class InstallExecutableStep implements Step {
   InstallExecutableStep({
     required this.fileSystem,
+    required this.config,
     required this.path,
     required this.download,
   });
 
   final CliFileSystem fileSystem;
+  final CliInstallationConfig config;
+
+  /// The install target [UpgradeCommand.steps] resolved and planned to
+  /// write to. Revalidated against a fresh resolution immediately before
+  /// the write below, rather than trusted as still current: `--apply`
+  /// computes its own plan, asks for approval, then executes within the
+  /// same run, and this is the only point still ahead of the write where
+  /// that plan can be checked against what is actually on disk right now.
   final String path;
+
   final Step download;
 
   @override
@@ -546,6 +677,77 @@ class InstallExecutableStep implements Step {
   @override
   Future<Outcome> perform(StepContext context) async {
     final bytes = context.outcomeOf(download).values['bytes'] as List<int>;
+
+    // Re-resolve the original PATH entry and require it still resolves to
+    // [path], the exact target this plan showed. Nothing is written on any
+    // mismatch: the entry disappearing from PATH, resolving somewhere else
+    // now, or the target no longer being a plain file are all reported as
+    // install-target-changed rather than risking a write through whatever
+    // is there now.
+    final String? reResolvedInstallPath;
+    try {
+      reResolvedInstallPath = fileSystem.resolveOnPath(config.executable);
+    } on Object catch (e) {
+      throw CliInstallStepFailure(
+        'executable-check-failed',
+        'Could not check whether ${config.executable} is on PATH: $e',
+      );
+    }
+    if (reResolvedInstallPath == null) {
+      throw CliInstallStepFailure(
+        'install-target-changed',
+        '${config.executable} is no longer on PATH; it resolved to $path '
+            'when this plan was built.',
+      );
+    }
+
+    final String reResolvedTarget;
+    try {
+      reResolvedTarget = fileSystem.canonicalize(reResolvedInstallPath);
+    } on Object catch (e) {
+      throw CliInstallStepFailure(
+        'install-target-changed',
+        'Could not resolve $reResolvedInstallPath to an install target any '
+            'more: $e. It resolved to $path when this plan was built.',
+      );
+    }
+    if (reResolvedTarget != path) {
+      throw CliInstallStepFailure(
+        'install-target-changed',
+        '${config.executable} now resolves to $reResolvedTarget, not $path '
+            'as it did when this plan was built.',
+      );
+    }
+
+    if (!fileSystem.isRegularFile(path)) {
+      throw CliInstallStepFailure(
+        'install-target-changed',
+        '$path is no longer a regular file; refusing to write over it.',
+      );
+    }
+
+    // Checked again here, not only when the plan was built: the alias could
+    // have been turned into a hard link to the executable in the same
+    // window a symlinked PATH entry could have been repointed in.
+    String? aliasPath;
+    try {
+      aliasPath = fileSystem.resolveOnPath(config.alias);
+    } on Object catch (e) {
+      throw CliInstallStepFailure(
+        'executable-check-failed',
+        'Could not check whether ${config.alias} is on PATH: $e',
+      );
+    }
+    final hardLinkIssue = hardLinkedAliasIssue(
+      fileSystem,
+      config,
+      aliasPath,
+      reResolvedInstallPath,
+    );
+    if (hardLinkIssue != null) {
+      throw CliInstallStepFailure('alias-hard-link-unsupported', hardLinkIssue);
+    }
+
     try {
       await fileSystem.writeExecutable(path, bytes);
     } on Object catch (e) {
@@ -632,8 +834,20 @@ class UninstallCommand
   Future<List<Step>> steps() async {
     final steps = <Step>[];
 
-    final executablePath = fileSystem.resolveOnPath(config.executable);
-    final aliasPath = fileSystem.resolveOnPath(config.alias);
+    final String? executablePath;
+    final String? aliasPath;
+    try {
+      executablePath = fileSystem.resolveOnPath(config.executable);
+      aliasPath = fileSystem.resolveOnPath(config.alias);
+    } on Object catch (e) {
+      throw CommandException(
+        code: 'executable-check-failed',
+        message:
+            'Could not check whether ${config.executable} or '
+            '${config.alias} is on PATH: $e',
+        exitCode: ExitCode.genericError,
+      );
+    }
 
     // The alias is only ever removed here when it currently points at this
     // same binary: an alias resolving elsewhere, or not at all, is left
