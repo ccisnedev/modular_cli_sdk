@@ -258,16 +258,31 @@ class ModularCli {
   /// all modules.
   ///
   /// A middleware that throws a [CommandException] is caught inside its own
-  /// error boundary and turned into the same structured error envelope a
-  /// failed command or a rejected invocation produces, honoring the
-  /// resolved request's `--json` mode. Without this boundary the exception
-  /// would escape [run] entirely instead of yielding an exit code.
+  /// error boundary, exactly as before, but that boundary no longer renders
+  /// anything itself: it only records the exception (in [_pendingMiddlewareError])
+  /// and swallows it into a plain returned exit code, so an outer
+  /// middleware wrapping this one can still inspect that code through its
+  /// own `await next(req)`, precisely as it could before this fix (round-5
+  /// review finding 2). Actually rendering happens exactly once, in [run],
+  /// after the whole middleware chain (and whatever it wraps) has finished.
   ///
   /// That boundary covers a throw from [middleware] itself while it builds
   /// its handler (the outer `(next) { ... }` body), not just one from the
   /// handler it returns: `middleware(next)` is called here on every
   /// dispatch, inside the same per-request `try`, precisely so a
   /// construction-time throw is caught the same way a handler-time one is.
+  ///
+  /// Nested middleware boundaries each catch in turn, innermost first: an
+  /// inner middleware's exception is recorded, then converted to a plain
+  /// exit code an outer middleware's own logic can inspect; if that outer
+  /// middleware itself throws (as the outer half of round-5 finding 2's
+  /// regression test does, escalating a nonzero result of its own), its
+  /// own boundary catches that and overwrites [_pendingMiddlewareError] in
+  /// turn. Because catching unwinds from innermost to outermost, whichever
+  /// exception is recorded last is necessarily the one that actually
+  /// terminates the invocation, an outer boundary's own throw if it has
+  /// one, an inner one otherwise, so "last recorded wins" is exactly
+  /// "the outermost thrown wins".
   ModularCli use(CliMiddleware middleware) {
     _root.use((next) {
       return (req) async {
@@ -275,20 +290,43 @@ class ModularCli {
           final wrapped = middleware(next);
           return await wrapped(req);
         } on CommandException catch (e) {
-          return _emitCommandException(
-            e,
-            req.stderr,
+          _pendingMiddlewareError = (
+            error: e,
             jsonMode: req.flagBool('json'),
           );
+          return e.exitCode;
         }
       };
     });
     return this;
   }
 
+  /// The most recent [CommandException] caught while unwinding a nested
+  /// [use] middleware chain during the invocation [run] is currently
+  /// handling, together with the `--json` mode of the request that saw it,
+  /// or `null` when none was caught. Reset to `null` at the start of every
+  /// [run] call, so it never leaks between invocations sharing the same
+  /// [ModularCli] instance; not safe for concurrent [run] calls on the same
+  /// instance, which this SDK does not otherwise support.
+  ///
+  /// [use]'s own doc comment explains why "most recent" is exactly
+  /// "outermost": see it for the full account.
+  ({CommandException error, bool jsonMode})? _pendingMiddlewareError;
+
   /// Dispatch [args] through the router and return an exit code.
   ///
   /// Pass custom [stdout] / [stderr] sinks for testing.
+  ///
+  /// Exactly one error envelope is ever rendered for the [CommandException]
+  /// path: [use]'s own per-middleware boundaries only record the exception
+  /// that terminates the invocation (see [_pendingMiddlewareError] and
+  /// [use]'s own doc comment for why "the last one recorded" is exactly
+  /// "the outermost thrown"); rendering it, once, happens only here, after
+  /// [_root]'s whole run, middleware chain and dispatched handler alike,
+  /// has finished (round-5 review finding 2; before this fix, each nested
+  /// middleware boundary rendered its own catch immediately, so a
+  /// construction-time throw an outer middleware went on to escalate wrote
+  /// two concatenated JSON envelopes to stderr instead of one).
   Future<int> run(
     List<String> args, {
     io.IOSink? stdout,
@@ -306,12 +344,23 @@ class ModularCli {
       return ExitCode.ok;
     }
 
-    return _root.run(
+    _pendingMiddlewareError = null;
+    final exitCode = await _root.run(
       args,
       onReject: (rejection) => _handleRejection(rejection, out, err),
       stdout: out,
       stderr: err,
     );
+
+    final pending = _pendingMiddlewareError;
+    if (pending != null) {
+      return _emitCommandException(
+        pending.error,
+        err,
+        jsonMode: pending.jsonMode,
+      );
+    }
+    return exitCode;
   }
 
   /// Help must be reachable out of the box, unless the developer wrote their
