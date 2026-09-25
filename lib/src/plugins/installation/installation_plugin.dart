@@ -1102,7 +1102,6 @@ class SelfDeleteExecutableStep implements Step {
       await processLauncher.startCleanupWorker({
         'parentPid': pid,
         'paths': [renamedPath],
-        'timeoutMs': cleanupWorkerParentExitTimeoutMs,
       });
     } on Object catch (e) {
       throw CliInstallStepFailure(
