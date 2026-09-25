@@ -1,12 +1,14 @@
+import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:cli_router/cli_router.dart';
 
 import 'approver.dart';
-import 'cli_param.dart';
+import 'cli_contract.dart';
 import 'command.dart';
 import 'command_catalog.dart';
 import 'exit_codes.dart';
+import 'global_options.dart';
 import 'help_command.dart';
 import 'help_renderer.dart';
 import 'input.dart';
@@ -57,7 +59,7 @@ class ModularCli {
   final Approver? _approver;
   final PlanSink? _planSink;
 
-  late final CliRouter _root = CliRouter(onNotFound: _reportUnknownCommand);
+  late final CliRouter _root = CliRouter(globalOptions: globalOptionSpecs);
   final CommandCatalog _catalog = CommandCatalog();
 
   /// Every registered route with its declared contract — the single source help
@@ -68,24 +70,26 @@ class ModularCli {
   ///
   /// [name] becomes the first segment: `name subcommand`.
   ModularCli module(String name, void Function(ModuleBuilder) build) {
-    final moduleRouter = CliRouter();
+    final moduleRouter = CliRouter(globalOptions: globalOptionSpecs);
     build(_builderFor(name, moduleRouter));
     _root.mount(name, moduleRouter);
     return this;
   }
 
   /// Register a root-level [Query] (no module prefix).
+  ///
+  /// [contract] defaults to [CliContract.none] — see [ModuleBuilder.query].
   ModularCli query<I extends Input, O extends Output>(
     String route,
     Query<I, O> Function(CliRequest req) queryFactory, {
     String? description,
-    List<CliParam>? params,
+    CliContract contract = CliContract.none,
   }) {
     _builderFor('', _root).query<I, O>(
       route,
       queryFactory,
       description: description,
-      params: params,
+      contract: contract,
     );
     return this;
   }
@@ -94,17 +98,19 @@ class ModularCli {
   ///
   /// Root routes have dispatch priority over mounted modules (inherent to
   /// `cli_router`'s two-phase dispatch).
+  ///
+  /// [contract] defaults to [CliContract.none] — see [ModuleBuilder.command].
   ModularCli command<I extends Input, O extends Output>(
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
     String? description,
-    List<CliParam>? params,
+    CliContract contract = CliContract.none,
   }) {
     _builderFor('', _root).command<I, O>(
       route,
       commandFactory,
       description: description,
-      params: params,
+      contract: contract,
     );
     return this;
   }
@@ -129,104 +135,264 @@ class ModularCli {
   /// Dispatch [args] through the router and return an exit code.
   ///
   /// Pass custom [stdout] / [stderr] sinks for testing.
-  Future<int> run(List<String> args, {io.IOSink? stdout, io.IOSink? stderr}) {
+  Future<int> run(
+    List<String> args, {
+    io.IOSink? stdout,
+    io.IOSink? stderr,
+  }) async {
     _registerHelpCommand();
-    return _root.run(_routeHelpRequest(args), stdout: stdout, stderr: stderr);
+    final out = stdout ?? io.stdout;
+    final err = stderr ?? io.stderr;
+
+    // A bare invocation is a help request only when nothing else claims it —
+    // a CLI may register its own root route (a dashboard, a status screen),
+    // and bare `<cli>` is then that route, not a request for help.
+    if (args.isEmpty && _catalog.forRoute('') == null) {
+      out.writeln(HelpRenderer(_catalog).renderCatalog());
+      return ExitCode.ok;
+    }
+
+    return _root.run(
+      args,
+      onReject: (rejection) => _handleRejection(rejection, out, err),
+      stdout: out,
+      stderr: err,
+    );
   }
 
   /// Help must be reachable out of the box — unless the developer wrote their
   /// own `help`, in which case theirs is the CLI's help, everywhere.
   ///
-  /// It is a query: it reads the catalog and answers.
+  /// It is a query: it reads the catalog and answers. Registered with a
+  /// trailing wildcard so a focus — `help math add` — is collected as [rest]
+  /// rather than having to be a declared positional.
   void _registerHelpCommand() {
-    if (_catalog.forRoute('help') != null) return;
+    if (_catalog.forName('help') != null) return;
 
     query<HelpInput, HelpOutput>(
-      'help',
-      (req) => HelpQuery(HelpInput(_catalog, focus: req.positionals)),
+      'help *',
+      (req) => HelpQuery(HelpInput(_catalog, focus: req.rest)),
       description: 'Show the commands this CLI accepts',
     );
   }
 
-  /// Rewrites into the `help` command the help requests no route can serve: the
-  /// empty invocation, and a `--help` / `-h` that names no command or names a
-  /// module (`cli_router` stops looking for a route at the first flag, and a
-  /// module is a mount, not a route).
-  ///
-  /// The empty invocation is only a help request when nothing claims it. A CLI
-  /// may register a root route — a dashboard, a status screen, a banner — and
-  /// then bare `<cli>` *is* that route; taking it for help would silently
-  /// replace a real command.
-  ///
-  /// `<command> --help` is left alone: the command's own wrapper answers it, so
-  /// an unknown command with `--help` still reaches the error path.
-  List<String> _routeHelpRequest(List<String> args) {
-    if (args.isEmpty) {
-      return _catalog.forRoute('') != null ? args : const ['help'];
+  // ── Help precedence on a rejected invocation ──────────────────────────────
+  //
+  // `cli_router.resolve()` classifies exactly what went wrong; it never says
+  // whether `--help` should win over that. That precedence is this SDK's own
+  // decision (issue #27):
+  //
+  //   * `--help` only wins for the rejection kinds that mean "this invocation
+  //     trails off partway through a real route" — [CliRejectionKind.incomplete],
+  //     [CliRejectionKind.missingArgument] and
+  //     [CliRejectionKind.missingRequiredOption]. These are exactly the cases
+  //     where what the user is missing is the information `--help` would have
+  //     given them anyway.
+  //   * It never wins for a genuine shape error — an unknown command, an extra
+  //     argument, an unknown/misplaced/malformed option, a repeated one. Those
+  //     are told about what is actually wrong; `--help` having been typed
+  //     alongside a typo does not make the typo not worth mentioning.
+  //
+  // Read straight off left-to-right parsing: whichever failure is hit first
+  // decides both the [CliRejectionKind] and which options — `--help` among
+  // them — had already been read when it was hit.
+
+  static const _helpWinsKinds = {
+    CliRejectionKind.incomplete,
+    CliRejectionKind.missingArgument,
+    CliRejectionKind.missingRequiredOption,
+  };
+
+  /// Kinds that mean the invocation's *shape* was wrong — command words or
+  /// argument count — as opposed to a problem with one specific option.
+  /// Mapped to [ExitCode.invalidUsage] (64); everything else, an option the
+  /// user got wrong, is mapped to [ExitCode.validationFailed] (7) — the
+  /// mapping this SDK used before `cli_router` classified rejections itself,
+  /// preserved deliberately rather than adopting 64 across the board.
+  static const _structuralKinds = {
+    CliRejectionKind.unknownCommand,
+    CliRejectionKind.extraArgument,
+    CliRejectionKind.incomplete,
+    CliRejectionKind.missingArgument,
+  };
+
+  int _exitCodeFor(CliRejectionKind kind) => _structuralKinds.contains(kind)
+      ? ExitCode.invalidUsage
+      : ExitCode.validationFailed;
+
+  /// Machine-readable counterpart of [_exitCodeFor], in the same
+  /// `SCREAMING_SNAKE_CASE` a [CommandException.code] uses, so a caller
+  /// parsing `--json` output sees one error vocabulary regardless of whether
+  /// the rejection came from `cli_router` itself or from a handler.
+  String _errorCodeFor(CliRejectionKind kind) =>
+      _structuralKinds.contains(kind) ? 'INVALID_USAGE' : 'VALIDATION_FAILED';
+
+  /// The one piece of structured detail this SDK can name without guessing:
+  /// which declared parameter a [CliRejectionKind.missingRequiredOption]
+  /// rejection is about. `null` for every other kind, and for a
+  /// `missingRequiredOption` this SDK cannot resolve back to a contract.
+  Map<String, dynamic>? _detailsFor(
+    CliRejection rejection,
+    CommandContract? contract,
+  ) {
+    if (rejection.kind != CliRejectionKind.missingRequiredOption) return null;
+    if (contract == null) return null;
+    final given = rejection.options.map((o) => o.spec.name).toSet();
+    for (final option in contract.options) {
+      if (option.required && !given.contains(option.name)) {
+        return {'parameter': option.name};
+      }
     }
-    if (!args.any((arg) => arg == '--help' || arg == '-h')) return args;
-
-    final routeTokens = args.takeWhile((arg) => !arg.startsWith('-')).toList();
-    if (routeTokens.isEmpty) return ['help', ..._withoutHelpFlags(args)];
-
-    final namesAModule =
-        routeTokens.length == 1 &&
-        _catalog.forRoute(routeTokens.single) == null &&
-        _catalog.forModule(routeTokens.single).isNotEmpty;
-
-    // A command whose route carries positionals (`show <id>`) cannot be matched
-    // by the router until they are supplied — so asking for its contract would
-    // fall to the error path, forcing the user to provide the very argument he
-    // is asking about. Name it and the help answers.
-    final contract = _catalog.forName(routeTokens.join(' '));
-    final namesAPositionalCommand =
-        contract != null && contract.positionals.isNotEmpty;
-
-    return namesAModule || namesAPositionalCommand
-        ? ['help', ..._withoutHelpFlags(args)]
-        : args;
+    return null;
   }
 
-  /// The `help` command is the request itself; carrying `--help` into it would
-  /// make it describe itself instead of what was asked about.
-  List<String> _withoutHelpFlags(List<String> args) =>
-      args.where((arg) => arg != '--help' && arg != '-h').toList();
+  int _handleRejection(CliRejection rejection, io.IOSink out, io.IOSink err) {
+    final helpRequested = rejection.options.any((o) => o.spec.name == 'help');
+    final jsonMode = rejection.options.any((o) => o.spec.name == 'json');
 
-  /// The user who mistypes a command is the one who most needs the catalog, so
-  /// the error path shows exactly what `help` shows — only on stderr, and as a
-  /// failure.
-  ///
-  /// It tells apart two things that are not the same. An invocation naming the
-  /// **beginning of a registered route** is not unknown: what it lacks is the
-  /// end. `math` where `math add` exists, or `api graphql` where
-  /// `api graphql compile` does, are both that — a prefix with no ending, and
-  /// the catalog knows it. Calling both cases "unknown command" sent the user
-  /// looking for a typo they had not made, and answered with the whole catalog
-  /// when a handful of lines were the relevant ones.
-  int _reportUnknownCommand(CliNotFound notFound) {
-    final attempted = notFound.args
-        .takeWhile((arg) => !arg.startsWith('-'))
-        .join(' ');
+    if (helpRequested && _helpWinsKinds.contains(rejection.kind)) {
+      return _emitFocusedHelp(rejection, out, jsonMode: jsonMode);
+    }
+    return _emitRejectionError(rejection, err, jsonMode: jsonMode);
+  }
 
+  /// Help for a rejection `--help` won: the most specific thing the router
+  /// could still identify — the command itself, then the module it belongs
+  /// to, then, when neither is known, the full catalog (narrowed to
+  /// completions of what was typed, exactly as the plain error path does).
+  int _emitFocusedHelp(
+    CliRejection rejection,
+    io.IOSink out, {
+    required bool jsonMode,
+  }) {
+    final contract = _contractFor(rejection);
+    if (contract != null) {
+      _writeHelp(
+        out,
+        jsonMode: jsonMode,
+        json: contract.toJson(),
+        text: HelpRenderer(_catalog).renderCommand(contract),
+      );
+      return ExitCode.ok;
+    }
+
+    final module = rejection.consumed.isEmpty ? '' : rejection.consumed.first;
+    final moduleContracts = module.isEmpty
+        ? const <CommandContract>[]
+        : _catalog.forModule(module);
+    if (moduleContracts.isNotEmpty) {
+      _writeHelp(
+        out,
+        jsonMode: jsonMode,
+        json: {
+          'module': module,
+          'commands': [for (final c in moduleContracts) c.toJson()],
+        },
+        text: HelpRenderer(_catalog).renderModule(module),
+      );
+      return ExitCode.ok;
+    }
+
+    final attempted = rejection.consumed.join(' ');
     final completions = _completionsOf(attempted);
+    final scoped = completions.isEmpty ? _catalog : _narrowedTo(completions);
+    _writeHelp(
+      out,
+      jsonMode: jsonMode,
+      json: {'commands': [for (final c in scoped.commands) c.toJson()]},
+      text: HelpRenderer(scoped).renderCatalog(),
+    );
+    return ExitCode.ok;
+  }
 
-    // A catalog holding only the completions, rendered by the same renderer as
-    // everything else. Narrowing the renderer's input rather than teaching it a
-    // new shape keeps "the renderer is the only place help text is produced"
-    // true, and adds nothing to the package's public surface.
-    notFound.stderr
-      ..writeln(
-        completions.isEmpty
-            ? "Error: unknown command '$attempted'."
-            : "Error: '$attempted' is not a complete command.",
-      )
+  void _writeHelp(
+    io.IOSink sink, {
+    required bool jsonMode,
+    required Map<String, dynamic> json,
+    required String text,
+  }) {
+    sink.writeln(jsonMode ? jsonEncode(json) : text);
+  }
+
+  /// A rejection `--help` did not win: the failure itself, on stderr, with
+  /// the same "here is the contract you were one flag away from honouring"
+  /// context a rejected [CommandException] gets from [ModuleBuilder].
+  ///
+  /// It tells apart two things that are not the same. An invocation naming
+  /// the **beginning of a registered route** is not unknown: what it lacks
+  /// is the end. `math` where `math add` exists, or `api graphql` where
+  /// `api graphql compile` does, are both that — a prefix with no ending,
+  /// and the catalog knows it. Calling both cases "unknown command" sent the
+  /// user looking for a typo they had not made, and answered with the whole
+  /// catalog when a handful of lines were the relevant ones.
+  int _emitRejectionError(
+    CliRejection rejection,
+    io.IOSink err, {
+    required bool jsonMode,
+  }) {
+    final exitCode = _exitCodeFor(rejection.kind);
+    final contract = _contractFor(rejection);
+    final attempted = rejection.consumed.join(' ');
+    final completions = contract == null
+        ? _completionsOf(attempted)
+        : const <CommandContract>[];
+
+    // The router tells apart eleven ways an invocation can fail, but not
+    // whether the one it hit means "you named the beginning of a real
+    // route and stopped". This SDK does, from the same catalog help is
+    // rendered from: no contract names this exact invocation, yet at least
+    // one registered route continues it. That is not the generic
+    // "incomplete command" / "'x' does not continue this command" the
+    // router itself would say — it is a specific, answerable thing.
+    final message = contract == null && completions.isNotEmpty
+        ? "'$attempted' is not a complete command"
+        : (rejection.message ?? rejection.kind.name);
+
+    if (jsonMode) {
+      final details = _detailsFor(rejection, contract);
+      err.writeln(
+        jsonEncode({
+          'error': _errorCodeFor(rejection.kind),
+          'message': message,
+          'exitCode': exitCode,
+          'isRetryable': false,
+          'kind': rejection.kind.name,
+          if (contract != null) 'contract': contract.toJson(),
+          if (details != null) 'details': details,
+        }),
+      );
+      return exitCode;
+    }
+
+    err.writeln('Error: $message');
+
+    if (contract != null) {
+      err
+        ..writeln()
+        ..writeln(HelpRenderer(_catalog).renderCommand(contract));
+      return exitCode;
+    }
+
+    err
       ..writeln()
       ..writeln(
         HelpRenderer(
           completions.isEmpty ? _catalog : _narrowedTo(completions),
         ).renderCatalog(),
       );
-    return ExitCode.invalidUsage;
+    return exitCode;
+  }
+
+  /// The contract a rejection points at: the route `cli_router` itself named
+  /// ([CliRejection.route], set for [CliRejectionKind.missingRequiredOption]
+  /// among others), or, failing that, the route named by the words already
+  /// consumed — the case `cli_router` could not yet identify a specific
+  /// route for ([CliRejectionKind.incomplete], [CliRejectionKind.missingArgument]).
+  CommandContract? _contractFor(CliRejection rejection) {
+    final route = rejection.route;
+    if (route != null) return _catalog.forRoute(route.pattern);
+    if (rejection.consumed.isEmpty) return null;
+    return _catalog.forName(rejection.consumed.join(' '));
   }
 
   /// Every registered route that continues [attempted].
@@ -251,6 +417,11 @@ class ModularCli {
 
   /// Print the help listing for all registered modules and routes.
   void printHelp(io.IOSink sink, {String? title}) {
-    _root.printHelp(sink, title: title);
+    if (title != null) {
+      sink
+        ..writeln(title)
+        ..writeln();
+    }
+    sink.writeln(HelpRenderer(_catalog).renderCatalog());
   }
 }

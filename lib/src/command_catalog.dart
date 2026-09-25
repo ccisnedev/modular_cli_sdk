@@ -1,4 +1,6 @@
+import 'cli_contract.dart';
 import 'cli_param.dart';
+import 'cli_positional.dart';
 
 /// Which of the two kinds of unit a route was registered as.
 ///
@@ -19,7 +21,7 @@ class CommandContract {
   CommandContract({
     required this.route,
     required this.module,
-    required this.params,
+    required this.contract,
     this.kind = CommandKind.command,
     this.description,
   });
@@ -28,10 +30,12 @@ class CommandContract {
   /// `records show <id>`.
   final String route;
 
-  /// The route without its positional placeholders — the tokens a user types to
-  /// name the command: `records show`. This is how a command is *named*, as
-  /// opposed to how it is *invoked*, and it is what help is asked about.
-  String get name => route.replaceAll(RegExp(r'\s*<[^>]+>'), '').trim();
+  /// The route without its positional placeholders or trailing wildcard —
+  /// the tokens a user types to name the command: `records show`, `help`.
+  /// This is how a command is *named*, as opposed to how it is *invoked*,
+  /// and it is what help is asked about.
+  String get name =>
+      route.replaceAll(RegExp(r'\s*(<[^>]+>|\*)'), '').trim();
 
   /// Module the command belongs to; empty for a root command.
   final String module;
@@ -42,36 +46,28 @@ class CommandContract {
 
   final String? description;
 
-  /// Parameters declared by the command's [Input], or **null** when the command
-  /// declares no contract at all — such a command is described by route and
-  /// description alone, and its arguments are not enforced.
+  /// The command's full declared contract: its options, its positionals, and
+  /// the cross-field rules that hold between them.
   ///
-  /// An **empty** list is a declaration, not an absence: the command accepts no
-  /// option, and any option passed to it is rejected. Keeping the two apart is
-  /// what lets a zero-argument command be enforced.
-  final List<CliParam>? params;
+  /// Always present — a command with nothing to declare says so explicitly
+  /// with [CliContract.none] rather than leaving the field absent. There is
+  /// no undeclared escape hatch: what is not in [contract] is not accepted.
+  final CliContract contract;
 
-  /// Whether the command declared a contract at all.
-  bool get isDeclared => params != null;
+  /// The declared options — kept for callers that only care about options,
+  /// and for backward-readable help rendering.
+  List<CliParam> get declaredParams => contract.options;
 
-  /// The declared parameters, with "declares nothing" flattened to "none" —
-  /// for rendering, where the two look alike. Enforcement must use [params].
-  List<CliParam> get declaredParams => params ?? const [];
+  List<CliPositional> get positionals => contract.positionals;
 
-  List<CliParam> get positionals => (params ?? const [])
-      .where((p) => p.kind == CliParamKind.positional)
-      .toList();
-
-  List<CliParam> get options => (params ?? const [])
-      .where((p) => p.kind != CliParamKind.positional)
-      .toList();
+  List<CliParam> get options => contract.options;
 
   Map<String, dynamic> toJson() => {
     'route': route,
     'kind': kind.name,
     if (module.isNotEmpty) 'module': module,
     if (description != null) 'description': description,
-    'params': (params ?? const []).map((p) => p.toJson()).toList(),
+    ...contract.toJson(),
   };
 }
 

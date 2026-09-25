@@ -7,7 +7,8 @@
 /// - [Command] — a unit that changes something, as an ordered list of steps
 ///   that say what they would do before anything runs
 /// - [Input] / [Output] — typed DTOs for I/O
-/// - [CliParam] — a route's declared parameter contract (help + enforcement)
+/// - [CliContract] — a route's declared contract: [CliParam] options,
+///   [CliPositional] positionals, and cross-field [CliConstraint]s
 /// - [CommandException] — structured error with code, message, and exit code
 /// - [ExitCode] — semantic exit code constants
 /// - [CliOutput] / [JsonCliOutput] / [TextCliOutput] — output formatting
@@ -48,7 +49,11 @@ export 'src/change_outputs.dart'
 export 'src/cli_output.dart' show CliOutput;
 export 'src/cli_output_json.dart' show JsonCliOutput;
 export 'src/cli_output_text.dart' show TextCliOutput;
-export 'src/cli_param.dart' show CliParam, CliParamKind, CliParamType;
+export 'src/cli_contract.dart'
+    show CliConstraint, CliContract, ExactlyOne, MutuallyExclusive;
+export 'src/cli_param.dart' show CliParam, CliParamType, DeclaredDefault;
+export 'src/cli_positional.dart' show CliPositional, CliPositionalType;
+export 'src/cli_request_values.dart' show CliRequestValues;
 export 'src/command.dart' show Command;
 export 'src/command_catalog.dart'
     show CommandCatalog, CommandContract, CommandKind;

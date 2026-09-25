@@ -4,10 +4,11 @@ import 'package:preview_executor/preview_executor.dart';
 import 'approver.dart';
 import 'change_flags.dart';
 import 'change_outputs.dart';
+import 'cli_contract.dart';
 import 'cli_output.dart';
 import 'cli_output_json.dart';
 import 'cli_output_text.dart';
-import 'cli_param.dart';
+import 'cli_request_values.dart';
 import 'command.dart';
 import 'command_catalog.dart';
 import 'command_exception.dart';
@@ -59,21 +60,25 @@ class ModuleBuilder {
   ///
   /// It is not given `--plan` or `--apply`, and passing either is rejected as
   /// the undeclared option it is. Nothing has to be written to make that true.
+  ///
+  /// [contract] defaults to [CliContract.none] — a query that takes nothing
+  /// declares that explicitly, by the value it did not have to name, rather
+  /// than by an absent argument silently meaning the same thing.
   void query<I extends Input, O extends Output>(
     String route,
     Query<I, O> Function(CliRequest req) queryFactory, {
     String? description,
-    List<CliParam>? params,
+    CliContract contract = CliContract.none,
   }) {
-    final contract = _register(
+    final entry = _register(
       route,
       kind: CommandKind.query,
       description: description,
-      params: params,
+      contract: contract,
     );
 
-    _mount(route, contract, description, (req, output) async {
-      final unit = queryFactory(applyDeclaredContract(req, contract.params));
+    _mount(route, entry, (req, output) async {
+      final unit = queryFactory(applyDeclaredContract(req, entry.contract));
 
       final invalid = unit.validate();
       if (invalid != null) throw _rejection(invalid);
@@ -90,28 +95,25 @@ class ModuleBuilder {
   /// command declared, and their rules are applied before a single step is
   /// built. The author writes none of that.
   ///
-  /// Unlike [query], a command is **always** enforced: omitting [params] does
-  /// not leave it undeclared, it declares that the command takes nothing but
-  /// the three flags. A route that changes something cannot be the one whose
-  /// arguments nobody checks, and the flags have to be declared to be typed at
-  /// all.
+  /// Unlike [query], a command is **always** enforced against at least the
+  /// three flags: [contract] defaulting to [CliContract.none] still gains
+  /// them, because a route that changes something cannot be invoked without
+  /// choosing one, and the flags have to be declared to be typed at all.
   void command<I extends Input, O extends Output>(
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
     String? description,
-    List<CliParam>? params,
+    CliContract contract = CliContract.none,
   }) {
-    final contract = _register(
+    final entry = _register(
       route,
       kind: CommandKind.command,
       description: description,
-      // A command that declared nothing stays unenforced, as before — but it
-      // still gets the three flags, because it cannot be invoked without one.
-      params: [...?params, ...ChangeFlags.params],
+      contract: contract.withOptions(ChangeFlags.params),
     );
 
-    _mount(route, contract, description, (req, output) async {
-      final applied = applyDeclaredContract(req, contract.params);
+    _mount(route, entry, (req, output) async {
+      final applied = applyDeclaredContract(req, entry.contract);
       final unit = commandFactory(applied);
 
       final invalid = unit.validate();
@@ -121,7 +123,7 @@ class ModuleBuilder {
       final unusable = flags.validate();
       if (unusable != null) throw _rejection(unusable);
 
-      return _carryOut(unit, flags, contract, output, req);
+      return _carryOut(unit, flags, entry, output, req);
     });
   }
 
@@ -136,7 +138,7 @@ class ModuleBuilder {
   Future<int> _carryOut<I extends Input, O extends Output>(
     Command<I, O> unit,
     ChangeFlags flags,
-    CommandContract contract,
+    CommandContract entry,
     CliOutput output,
     CliRequest req,
   ) async {
@@ -144,7 +146,7 @@ class ModuleBuilder {
 
     final steps = await unit.steps();
     final plan = PlanDocument(
-      route: contract.name,
+      route: entry.name,
       previews: executor.preview(steps),
       // Read after steps(), which is where a command works out that it has
       // nothing to do and why. Consulted whatever the mode: the reason belongs
@@ -220,65 +222,80 @@ class ModuleBuilder {
     String route, {
     required CommandKind kind,
     required String? description,
-    required List<CliParam>? params,
+    required CliContract contract,
   }) {
-    final contract = CommandContract(
+    final entry = CommandContract(
       route: moduleName.isEmpty ? route : '$moduleName $route',
       module: moduleName,
       kind: kind,
       description: description,
-      params: params,
+      contract: contract,
     );
-    _catalog.register(contract);
-    return contract;
+    _catalog.register(entry);
+    return entry;
   }
 
   /// Wire the route: choose the output mode, answer `--help`, and run [body]
   /// with the errors of either kind turned into the same rejection.
+  ///
+  /// `cli_router` has already checked, before this handler ever runs, that
+  /// every option present was declared, that every required one showed up,
+  /// and that none repeated beyond what was declared — [entry.contract] is
+  /// registered as this route's [OptionSpec]s below. What is left to this
+  /// handler is picking the output mode, answering `--help` on a resolved
+  /// invocation, and turning a [CommandException] into the same rejection
+  /// shape whichever kind raised it.
   void _mount(
     String route,
-    CommandContract contract,
-    String? description,
+    CommandContract entry,
     Future<int> Function(CliRequest req, CliOutput output) body,
   ) {
-    _router.cmd(route, (req) async {
-      final isJsonMode = req.flagBool('json');
-      final isQuiet = req.flagBool('quiet', aliases: const ['q']);
+    _router.cmd(
+      route,
+      (req) async {
+        final isJsonMode = req.flagBool('json');
+        final isQuiet = req.flagBool('quiet');
 
-      final CliOutput output = isJsonMode
-          ? JsonCliOutput(
-              stdout: req.stdout,
-              stderr: req.stderr,
-              isQuiet: isQuiet,
-            )
-          : TextCliOutput(
-              stdout: req.stdout,
-              stderr: req.stderr,
-              isQuiet: isQuiet,
-            );
+        final CliOutput output = isJsonMode
+            ? JsonCliOutput(
+                stdout: req.stdout,
+                stderr: req.stderr,
+                isQuiet: isQuiet,
+              )
+            : TextCliOutput(
+                stdout: req.stdout,
+                stderr: req.stderr,
+                isQuiet: isQuiet,
+              );
 
-      // Asked for the contract, not for the work: help before enforcement, so
-      // `--help` on an incomplete invocation helps instead of failing.
-      if (req.flagBool('help', aliases: const ['h'])) {
-        output.writeObject(
-          contract.toJson(),
-          textOverride: HelpRenderer(_catalog).renderCommand(contract),
-        );
-        return ExitCode.ok;
-      }
+        // Asked for the contract, not for the work: help short-circuits a
+        // resolved invocation before enforcement or the handler ever run, so
+        // `--help` alongside other options answers with the contract rather
+        // than acting on it.
+        if (req.flagBool('help')) {
+          output.writeObject(
+            entry.toJson(),
+            textOverride: HelpRenderer(_catalog).renderCommand(entry),
+          );
+          return ExitCode.ok;
+        }
 
-      try {
-        return await body(req, output);
-      } on CommandException catch (e) {
-        return _reject(
-          e,
-          req,
-          output,
-          contract,
-          showsContractOnRejection: !isJsonMode,
-        );
-      }
-    }, description: description);
+        try {
+          return await body(req, output);
+        } on CommandException catch (e) {
+          return _reject(
+            e,
+            req,
+            output,
+            entry,
+            showsContractOnRejection: !isJsonMode,
+          );
+        }
+      },
+      options: entry.contract.toOptionSpecs(),
+      globals: true,
+      description: entry.description,
+    );
   }
 
   CommandException _rejection(String message) => CommandException(
@@ -293,7 +310,7 @@ class ModuleBuilder {
     CommandException error,
     CliRequest req,
     CliOutput cliOutput,
-    CommandContract contract, {
+    CommandContract entry, {
     required bool showsContractOnRejection,
   }) {
     cliOutput.writeError(error);
@@ -301,7 +318,7 @@ class ModuleBuilder {
         error.exitCode == ExitCode.validationFailed) {
       req.stderr
         ..writeln()
-        ..writeln(HelpRenderer(_catalog).renderCommand(contract));
+        ..writeln(HelpRenderer(_catalog).renderCommand(entry));
     }
     return error.exitCode;
   }

@@ -28,9 +28,9 @@ class ChangeFlags {
   });
 
   factory ChangeFlags.fromCliRequest(CliRequest req) => ChangeFlags(
-    plan: req.flagBool('plan'),
-    apply: req.flagBool('apply'),
-    autoapprove: req.flagBool('autoapprove'),
+    plan: req.option('plan') != null,
+    apply: req.option('apply') != null,
+    autoapprove: req.option('autoapprove') != null,
   );
 
   final bool plan;
@@ -43,16 +43,19 @@ class ChangeFlags {
   /// a default decides for the caller, and an undeclared flag cannot be typed
   /// even when every document says to.
   static final List<CliParam> params = [
-    CliParam.boolean(
+    CliParam.flag(
       'plan',
+      repeatable: false,
       description: 'Show what would change; change nothing',
     ),
-    CliParam.boolean(
+    CliParam.flag(
       'apply',
+      repeatable: false,
       description: 'Show what would change, take approval, then do it',
     ),
-    CliParam.boolean(
+    CliParam.flag(
       'autoapprove',
+      repeatable: false,
       description:
           'With --apply, act without asking — for agents and CI, where '
           'nobody is at the keyboard to approve',
