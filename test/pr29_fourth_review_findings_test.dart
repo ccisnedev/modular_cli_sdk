@@ -1,10 +1,12 @@
-// A fourth review of PR #29 (feat/0.6.0), after the first three rounds'
+// A fifth review of PR #29 (feat/0.6.0), after the first four rounds'
 // findings were fixed, found two more concrete defects (a third, about
 // whether a resolved shortcut's help should show its own options, was
-// checked against issue #27 and found to name no such rule: see this SDK's
-// CHANGELOG for that finding's own record instead of a test here).
+// checked against issue #27's body and its one amendment comment and found
+// to name no such rule; that finding changes no behavior, so it has no test
+// here and no CHANGELOG entry, only a note in the fix commit that reviewed
+// it).
 //
-// Findings are numbered to match that fourth review, 1 and 2.
+// Findings are numbered to match that fifth review, 1 and 2.
 
 import 'dart:convert';
 

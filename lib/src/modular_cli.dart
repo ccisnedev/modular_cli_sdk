@@ -203,9 +203,16 @@ class ModularCli {
   /// entry: it is another way to spell an existing command, not a second
   /// command, and it would otherwise show up in `help` as if it needed its
   /// own explanation when the one at [target] already is that explanation.
-  /// One consequence: `--help` and JSON error `contract` fields are not
-  /// available through a shortcut route itself; a caller is directed to
-  /// [target]'s own help.
+  /// One consequence: on a rejected invocation of a shortcut (one that
+  /// never resolves, so no route handler ever runs), the focused help
+  /// `--help` and a JSON error's `contract` field would otherwise fall
+  /// back to is looked up from [CommandCatalog] alone, which a shortcut is
+  /// never in, so neither is available there; a caller is directed to
+  /// [target]'s own help instead (round-5 review finding 3: this is a
+  /// statement about that rejected-invocation fallback specifically, not
+  /// about a *resolved* shortcut invocation's own `--help`, which, like
+  /// any other resolved route, still answers with its own contract,
+  /// options and all; nothing in issue #27 says otherwise).
   ///
   /// [contract] declares only options and constraints: a shortcut's
   /// positionals are taken from [target]'s own positional declarations,
