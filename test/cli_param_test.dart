@@ -2,7 +2,7 @@ import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 import 'package:test/test.dart';
 
 void main() {
-  group('CliParam factories — options only', () {
+  group('CliParam factories: options only', () {
     test('an integer option carries its declared facets', () {
       final param = CliParam.integer(
         'count',

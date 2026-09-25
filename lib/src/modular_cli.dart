@@ -80,7 +80,7 @@ class ModularCli {
   /// An empty [name] is the CLI's own root: `cli.module('', (m) { ... })`
   /// registers its routes directly on the root router, exactly as
   /// top-level [query]/[command] calls do. `cli_router.mount` requires its
-  /// prefix to be exactly one literal word, and `''` splits into zero — so
+  /// prefix to be exactly one literal word, and `''` splits into zero, so
   /// an empty module is handled here, before `mount` is ever called,
   /// rather than by trying to mount under a prefix that cannot exist.
   ModularCli module(String name, void Function(ModuleBuilder) build) {
@@ -96,7 +96,7 @@ class ModularCli {
 
   /// Register a root-level [Query] (no module prefix).
   ///
-  /// [contract] defaults to [CliContract.none] — see [ModuleBuilder.query].
+  /// [contract] defaults to [CliContract.none]: see [ModuleBuilder.query].
   ModularCli query<I extends Input, O extends Output>(
     String route,
     Query<I, O> Function(CliRequest req) queryFactory, {
@@ -119,7 +119,7 @@ class ModularCli {
   /// Root routes have dispatch priority over mounted modules (inherent to
   /// `cli_router`'s two-phase dispatch).
   ///
-  /// [contract] defaults to [CliContract.none] — see [ModuleBuilder.command].
+  /// [contract] defaults to [CliContract.none]: see [ModuleBuilder.command].
   ModularCli command<I extends Input, O extends Output>(
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
@@ -138,14 +138,14 @@ class ModularCli {
   }
 
   /// Registers [pattern] as a route that dispatches to the same handler
-  /// already registered for [target] — the full name of a route already
+  /// already registered for [target] (the full name of a route already
   /// registered via [query], [command] or [ModuleBuilder], e.g. `'eval
-  /// rpn'` — but under [pattern]'s own, independently declared [contract]
+  /// rpn'`), but under [pattern]'s own, independently declared [contract]
   /// and [globals] scope (issue #27 section 4: "a declared route that runs
   /// the target's handler with a narrower contract").
   ///
   /// This is for a route that means the same thing as a longer one but is
-  /// spelled differently and more narrowly —
+  /// spelled differently and more narrowly:
   /// `cli.shortcut('&lt;program&gt;', target: 'eval rpn', globals: false)`
   /// lets a bare program argument alone run exactly what
   /// `eval rpn --program &lt;program&gt;` would, without exposing
@@ -167,7 +167,7 @@ class ModularCli {
   /// available through a shortcut route itself; a caller is directed to
   /// [target]'s own help.
   ///
-  /// Throws [ArgumentError] if [target] has not been registered yet —
+  /// Throws [ArgumentError] if [target] has not been registered yet:
   /// shortcuts must be declared after their target.
   ModularCli shortcut(
     String pattern, {
@@ -195,7 +195,7 @@ class ModularCli {
     return this;
   }
 
-  /// The registered route word closest to [word] — see
+  /// The registered route word closest to [word]: see
   /// [CommandCatalog.suggest].
   String? suggest(String word, {int maxDistance = 2}) =>
       _catalog.suggest(word, maxDistance: maxDistance);
@@ -230,7 +230,7 @@ class ModularCli {
     final out = stdout ?? io.stdout;
     final err = stderr ?? io.stderr;
 
-    // A bare invocation is a help request only when nothing else claims it —
+    // A bare invocation is a help request only when nothing else claims it:
     // a CLI may register its own root route (a dashboard, a status screen),
     // and bare `<cli>` is then that route, not a request for help.
     if (args.isEmpty && _catalog.forRoute('') == null) {
@@ -246,11 +246,11 @@ class ModularCli {
     );
   }
 
-  /// Help must be reachable out of the box — unless the developer wrote their
+  /// Help must be reachable out of the box, unless the developer wrote their
   /// own `help`, in which case theirs is the CLI's help, everywhere.
   ///
   /// It is a query: it reads the catalog and answers. Registered with a
-  /// trailing wildcard so a focus — `help math add` — is collected as [rest]
+  /// trailing wildcard so a focus (`help math add`) is collected as [rest]
   /// rather than having to be a declared positional.
   void _registerHelpCommand() {
     if (_catalog.forName('help') != null) return;
@@ -270,19 +270,19 @@ class ModularCli {
   // decision (issue #27):
   //
   //   * `--help` only wins for the rejection kinds that mean "this invocation
-  //     trails off partway through a real route" — [CliRejectionKind.incomplete],
+  //     trails off partway through a real route": [CliRejectionKind.incomplete],
   //     [CliRejectionKind.missingArgument] and
   //     [CliRejectionKind.missingRequiredOption]. These are exactly the cases
   //     where what the user is missing is the information `--help` would have
   //     given them anyway.
-  //   * It never wins for a genuine shape error — an unknown command, an extra
+  //   * It never wins for a genuine shape error: an unknown command, an extra
   //     argument, an unknown/misplaced/malformed option, a repeated one. Those
   //     are told about what is actually wrong; `--help` having been typed
   //     alongside a typo does not make the typo not worth mentioning.
   //
   // Read straight off left-to-right parsing: whichever failure is hit first
-  // decides both the [CliRejectionKind] and which options — `--help` among
-  // them — had already been read when it was hit.
+  // decides both the [CliRejectionKind] and which options (`--help` among
+  // them) had already been read when it was hit.
 
   static const _helpWinsKinds = {
     CliRejectionKind.incomplete,
@@ -290,10 +290,10 @@ class ModularCli {
     CliRejectionKind.missingRequiredOption,
   };
 
-  /// Kinds that mean the invocation's *shape* was wrong — command words or
-  /// argument count — as opposed to a problem with one specific option.
+  /// Kinds that mean the invocation's *shape* was wrong (command words or
+  /// argument count) as opposed to a problem with one specific option.
   /// Mapped to [ExitCode.invalidUsage] (64); everything else, an option the
-  /// user got wrong, is mapped to [ExitCode.validationFailed] (7) — the
+  /// user got wrong, is mapped to [ExitCode.validationFailed] (7), the
   /// mapping this SDK used before `cli_router` classified rejections itself,
   /// preserved deliberately rather than adopting 64 across the board.
   static const _structuralKinds = {
@@ -344,8 +344,8 @@ class ModularCli {
   }
 
   /// Help for a rejection `--help` won: the most specific thing the router
-  /// could still identify — the command itself, then the module it belongs
-  /// to, then, when neither is known, the full catalog (narrowed to
+  /// could still identify (the command itself, then the module it belongs
+  /// to), then, when neither is known, the full catalog (narrowed to
   /// completions of what was typed, exactly as the plain error path does).
   int _emitFocusedHelp(
     CliRejection rejection,
@@ -410,7 +410,7 @@ class ModularCli {
   /// It tells apart two things that are not the same. An invocation naming
   /// the **beginning of a registered route** is not unknown: what it lacks
   /// is the end. `math` where `math add` exists, or `api graphql` where
-  /// `api graphql compile` does, are both that — a prefix with no ending,
+  /// `api graphql compile` does, are both that: a prefix with no ending,
   /// and the catalog knows it. Calling both cases "unknown command" sent the
   /// user looking for a typo they had not made, and answered with the whole
   /// catalog when a handful of lines were the relevant ones.
@@ -432,13 +432,13 @@ class ModularCli {
     // rendered from: no contract names this exact invocation, yet at least
     // one registered route continues it. That is not the generic
     // "incomplete command" / "'x' does not continue this command" the
-    // router itself would say — it is a specific, answerable thing.
+    // router itself would say: it is a specific, answerable thing.
     //
     // This rewrite applies to [CliRejectionKind.incomplete] alone: it is
     // the one kind that means "trails off partway through a real route",
     // which is exactly what "is not a complete command" describes. Every
-    // other kind — `eval --json --bogus` is `unknownOption`, not
-    // `incomplete` — keeps the router's own message untouched: nothing
+    // other kind (`eval --json --bogus` is `unknownOption`, not
+    // `incomplete`) keeps the router's own message untouched: nothing
     // here rewrites a message keyed on anything but the kind.
     final routerMessage = rejection.message ?? rejection.kind.name;
     final message = _withSuggestion(
@@ -487,13 +487,13 @@ class ModularCli {
   }
 
   /// Appends a "did you mean" suggestion to [finalMessage] when [kind] is
-  /// one naming an offending word — [CliRejectionKind.unknownCommand]
+  /// one naming an offending word ([CliRejectionKind.unknownCommand]
   /// (`"unknown command 'shwo'"`) or [CliRejectionKind.incomplete]
-  /// (`"'shwo' does not continue this command"`) — and [CommandCatalog.suggest]
+  /// (`"'shwo' does not continue this command"`)) and [CommandCatalog.suggest]
   /// finds a close enough registered word for it.
   ///
-  /// The word is read from [routerMessage] — the router's own, original
-  /// message, always quoted the same way for these two kinds — never from
+  /// The word is read from [routerMessage], the router's own, original
+  /// message, always quoted the same way for these two kinds, never from
   /// [finalMessage], which may already have been rewritten (the "is not a
   /// complete command" case above) into text that no longer quotes a
   /// single word. Gated on [kind] alone, exactly like the rewrite above: it
@@ -520,7 +520,7 @@ class ModularCli {
   /// The contract a rejection points at: the route `cli_router` itself named
   /// ([CliRejection.route], set for [CliRejectionKind.missingRequiredOption]
   /// among others), or, failing that, the route named by the words already
-  /// consumed — the case `cli_router` could not yet identify a specific
+  /// consumed: the case `cli_router` could not yet identify a specific
   /// route for ([CliRejectionKind.incomplete], [CliRejectionKind.missingArgument]).
   CommandContract? _contractFor(CliRejection rejection) {
     final route = rejection.route;

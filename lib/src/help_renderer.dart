@@ -148,14 +148,14 @@ class HelpRenderer {
     CliParamType.path => 'path',
   };
 
-  /// `First operand (required)` / `Greeting target (default: World — the
+  /// `First operand (required)` / `Greeting target (default: World, the
   /// name used when nobody gave one)`.
   String _facetsOf(CliParam param) {
     final facets = <String>[
       if (param.required) 'required',
       if (param.repeatable) 'repeatable',
       if (param.defaultValue != null)
-        'default: ${param.defaultValue!.value} — ${param.defaultValue!.reason}',
+        'default: ${param.defaultValue!.value}, ${param.defaultValue!.reason}',
       if (param.values != null) 'one of: ${param.values!.join(', ')}',
       if (param.mustExist == true) 'must exist',
     ];
@@ -184,7 +184,7 @@ class HelpRenderer {
     );
     // `cli_router`'s grammar requires every option to precede the first
     // positional on the actual command line (spec 8.2: "options go before
-    // the program") — so the usage line is written in that same order,
+    // the program"), so the usage line is written in that same order,
     // rather than the more familiar `<name> [options]` a reader might
     // expect from other CLIs, to avoid showing an invocation the router
     // would then reject.

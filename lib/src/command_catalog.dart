@@ -31,7 +31,7 @@ class CommandContract {
   /// `records show <id>`.
   final String route;
 
-  /// The route without its positional placeholders or trailing wildcard —
+  /// The route without its positional placeholders or trailing wildcard:
   /// the tokens a user types to name the command: `records show`, `help`.
   /// This is how a command is *named*, as opposed to how it is *invoked*,
   /// and it is what help is asked about.
@@ -48,7 +48,7 @@ class CommandContract {
   /// `cli_router` never includes there. Unlike [route] (this SDK's own
   /// record of the full pattern) and [name] (words only, no placeholders at
   /// all), this is what [CommandCatalog.forRoute] must match a
-  /// [CliRejection]'s `route.pattern` against — the router reports
+  /// [CliRejection]'s `route.pattern` against: the router reports
   /// `eval rpn`, never `eval rpn [<program>]`.
   String get routerPattern => RoutePattern(route).routerPattern;
 
@@ -64,12 +64,12 @@ class CommandContract {
   /// The command's full declared contract: its options, its positionals, and
   /// the cross-field rules that hold between them.
   ///
-  /// Always present — a command with nothing to declare says so explicitly
+  /// Always present: a command with nothing to declare says so explicitly
   /// with [CliContract.none] rather than leaving the field absent. There is
   /// no undeclared escape hatch: what is not in [contract] is not accepted.
   final CliContract contract;
 
-  /// The declared options — kept for callers that only care about options,
+  /// The declared options: kept for callers that only care about options,
   /// and for backward-readable help rendering.
   List<CliParam> get declaredParams => contract.options;
 
@@ -97,7 +97,7 @@ class CommandCatalog {
 
   void register(CommandContract contract) => _contracts.add(contract);
 
-  /// The contract for an exact route, matched against [routerPattern] —
+  /// The contract for an exact route, matched against [routerPattern]:
   /// `cli_router`'s own [CliRoute.pattern] never includes a trailing
   /// optional positional or wildcard, so neither does this match, even
   /// though [CommandContract.route] (this SDK's full record) does.
@@ -136,30 +136,30 @@ class CommandCatalog {
   bool get isEmpty => _contracts.isEmpty;
 
   /// The registered route word closest to [word], for a rejection message
-  /// like "did you mean 'show'?" — or `null` when nothing registered is
+  /// like "did you mean 'show'?", or `null` when nothing registered is
   /// close enough.
   ///
   /// The candidate vocabulary is every distinct literal word that appears
   /// anywhere across every registered command's [CommandContract.name]
   /// (split on whitespace), so `eval rpn` contributes both `eval` and
   /// `rpn`. This is scoped to the whole catalog, not to where in the route
-  /// tree the typo actually occurred — `cli_router`'s trie is private and
+  /// tree the typo actually occurred (`cli_router`'s trie is private and
   /// not introspectable from this SDK, so a suggestion can, in principle,
-  /// name a word that is not reachable from the caller's actual position.
+  /// name a word that is not reachable from the caller's actual position).
   /// In practice route vocabularies rarely collide across unrelated
   /// modules, and a wrong-but-plausible suggestion is still more useful
   /// than none.
   ///
   /// Closeness is the restricted edit distance between [word] and each
-  /// candidate — Levenshtein distance (insertion, deletion, substitution)
+  /// candidate: Levenshtein distance (insertion, deletion, substitution)
   /// plus one more operation, transposing two adjacent characters, counted
   /// as a single edit (the "Damerau" part of Damerau-Levenshtein, in its
   /// cheaper OSA/restricted form: each substring is only ever transposed
   /// once). A candidate must be within [maxDistance] edits to be returned
-  /// at all — the default, 2, catches a typo like `shwo` -> `show`
+  /// at all: the default, 2, catches a typo like `shwo` -> `show`
   /// (distance 1, transposition) without also matching words that merely
-  /// happen to share a few letters. Ties — more than one candidate at the
-  /// minimum distance found — are broken by catalog order: the order
+  /// happen to share a few letters. Ties (more than one candidate at the
+  /// minimum distance found) are broken by catalog order: the order
   /// routes were registered in, the same order [commands] reports.
   String? suggest(String word, {int maxDistance = 2}) {
     final vocabulary = <String>[];

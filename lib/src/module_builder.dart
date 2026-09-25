@@ -58,7 +58,7 @@ class ModuleBuilder {
   final CommandCatalog _catalog;
 
   /// Every registered route's actual dispatch handler, keyed by
-  /// [CommandContract.name] — shared with every other [ModuleBuilder] this
+  /// [CommandContract.name]: shared with every other [ModuleBuilder] this
   /// SDK builds (all backed by the same [ModularCli]), so [ModularCli.shortcut]
   /// can look a target route's handler up regardless of which module
   /// registered it.
@@ -71,7 +71,7 @@ class ModuleBuilder {
   /// It is not given `--plan` or `--apply`, and passing either is rejected as
   /// the undeclared option it is. Nothing has to be written to make that true.
   ///
-  /// [contract] defaults to [CliContract.none] — a query that takes nothing
+  /// [contract] defaults to [CliContract.none]: a query that takes nothing
   /// declares that explicitly, by the value it did not have to name, rather
   /// than by an absent argument silently meaning the same thing.
   void query<I extends Input, O extends Output>(
@@ -236,8 +236,8 @@ class ModuleBuilder {
     required String? description,
     required CliContract contract,
   }) {
-    // Build-time, not runtime: a route/contract mismatch — missing, extra,
-    // misnamed, duplicate or wrongly-required/optional positional — is an
+    // Build-time, not runtime: a route/contract mismatch (missing, extra,
+    // misnamed, duplicate or wrongly-required/optional positional) is an
     // authoring mistake, caught the moment the route is declared, not
     // something a caller could ever trigger by what they typed.
     validateContractPositionals(route, contract);
@@ -257,7 +257,7 @@ class ModuleBuilder {
   ///
   /// `cli_router` has already checked, before this handler ever runs, that
   /// every option present was declared, that every required one showed up,
-  /// and that none repeated beyond what was declared — [entry.contract] is
+  /// and that none repeated beyond what was declared: [entry.contract] is
   /// registered as this route's [OptionSpec]s below. What is left to this
   /// handler is picking the output mode, answering `--help` on a resolved
   /// invocation, and turning a [CommandException] into the same rejection
@@ -318,8 +318,8 @@ class ModuleBuilder {
     );
 
     // Shared across every `ModuleBuilder` this SDK builds, so
-    // `ModularCli.shortcut` can dispatch to a route's exact handler —
-    // `--help` handling, `CommandException` rejection and all — regardless
+    // `ModularCli.shortcut` can dispatch to a route's exact handler
+    // (`--help` handling, `CommandException` rejection and all), regardless
     // of which module registered it.
     _handlersByName[entry.name] = handler;
   }

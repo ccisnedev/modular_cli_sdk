@@ -9,7 +9,7 @@ import 'exit_codes.dart';
 /// invocation has been read and defaulted.
 ///
 /// Operates over the set of option names that are actually *present* on the
-/// invocation — an option a [DeclaredDefault] silently filled in does not
+/// invocation: an option a [DeclaredDefault] silently filled in does not
 /// count as present, because the caller never wrote it.
 abstract class CliConstraint {
   const CliConstraint();
@@ -21,7 +21,7 @@ abstract class CliConstraint {
   Map<String, dynamic> toJson();
 }
 
-/// Exactly one of [fields] must be present — used for a command that only
+/// Exactly one of [fields] must be present: used for a command that only
 /// makes sense given one mode, such as `--plan` or `--apply`.
 class ExactlyOne extends CliConstraint {
   const ExactlyOne(this.fields);
@@ -35,7 +35,7 @@ class ExactlyOne extends CliConstraint {
       return 'Choose one of: ${fields.map((f) => '--$f').join(', ')}';
     }
     if (given.length > 1) {
-      return 'Choose one of: ${fields.map((f) => '--$f').join(', ')} — '
+      return 'Choose one of: ${fields.map((f) => '--$f').join(', ')}, '
           'got ${given.map((f) => '--$f').join(', ')}';
     }
     return null;
@@ -45,7 +45,7 @@ class ExactlyOne extends CliConstraint {
   Map<String, dynamic> toJson() => {'kind': 'exactlyOne', 'fields': fields};
 }
 
-/// At most one of [fields] may be present — used when two options each
+/// At most one of [fields] may be present: used when two options each
 /// stand on their own but cannot be combined.
 class MutuallyExclusive extends CliConstraint {
   const MutuallyExclusive(this.fields);
@@ -56,8 +56,8 @@ class MutuallyExclusive extends CliConstraint {
   String? check(Set<String> present) {
     final given = fields.where(present.contains).toList();
     if (given.length > 1) {
-      return '${fields.map((f) => '--$f').join(' and ')} cannot be combined '
-          '— got ${given.map((f) => '--$f').join(', ')}';
+      return '${fields.map((f) => '--$f').join(' and ')} cannot be combined, '
+          'got ${given.map((f) => '--$f').join(', ')}';
     }
     return null;
   }
@@ -74,7 +74,7 @@ class MutuallyExclusive extends CliConstraint {
 /// them.
 ///
 /// This is the single source of truth `help` renders from and the SDK
-/// enforces against — there is no undeclared escape hatch. A handler with
+/// enforces against: there is no undeclared escape hatch. A handler with
 /// nothing to declare uses [CliContract.none] explicitly, rather than a
 /// contract silently defaulting to empty.
 class CliContract {
@@ -91,7 +91,7 @@ class CliContract {
   final List<CliPositional> positionals;
   final List<CliConstraint> constraints;
 
-  /// A copy with [extra] options appended — used to join a command's own
+  /// A copy with [extra] options appended: used to join a command's own
   /// declared options with ones the framework adds on its behalf (such as
   /// the plan/apply/autoapprove flags of [ChangeFlags]).
   CliContract withOptions(List<CliParam> extra) => CliContract(

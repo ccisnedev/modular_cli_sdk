@@ -7,7 +7,7 @@
 /// - [Command] — a unit that changes something, as an ordered list of steps
 ///   that say what they would do before anything runs
 /// - [Input] / [Output] — typed DTOs for I/O
-/// - [CliContract] — a route's declared contract: [CliParam] options,
+/// - [CliContract]: a route's declared contract, with [CliParam] options,
 ///   [CliPositional] positionals, and cross-field [CliConstraint]s
 /// - [CommandException] — structured error with code, message, and exit code
 /// - [ExitCode] — semantic exit code constants

@@ -63,8 +63,8 @@ dart run bin/main.dart notes write today
 #   --apply  show it, ask for approval, then do it
 # exit code 7
 
-# Options must come before the positional — cli_router's grammar requires
-# it (an option can never follow an operand) — so --plan precedes today.
+# Options must come before the positional: cli_router's grammar requires
+# it (an option can never follow an operand), so --plan precedes today.
 dart run bin/main.dart notes write --plan today
 # Plan — notes write
 #
@@ -274,7 +274,7 @@ Each command declares its arguments once, on its `Input`, as a `CliContract`:
 `CliParam` for its options, `CliPositional` for words read by their place in
 the route rather than by a `--name`, and `CliConstraint` (`ExactlyOne`,
 `MutuallyExclusive`) for rules spanning more than one option. The SDK
-introspects its own command registry to render help — the CLI counterpart of
+introspects its own command registry to render help: the CLI counterpart of
 the OpenAPI document `modular_api` generates from its registered use cases.
 
 ```dart
@@ -306,7 +306,7 @@ class HelloInput extends Input {
 **Declaring is parsing.** The same declaration that help renders is the one the
 framework enforces before your `Input` reads a flag: it resolves `-n` to
 `--name`, applies the declared default (with its `reason`, which help renders
-alongside it — `default: World`), coerces `--a abc` to a validation error
+alongside it: `default: World`), coerces `--a abc` to a validation error
 instead of a silent `0`, rejects an option nobody declared, and checks
 `allowed` values. A positional works the same way through `CliPositional`, and
 a route pattern's `<placeholder>` is where it binds. Help therefore cannot
@@ -317,17 +317,17 @@ enforced beyond that; one with a non-empty contract is both.
 A **command** is always enforced: its declared `contract` always gains
 `--plan`, `--apply` and `--autoapprove` from the SDK, even when the command's
 own contract is `CliContract.none`. A route that changes something cannot be
-the one whose arguments nobody checks — and the three flags have to be
+the one whose arguments nobody checks, and the three flags have to be
 declared to be typed at all.
 
 **cli_router requires every option to precede the first positional** on the
-actual command line — an option can never follow an operand. `notes write
+actual command line: an option can never follow an operand. `notes write
 --plan today` parses; `notes write today --plan` is rejected. The `Usage:`
 line the SDK renders is written in that same order.
 
 **A `CliPositional`'s declaration must match its route pattern.** `show <id>`
-requires a `CliPositional` named `id`; `[<name>]` — a trailing optional
-segment — requires one declared `required: false`. A missing, extra,
+requires a `CliPositional` named `id`; `[<name>]` (a trailing optional
+segment) requires one declared `required: false`. A missing, extra,
 misnamed or wrongly-required/optional positional is an `ArgumentError` at
 registration, before the route can ever be dispatched to.
 
@@ -347,12 +347,12 @@ cli.shortcut(
 ```
 
 `mycli '1 2 +'` then runs the same handler as `mycli eval rpn '1 2 +'`, but
-through its own, narrower contract — here, with `globals: false`, none of the
-SDK's global options (`--plan`, `--apply`, `--json`, …) are accepted on the
-shortcut itself. `target` must already be registered; registering a shortcut
-to a route that does not exist is an `ArgumentError`. Like every other
-registration call, `globals` is required — there is no default that would
-silently decide it for you.
+through its own, narrower contract: here, with `globals: false`, none of the
+SDK's global options (`--plan`, `--apply`, `--json`, and so on) are accepted
+on the shortcut itself. `target` must already be registered; registering a
+shortcut to a route that does not exist is an `ArgumentError`. Like every
+other registration call, `globals` is required: there is no default that
+would silently decide it for you.
 
 **`suggest()`** answers "did you mean?" over the command catalog:
 
@@ -396,19 +396,19 @@ A `help` command you register yourself always wins over the built-in one.
 - `Command<I, O>` — changes something, as steps that are held to what they said
 - `--plan` / `--apply` / `--autoapprove` — declared, enforced and acted on for every command; neither of the first two is a default
 - `Approver` / `PlanSink` — how approval is taken and where a plan is filed, left to the host
-- `CliContract` — a route's declared arguments: `CliParam` (options), `CliPositional` (positionals) and `CliConstraint` (`ExactlyOne`, `MutuallyExclusive`) — renders help *and* enforces parsing
-- `DeclaredDefault<T>` — a default value that carries its own `reason`, which help renders alongside it
-- Native help — `help`, no args, `--help`/`-h` on stdout with exit 0; `help --json` for machines, with `kind` on every route. `--help` wins over enforcement on an otherwise-invalid invocation, so asking how a command is used never requires already knowing
+- `CliContract`: a route's declared arguments, `CliParam` (options), `CliPositional` (positionals) and `CliConstraint` (`ExactlyOne`, `MutuallyExclusive`); renders help *and* enforces parsing
+- `DeclaredDefault<T>`: a default value that carries its own `reason`, which help renders alongside it
+- Native help: `help`, no args, `--help`/`-h` on stdout with exit 0; `help --json` for machines, with `kind` on every route. `--help` wins over enforcement on an otherwise-invalid invocation, so asking how a command is used never requires already knowing
 - `Input` / `Output` — typed DTOs for I/O
 - `CommandException` — structured errors with code, message, exit code, and retryable flag
-- A router-level rejection (unknown command, missing required option, …) is reported through the same JSON error envelope as a `CommandException` — `error` (a machine-readable code), `message`, `exitCode`, `isRetryable`, and `details` when the SDK can name the specific parameter at fault
+- A router-level rejection (unknown command, missing required option, and so on) is reported through the same JSON error envelope as a `CommandException`: `error` (a machine-readable code), `message`, `exitCode`, `isRetryable`, and `details` when the SDK can name the specific parameter at fault
 - `ModularCli` + `ModuleBuilder` — module registration and routing
 - Root routes — register without a module prefix via `cli.query()` / `cli.command()`
 - `--json` global flag — machine-readable JSON output
 - `--quiet` global flag — suppress informational messages
 - TTY detection — automatic format selection
-- Semantic exit codes — 0 (OK), 1 (error), 2 (API error), 4 (not found), 5 (unauthorized), 6 (conflict), 7 (validation), 64 (usage), 65 (data error), 78 (config error)
-- Built on `cli_router` — GNU flags, middleware, modular mounting, and a grammar where every option precedes the first positional on the command line
+- Semantic exit codes: 0 (OK), 1 (error), 2 (API error), 4 (not found), 5 (unauthorized), 6 (conflict), 7 (validation), 64 (usage), 65 (data error), 78 (config error)
+- Built on `cli_router`: GNU flags, middleware, modular mounting, and a grammar where every option precedes the first positional on the command line
 
 ---
 

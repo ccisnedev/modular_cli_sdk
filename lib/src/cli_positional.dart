@@ -13,7 +13,7 @@ enum CliPositionalType {
   number,
 }
 
-/// One declared **positional** argument of a command — a word read by its
+/// One declared **positional** argument of a command: a word read by its
 /// place in the invocation rather than by a `--name`.
 ///
 /// Kept as its own type, distinct from [CliParam], because a positional has
@@ -44,7 +44,7 @@ class CliPositional {
 
   /// Whether this positional must be present. Must agree with the route
   /// pattern it is declared against: `true` for a required `<name>`
-  /// segment, `false` for a trailing optional `[<name>]` segment — checked
+  /// segment, `false` for a trailing optional `[<name>]` segment, checked
   /// at registration, not left to be discovered at runtime.
   final bool required;
 

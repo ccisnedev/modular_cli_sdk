@@ -6,7 +6,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## 0.6.0
 
-Built against `cli_router: { path: ../cli_router-0.2.0 }` — the constraint
+Built against `cli_router: { path: ../cli_router-0.2.0 }`. The constraint
 must become `cli_router: ^0.2.0` once that release is published to pub.dev.
 This entry is written against the API `cli_router` 0.2.0 carries as of commit
 `0f28e32`: `abbr` is required on every `OptionSpec`, `mount()` requires equal
@@ -15,42 +15,42 @@ rejected. No bug or missing API was found in it while building this one.
 
 ### Added
 
-- **`CliPositional`** — a declared positional argument (`.string`, `.integer`,
+- **`CliPositional`**: a declared positional argument (`.string`, `.integer`,
   `.number`), distinct from `CliParam` because it has no `--name`, no
   abbreviation and no repeatability. Renders in help and is enforced exactly
   like an option. `required` is a mandatory, no-default `bool`: a route
   pattern's trailing `[<name>]` segment is declared with `required: false`,
   and registration cross-checks the contract's positionals against the
-  pattern's — a missing, extra, misnamed, duplicated, or wrongly-required/
+  pattern's: a missing, extra, misnamed, duplicated, or wrongly-required/
   optional positional declaration is an `ArgumentError` at registration time,
   not a silent pass-through at dispatch
-- **`ModularCli.shortcut(pattern, {target, globals, contract, description})`**
-  — a declared route that runs another route's handler under a narrower
+- **`ModularCli.shortcut(pattern, {target, globals, contract, description})`**:
+  a declared route that runs another route's handler under a narrower
   contract (issue #27 section 4). `target` names the route it dispatches to
   by its router pattern (e.g. `'eval rpn'`); registration fails with an
   `ArgumentError` if `target` is not already registered. Like every other
-  registration call, `globals` has no default — a shortcut states explicitly
-  whether the SDK's global options (`--plan`, `--apply`, `--json`, …) are
-  accepted on it
-- **`CommandCatalog.suggest(word, {maxDistance = 2})`** (issue #27 section 6)
-  — the closest word in the catalog's route vocabulary to `word`, by
+  registration call, `globals` has no default: a shortcut states explicitly
+  whether the SDK's global options (`--plan`, `--apply`, `--json`, and so on)
+  are accepted on it
+- **`CommandCatalog.suggest(word, {maxDistance = 2})`** (issue #27 section 6):
+  the closest word in the catalog's route vocabulary to `word`, by
   restricted edit distance (Levenshtein plus one adjacent-transposition
   operation, i.e. Damerau-Levenshtein limited to non-overlapping
   transpositions), `<= maxDistance`; ties are broken by catalog registration
   order; returns `null` when nothing is within range. Wired into
   `unknownCommand` and `incomplete` rejections, so `commands shwo power`
   suggests `show`
-- **`CliContract`** — the full declared shape of a route's arguments:
+- **`CliContract`**: the full declared shape of a route's arguments:
   `options` (`CliParam`), `positionals` (`CliPositional`) and `constraints`
   (`CliConstraint`), replacing the bare `List<CliParam>? params`.
   `CliContract.none` declares nothing; `withOptions()` returns a copy with
   extra options appended (how the SDK adds `--plan`/`--apply`/`--autoapprove`
   to a command's own contract without mutating it)
-- **`CliConstraint`, `ExactlyOne`, `MutuallyExclusive`** — cross-field rules
+- **`CliConstraint`, `ExactlyOne`, `MutuallyExclusive`**: cross-field rules
   checked once every option has been read and defaulted, over the set of
   option names actually *present* on the invocation (a `DeclaredDefault` does
   not count as present)
-- **`DeclaredDefault<T>`** — a default value wrapped with a required `reason`,
+- **`DeclaredDefault<T>`**: a default value wrapped with a required `reason`,
   so a default is never silent; help renders `default: <value>` from it
 - **`--help` wins over enforcement.** `<command> --help` on an otherwise
   invalid or incomplete invocation now always renders that command's contract
@@ -62,15 +62,15 @@ rejected. No bug or missing API was found in it while building this one.
   with an unrelated bad option before its own contract could be resolved are
   now all reported as `'<what you typed>' is not a complete command`, instead
   of the router's generic `incomplete command` / `does not continue this
-  command` wording — whenever no contract names the exact invocation but at
+  command` wording, whenever no contract names the exact invocation but at
   least one registered route continues it
 - **Exit codes `dataError` (65, `EX_DATAERR`) and `configError` (78,
-  `EX_CONFIG`)**, alongside the existing eight — `ExitCode.all` now has 10
-  entries
-- `test/cli_positional_test.dart`, `test/cli_contract_test.dart` — dedicated
+  `EX_CONFIG`)**, alongside the existing eight (`ExitCode.all` now has 10
+  entries)
+- `test/cli_positional_test.dart`, `test/cli_contract_test.dart`: dedicated
   coverage for the two new declaration types
 
-### Changed — BREAKING
+### Changed (BREAKING)
 
 - **`params: List<CliParam>?` is gone; every route declares `contract:
   CliContract` instead.** `command(...)` / `query(...)` on both `ModularCli`
@@ -93,17 +93,17 @@ rejected. No bug or missing API was found in it while building this one.
   `{"error": "INVALID_USAGE" | "VALIDATION_FAILED", "message": "<text>",
   "exitCode": <int>, "isRetryable": false, "kind": ..., "contract": ...,
   "details": {"parameter": "<name>"}}` when the SDK can name the offending
-  parameter — the same shape `CommandException.toJson()` already used, so a
+  parameter, the same shape `CommandException.toJson()` already used, so a
   `--json` caller sees one error vocabulary regardless of whether the
   rejection came from `cli_router` itself or from a handler. Previously, a
   caller parsing `--json` output for a *specific* structured error had to
   match on free text; it now matches on `error`
-- **`help --json`'s `route` and `kind` keys** — `kind` is the route's
+- **`help --json`'s `route` and `kind` keys**: `kind` is the route's
   `CommandKind` (`"query"` / `"command"`); a JSON consumer keying off the
   wrong field will find one missing rather than silently reading the other's
   value
-- **The generated `Usage:` line orders options before positionals** —
-  `Usage: notes write [options] <name>`, not `<name> [options]` — because
+- **The generated `Usage:` line orders options before positionals**:
+  `Usage: notes write [options] <name>`, not `<name> [options]`, because
   `cli_router`'s grammar requires every option to precede the first
   positional on the actual command line (an option can never follow an
   operand); the old order documented an invocation the router would reject
@@ -118,8 +118,8 @@ rejected. No bug or missing API was found in it while building this one.
   supplying both a flag and the positional is caught as the two-members-
   present violation it always was
 - **Every occurrence of a repeatable option is validated**, not just the
-  first — `repeat --count 1 --count bad` is now a validation failure instead
-  of silently accepting the first value and ignoring the rest
+  first (`repeat --count 1 --count bad` is now a validation failure instead
+  of silently accepting the first value and ignoring the rest)
 - **A `DeclaredDefault` is checked against its own declaration.** An
   enumeration's default that is not one of its `values` is an
   `ArgumentError` at registration time; a `mustExist`-constrained path's

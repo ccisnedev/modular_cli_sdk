@@ -5,14 +5,14 @@ enum RouteSegKind {
   /// A fixed word the caller must type verbatim: `show`.
   literal,
 
-  /// `<name>` — a positional that must be present.
+  /// `<name>`: a positional that must be present.
   requiredParam,
 
-  /// `[<name>]` — a positional that may be omitted; only ever the last
+  /// `[<name>]`: a positional that may be omitted; only ever the last
   /// segment of a pattern.
   optionalParam,
 
-  /// `*` — collects every remaining token; only ever the last segment.
+  /// `*`: collects every remaining token; only ever the last segment.
   wildcard,
 }
 
@@ -35,8 +35,8 @@ class RouteSeg {
 }
 
 /// Parses a `cli_router` route pattern the same way `cli_router` itself
-/// does, so this SDK can reason — at registration time, before the router
-/// ever sees the pattern — about which positionals a route declares, which
+/// does, so this SDK can reason, at registration time and before the router
+/// ever sees the pattern, about which positionals a route declares, which
 /// one (if any) is the trailing optional positional, and whether it ends in
 /// a wildcard.
 ///
@@ -141,7 +141,7 @@ class RoutePattern {
       segments.isNotEmpty && segments.last.kind == RouteSegKind.wildcard;
 
   /// Every positional name this pattern binds, required ones first, then the
-  /// trailing optional one (if any) — the same order `cli_router` itself
+  /// trailing optional one (if any): the same order `cli_router` itself
   /// reports as `CliRoute.positionals`.
   List<String> get positionals => [
     ...requiredPositionals,
@@ -176,8 +176,8 @@ class RoutePattern {
 
 /// Checks that [contract]'s declared positionals match [route]'s positional
 /// segments exactly: same names, same order, same required/optional
-/// cardinality, no duplicates. Throws [ArgumentError] — a registration-time,
-/// build-time mistake, never a runtime rejection — the moment any of that
+/// cardinality, no duplicates. Throws [ArgumentError] (a registration-time,
+/// build-time mistake, never a runtime rejection) the moment any of that
 /// does not hold.
 ///
 /// This is what makes a mismatch like `show <id>` registered against

@@ -1,6 +1,6 @@
 // Codex's review of PR #29 (feat/0.6.0) found ten concrete defects. Each
 // group below reproduces the exact failure described in the review, then
-// asserts the corrected behavior — through `ModularCli.run()` wherever the
+// asserts the corrected behavior, through `ModularCli.run()` wherever the
 // defect is only observable at that level, or as a direct unit test of the
 // constructor/registration call that now throws.
 //
@@ -194,7 +194,7 @@ ModularCli _buildShortcutCli() {
   return cli;
 }
 
-// ── Finding 4 fixture: `show <id>` — the exact "typo" case from the
+// ── Finding 4 fixture: `show <id>`, the exact "typo" case from the
 //    review, plus a `note [<name>]` route for the optional-cardinality
 //    cases ────────────────────────────────────────────────────────────────
 
@@ -671,7 +671,7 @@ void main() {
     });
   });
 
-  // ── 7. Route identity — help, focused help, and JSON errors ─────────────
+  // ── 7. Route identity: help, focused help, and JSON errors ─────────────
   group(
     'finding 7: an optional-positional route is identified consistently',
     () {

@@ -30,7 +30,7 @@ enum CliParamType {
 ///
 /// Wrapped rather than a bare value so a default is never silent: [reason]
 /// says why the default is what it is, and that reason is what help renders
-/// alongside it — "default: World" on its own answers nothing a caller could
+/// alongside it. "default: World" on its own answers nothing a caller could
 /// not already see from the flag being optional.
 class DeclaredDefault<T extends Object> {
   const DeclaredDefault(this.value, {required this.reason});
@@ -42,7 +42,7 @@ class DeclaredDefault<T extends Object> {
   String toString() => '$value';
 }
 
-/// One declared **option** of a command — never a positional; see
+/// One declared **option** of a command: never a positional; see
 /// [CliPositional] for that.
 ///
 /// The declaration is the single source of truth: the framework renders help
@@ -50,7 +50,7 @@ class DeclaredDefault<T extends Object> {
 /// contract the command does not actually apply.
 ///
 /// Every field that changes behavior is required and named, mirroring
-/// `cli_router`'s own [OptionSpec] — there is no default shape an option
+/// `cli_router`'s own [OptionSpec]: there is no default shape an option
 /// falls back on. A flag is never `required` (there is nothing to be
 /// "missing"; either it was read or not).
 ///
@@ -123,7 +123,7 @@ class CliParam {
 
   /// For [CliParamType.path]: whether the path must exist on disk to be
   /// accepted. Required precisely because there is no sensible default for
-  /// it — a path option that does not say either way would silently accept
+  /// it: a path option that does not say either way would silently accept
   /// paths nobody checked.
   final bool? mustExist;
 
@@ -249,8 +249,8 @@ class CliParam {
 
   /// The shape `cli_router` enforces before this option ever reaches the
   /// command: which flags exist, which are required, which repeat. Type,
-  /// enumeration membership and path existence are this SDK's own concern —
-  /// `cli_router` knows nothing about them — and are checked by [parse].
+  /// enumeration membership and path existence are this SDK's own concern
+  /// (`cli_router` knows nothing about them) and are checked by [parse].
   OptionSpec toOptionSpec() => isFlag
       ? OptionSpec.flag(name, abbr: abbr, repeatable: repeatable)
       : OptionSpec.value(

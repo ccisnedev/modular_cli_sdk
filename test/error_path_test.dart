@@ -163,12 +163,12 @@ void main() {
       expect(result.stderr, isNot(contains('math add')));
     });
 
-    // `math --verbose` is not `incomplete` — the router rejects the
+    // `math --verbose` is not `incomplete`: the router rejects the
     // undeclared `--verbose` on its own terms (`unknownOption`), before it
     // ever gets to judge whether `math` alone continues a route. The
     // "is not a complete command" rewrite is keyed on kind == incomplete
     // only (see `ModularCli._emitRejectionError`), so a different kind of
-    // rejection under an incomplete prefix keeps the router's own message —
+    // rejection under an incomplete prefix keeps the router's own message:
     // it still narrows the shown commands to what `math` could complete
     // into, it just does not relabel *why* the invocation failed.
     test(

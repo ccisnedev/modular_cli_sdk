@@ -3,11 +3,11 @@ import 'package:cli_router/cli_router.dart';
 /// Typed readers over a [CliRequest]'s already-validated options.
 ///
 /// By the time a command's `Input` factory runs, [applyDeclaredContract] has
-/// already checked every option against its [CliParam] — type, allowed
-/// values, path existence — and has synthesized any [DeclaredDefault] that
+/// already checked every option against its [CliParam] (type, allowed
+/// values, path existence) and has synthesized any [DeclaredDefault] that
 /// applies. These readers do not re-validate; they only give back what is
 /// already known to be there, in the shape the command declared it as. A
-/// declared default is never re-supplied here with `??` — once declared, it
+/// declared default is never re-supplied here with `??`: once declared, it
 /// is already in the request, and a second fallback in the command's own
 /// code would only hide what the contract already says.
 extension CliRequestValues on CliRequest {

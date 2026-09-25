@@ -160,7 +160,7 @@ class _ShowCommand implements Query<_ShowInput, _SumOutput> {
 
 // ── Declared command that takes NO options at all ────────────────────────────
 //
-// `CliContract.none` says "accepts no option whatsoever" explicitly — there is
+// `CliContract.none` says "accepts no option whatsoever" explicitly: there is
 // no undeclared escape hatch left in 0.6.0 for a command to leave unenforced,
 // so what used to be "an undeclared command ignores an unknown flag" is no
 // longer expressible: every command is enforced against its contract, and an
@@ -332,7 +332,7 @@ void main() {
   // able from one whose arguments went unchecked entirely. That is precisely
   // the command most likely to be mis-invoked — `init --host foo` ran, doing
   // nothing of what the flag implied. `CliContract.none` is now that explicit,
-  // enforced statement — and, in 0.6.0, the only kind of "no contract" there is.
+  // enforced statement, and, in 0.6.0, the only kind of "no contract" there is.
   group('a command that declares an EMPTY contract accepts no option', () {
     test('a bare invocation runs', () async {
       final result = await _run(['init']);

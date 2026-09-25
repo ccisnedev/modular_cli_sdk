@@ -13,7 +13,7 @@
 ///  6  State conflict (FSM transition rejected)
 ///  7  Validation failed (bad input)
 /// 64  Invalid usage / command not found (EX_USAGE)
-/// 65  Data error — malformed input data (EX_DATAERR)
+/// 65  Data error (malformed input data) (EX_DATAERR)
 /// 78  Configuration error (EX_CONFIG)
 /// ```
 class ExitCode {
