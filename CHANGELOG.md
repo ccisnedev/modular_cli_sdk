@@ -26,12 +26,20 @@ rejected. No bug or missing API was found in it while building this one.
   not a silent pass-through at dispatch
 - **`ModularCli.shortcut(pattern, {target, globals, contract, description})`**:
   a declared route that runs another route's handler under a narrower
-  contract (issue #27 section 4). `target` names the route it dispatches to
-  by its router pattern (e.g. `'eval rpn'`); registration fails with an
-  `ArgumentError` if `target` is not already registered. Like every other
-  registration call, `globals` has no default: a shortcut states explicitly
-  whether the SDK's global options (`--plan`, `--apply`, `--json`, and so on)
-  are accepted on it
+  contract (issue #27 section 4), dispatched through the shortcut's *own*
+  contract, never the target's. `target` names the route it dispatches to by
+  its router pattern (e.g. `'eval rpn'`) and must match exactly one
+  registered route; registration fails with an `ArgumentError` if `target` is
+  not registered, or if it is ambiguous (matches more than one route). A
+  shortcut never declares its own positionals: they are derived from
+  `target`'s own declaration, by name, and rebound to whichever cardinality
+  `pattern` itself gives them — declaring one directly in `contract` is an
+  `ArgumentError`. `contract` is optional and defaults to `CliContract.none`,
+  so issue #27's own example, `shortcut('<program>', target: 'eval rpn',
+  globals: false)`, works with no `contract:` argument at all. Like every
+  other registration call, `globals` has no default: a shortcut states
+  explicitly whether the SDK's global options (`--plan`, `--apply`, `--json`,
+  and so on) are accepted on it
 - **`CommandCatalog.suggest(word, {maxDistance = 2})`** (issue #27 section 6):
   the closest word in the catalog's route vocabulary to `word`, by
   restricted edit distance (Levenshtein plus one adjacent-transposition
@@ -86,18 +94,33 @@ rejected. No bug or missing API was found in it while building this one.
   `Usage: eval rpn [options] [<program>]`, with the bracket and the
   "required"/"optional" facet both taken from the pattern and the
   declaration, not hand-rolled
-- **The JSON error envelope's `error` field is now a machine-readable code,
-  never a raw message.** A router-level rejection (unknown command, missing
-  required option, …) previously surfaced under `--json` as `{"error":
-  "<raw human-readable message>", "kind": ..., "contract": ...}`. It is now
-  `{"error": "INVALID_USAGE" | "VALIDATION_FAILED", "message": "<text>",
-  "exitCode": <int>, "isRetryable": false, "kind": ..., "contract": ...,
-  "details": {"parameter": "<name>"}}` when the SDK can name the offending
-  parameter, the same shape `CommandException.toJson()` already used, so a
-  `--json` caller sees one error vocabulary regardless of whether the
-  rejection came from `cli_router` itself or from a handler. Previously, a
-  caller parsing `--json` output for a *specific* structured error had to
-  match on free text; it now matches on `error`
+- **Every error, under `--json`, is now one shape, nested under `"error"`.**
+  Previously a router-level rejection (unknown command, missing required
+  option, …) surfaced as `{"error": "<raw human-readable message>", "kind":
+  ..., "contract": ...}`, a different shape from `CommandException.toJson()`,
+  and carried a `kind` field and an `isRetryable` flag. Both are now:
+  `{"error": {"id": "<kebab-case-id>", "message": "<text>", "exitCode":
+  <int>, "contract": ..., "details": {...}}}` — `contract` and `details` are
+  only present when they apply, and there is no `kind` and no `isRetryable`.
+  A router rejection's `id` comes from a fixed table (documented in
+  README.md's "Error handling" section): `unknown-command`,
+  `incomplete-command`, `missing-argument`, `extra-argument`,
+  `unknown-option`, `misplaced-option`, `missing-required-option`,
+  `repeated-option`, `invalid-short-option`, `missing-value`,
+  `unexpected-value`. An SDK-enforced contract violation (a required option
+  missing, the wrong type, an allow-list mismatch, a failed `CliConstraint`)
+  raises a `CommandException` with `id: 'validation-failed'`, a twelfth id
+  not in that table, since it is not a router rejection. A `--json` caller
+  now has one error vocabulary and one place to look for it, regardless of
+  whether the rejection came from `cli_router`, the SDK's own enforcement, or
+  a handler's own `CommandException`
+- **`CommandException.code` is renamed to `id`, and validated.** `id` is
+  `required`, kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`), and throws
+  `ArgumentError` at construction otherwise; `exitCode` is now `required`
+  with no default. `details` (`Map<String, dynamic>?`, optional, free-form)
+  replaces the old fixed field set, so a domain error — for example
+  calculatrix's — can carry `token`/`position` through it. `isRetryable` is
+  removed entirely; nothing in either CLI built on this SDK read it
 - **`help --json`'s `route` and `kind` keys**: `kind` is the route's
   `CommandKind` (`"query"` / `"command"`); a JSON consumer keying off the
   wrong field will find one missing rather than silently reading the other's
@@ -107,6 +130,21 @@ rejected. No bug or missing API was found in it while building this one.
   `cli_router`'s grammar requires every option to precede the first
   positional on the actual command line (an option can never follow an
   operand); the old order documented an invocation the router would reject
+- **`CliParam`'s `abbr` and `defaultValue` are required on every factory
+  (`.string`, `.integer`, `.number`, `.flag`, `.enumeration`), but stay
+  nullable.** Previously both were optional parameters that silently
+  defaulted to `null`/absent, so a call site could not tell "no abbreviation,
+  on purpose" from "I forgot the abbreviation." Every call site now writes
+  `abbr: null` or `defaultValue: null` explicitly when it means that
+- **`contract` is required, with no default, on `query()` and `command()`**
+  (`ModularCli` and `ModuleBuilder` alike). `CliContract.none` remains
+  available and is one explicit keystroke away; what is gone is a route
+  silently getting an empty contract because `contract:` was left off
+- **`ModularCli(...)` requires `suggestionDistance`, with no default.** The
+  "did you mean" suggestion introduced in this release (`CommandCatalog.
+  suggest`) needs a distance threshold from somewhere; leaving it defaulted
+  would mean most call sites never think about it. Every construction now
+  passes one explicitly (this SDK's own example and tests use `2`)
 
 ### Fixed
 
@@ -144,6 +182,25 @@ rejected. No bug or missing API was found in it while building this one.
   requires exactly one literal word in `cli_router`'s grammar, so an
   empty-name module's routes are registered directly on the root router
   instead of being mounted
+- **The catalog's handler map is keyed by route, not by bare name.** Two
+  routes that share a leading word but differ in arity — `show` and `show
+  <id>` — previously collided in a name-keyed map, so registering both left
+  only one dispatchable; each is now keyed by its own `CliRoute` and both
+  dispatch correctly
+- **`repeat --count bad --help` is now a validation failure, not a help
+  screen.** `--help` short-circuiting enforcement (see above) was only meant
+  to apply when the invocation is *incomplete*, not when a supplied value is
+  outright invalid; `--count bad` is a validation failure regardless of
+  `--help`, so it no longer exits `0`
+- **`globals: false` on a route now omits the SDK's global options
+  (`--plan`, `--apply`, `--json`, `--autoapprove`, …) from that route's own
+  focused help**, not just from enforcement. Previously a route that
+  declined the global options still had them listed in `<command> --help`,
+  which documented flags the route would then reject
+- **A wildcard positional's usage line renders its own `*`.** `batch *`'s
+  generated `Usage:` line previously dropped the trailing `*`, documenting
+  an invocation (`batch`, no arguments) that the route does not actually
+  accept
 
 ### Notes
 

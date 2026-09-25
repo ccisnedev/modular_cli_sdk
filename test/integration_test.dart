@@ -15,8 +15,10 @@ class _GreetInput extends Input {
     options: [
       CliParam.string(
         'name',
+        abbr: null,
         required: false,
         repeatable: false,
+        defaultValue: null,
         description: 'Who to greet',
       ),
     ],
@@ -61,8 +63,10 @@ class _RequiredInput extends Input {
     options: [
       CliParam.string(
         'value',
+        abbr: null,
         required: false,
         repeatable: false,
+        defaultValue: null,
         description: 'The value to echo',
       ),
     ],
@@ -109,7 +113,7 @@ class _FailingCommand implements Query<_GreetInput, _GreetOutput> {
   @override
   Future<_GreetOutput> execute() async {
     throw CommandException(
-      code: 'BROKEN',
+      id: 'broken',
       message: 'Intentional failure',
       exitCode: ExitCode.genericError,
     );
@@ -160,7 +164,7 @@ class _MemorySink implements IOSink {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 ModularCli _buildTestCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
 
   cli.module('greetings', (m) {
     m.query<_GreetInput, _GreetOutput>(
@@ -242,7 +246,7 @@ void main() {
 
       expect(code, ExitCode.genericError);
       final parsed = jsonDecode(stderrSink.output);
-      expect(parsed['error'], 'BROKEN');
+      expect(parsed['error']['id'], 'broken');
     });
 
     test(
@@ -313,7 +317,7 @@ void main() {
     test('should apply middleware in registration order', () async {
       final log = <String>[];
 
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
       cli.use(
         (next) => (req) async {
           log.add('A-before');
@@ -336,6 +340,7 @@ void main() {
           'cmd',
           (req) => _GreetCommand(_GreetInput(name: 'MW')),
           globals: true,
+          contract: CliContract.none,
           description: 'Test middleware order',
         );
       });
@@ -350,7 +355,7 @@ void main() {
     /// Builds a CLI with both root commands and mounted modules,
     /// exercising the full coexistence scenario.
     ModularCli buildRootTestCli() {
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
 
       cli.query<_GreetInput, _GreetOutput>(
         'ping',

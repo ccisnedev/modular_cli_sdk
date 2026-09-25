@@ -70,10 +70,7 @@ class TextCliOutput implements CliOutput {
 
   @override
   void writeError(CommandException error) {
-    stderr.writeln('Error: ${error.message} [${error.code}]');
-    if (error.isRetryable) {
-      stderr.writeln('(retryable)');
-    }
+    stderr.writeln('Error: ${error.message} [${error.id}]');
     if (error.details != null && error.details!.isNotEmpty) {
       for (final entry in error.details!.entries) {
         stderr.writeln('  ${entry.key}: ${entry.value}');

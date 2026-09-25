@@ -51,7 +51,11 @@ Future<int> runExample(
   // [approver] and [planSink] are the two decisions the SDK leaves to the host:
   // how an approval is taken, and whether a plan is kept on disk. Passing them
   // in is also what lets the suite exercise `--apply` without a terminal.
-  final cli = ModularCli(approver: approver, planSink: planSink);
+  final cli = ModularCli(
+    approver: approver,
+    planSink: planSink,
+    suggestionDistance: 2,
+  );
 
   // The root command — what the bare invocation runs. Registering it means this
   // CLI, not the help, owns the empty invocation.
@@ -59,6 +63,7 @@ Future<int> runExample(
     '',
     (req) => StatusQuery(StatusInput.fromCliRequest(req)),
     globals: true,
+    contract: CliContract.none,
     description: 'Show the CLI status',
   );
 
@@ -67,6 +72,7 @@ Future<int> runExample(
     'version',
     (req) => VersionQuery(VersionInput.fromCliRequest(req)),
     globals: true,
+    contract: CliContract.none,
     description: 'Print application version',
   );
 

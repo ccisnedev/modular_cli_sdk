@@ -49,17 +49,15 @@ class _MemorySink implements IOSink {
 }
 
 CommandException _sampleError({
-  String code = 'TEST_ERROR',
+  String id = 'test-error',
   String message = 'Something failed',
   int exitCode = ExitCode.genericError,
-  bool isRetryable = false,
   Map<String, dynamic>? details,
 }) {
   return CommandException(
-    code: code,
+    id: id,
     message: message,
     exitCode: exitCode,
-    isRetryable: isRetryable,
     details: details,
   );
 }
@@ -113,9 +111,10 @@ void main() {
     test('should write error as JSON to stderr', () {
       buildOutput().writeError(_sampleError());
 
-      final parsed = jsonDecode(stderrSink.output);
-      expect(parsed['error'], 'TEST_ERROR');
-      expect(parsed['message'], 'Something failed');
+      final parsed = jsonDecode(stderrSink.output) as Map<String, dynamic>;
+      final error = parsed['error'] as Map<String, dynamic>;
+      expect(error['id'], 'test-error');
+      expect(error['message'], 'Something failed');
     });
 
     test('should suppress messages when quiet is true', () {
@@ -168,7 +167,7 @@ void main() {
       buildOutput().writeError(_sampleError());
       expect(stderrSink.output, contains('Error:'));
       expect(stderrSink.output, contains('Something failed'));
-      expect(stderrSink.output, contains('TEST_ERROR'));
+      expect(stderrSink.output, contains('test-error'));
     });
 
     test('should write message as plain text', () {
@@ -179,11 +178,6 @@ void main() {
     test('should suppress messages when quiet is true', () {
       buildOutput(isQuiet: true).writeMessage('silent');
       expect(stdoutSink.output, isEmpty);
-    });
-
-    test('should include retryable hint for retryable errors', () {
-      buildOutput().writeError(_sampleError(isRetryable: true));
-      expect(stderrSink.output, contains('retryable'));
     });
 
     test('should include details in error output', () {

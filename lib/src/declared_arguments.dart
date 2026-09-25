@@ -94,3 +94,23 @@ List<ParsedOption> _findAll(List<ParsedOption> options, String name) => [
   for (final option in options)
     if (option.spec.name == name) option,
 ];
+
+/// Type-checks every option value the caller actually supplied on [req]
+/// against [contract], without synthesizing defaults, coercing positionals
+/// or checking constraints.
+///
+/// Exists to run *before* a route answers `--help` (issue #27 section 5:
+/// "help loses to an option error"): a missing required option is still
+/// caught by `cli_router` itself before any handler runs, and a constraint
+/// violation is still only checked inside [applyDeclaredContract], so both
+/// correctly stay skipped when `--help` wins. A supplied value that fails
+/// to parse (`repeat --count bad --help`) is the one kind of failure that
+/// must not lose to `--help`, because unlike the other two, `cli_router`
+/// itself has no way to catch it: nothing here runs until this SDK does.
+void validateSuppliedOptionValues(CliRequest req, CliContract contract) {
+  for (final param in contract.options) {
+    for (final occurrence in _findAll(req.options, param.name)) {
+      param.parse(occurrence.value ?? '');
+    }
+  }
+}

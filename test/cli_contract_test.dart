@@ -89,6 +89,7 @@ void main() {
               abbr: 'n',
               required: true,
               repeatable: false,
+              defaultValue: null,
             ),
           ],
         );
@@ -132,7 +133,7 @@ void main() {
         () => contract.validateConstraints(const {}),
         throwsA(
           isA<CommandException>()
-              .having((e) => e.code, 'code', 'VALIDATION_FAILED')
+              .having((e) => e.id, 'id', 'validation-failed')
               .having((e) => e.exitCode, 'exitCode', ExitCode.validationFailed),
         ),
       );

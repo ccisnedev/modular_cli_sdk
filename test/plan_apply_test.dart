@@ -359,8 +359,10 @@ void main() {
           options: [
             CliParam.string(
               'name',
+              abbr: null,
               required: false,
               repeatable: false,
+              defaultValue: null,
               description: 'Who',
             ),
           ],
@@ -394,7 +396,11 @@ ModularCli _cliWith(
   PlanSink? planSink,
   CliContract contract = CliContract.none,
 }) {
-  final cli = ModularCli(approver: approver, planSink: planSink);
+  final cli = ModularCli(
+    approver: approver,
+    planSink: planSink,
+    suggestionDistance: 2,
+  );
   if (command is TouchCommand) {
     cli.command<TouchInput, TouchOutput>(
       'touch',

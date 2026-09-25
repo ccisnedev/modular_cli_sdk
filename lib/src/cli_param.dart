@@ -132,7 +132,7 @@ class CliParam {
   /// A switch that needs no value: `--verbose`, `-v`.
   factory CliParam.flag(
     String name, {
-    String? abbr,
+    required String? abbr,
     required bool repeatable,
     String? description,
   }) => CliParam._(
@@ -147,10 +147,10 @@ class CliParam {
   /// An option carrying a string value: `--name value`.
   factory CliParam.string(
     String name, {
-    String? abbr,
+    required String? abbr,
     required bool required,
     required bool repeatable,
-    DeclaredDefault<String>? defaultValue,
+    required DeclaredDefault<String>? defaultValue,
     String? description,
   }) => CliParam._(
     name: name,
@@ -165,10 +165,10 @@ class CliParam {
   /// An option whose value is a whole number: `--count 3`.
   factory CliParam.integer(
     String name, {
-    String? abbr,
+    required String? abbr,
     required bool required,
     required bool repeatable,
-    DeclaredDefault<int>? defaultValue,
+    required DeclaredDefault<int>? defaultValue,
     String? description,
   }) => CliParam._(
     name: name,
@@ -183,10 +183,10 @@ class CliParam {
   /// An option whose value is a decimal number: `--ratio 1.5`.
   factory CliParam.number(
     String name, {
-    String? abbr,
+    required String? abbr,
     required bool required,
     required bool repeatable,
-    DeclaredDefault<double>? defaultValue,
+    required DeclaredDefault<double>? defaultValue,
     String? description,
   }) => CliParam._(
     name: name,
@@ -201,11 +201,11 @@ class CliParam {
   /// An option restricted to a closed set of values: `--format text`.
   factory CliParam.enumeration(
     String name, {
-    String? abbr,
+    required String? abbr,
     required bool required,
     required bool repeatable,
     required List<String> values,
-    DeclaredDefault<String>? defaultValue,
+    required DeclaredDefault<String>? defaultValue,
     String? description,
   }) => CliParam._(
     name: name,
@@ -225,11 +225,11 @@ class CliParam {
   /// answer is the safe one to assume silently.
   factory CliParam.path(
     String name, {
-    String? abbr,
+    required String? abbr,
     required bool required,
     required bool repeatable,
     required bool mustExist,
-    DeclaredDefault<String>? defaultValue,
+    required DeclaredDefault<String>? defaultValue,
     String? description,
   }) => CliParam._(
     name: name,
@@ -307,7 +307,7 @@ class CliParam {
   };
 
   CommandException _rejected(String reason) => CommandException(
-    code: 'VALIDATION_FAILED',
+    id: 'validation-failed',
     message: '--$name: $reason',
     exitCode: ExitCode.validationFailed,
     details: {'parameter': name},

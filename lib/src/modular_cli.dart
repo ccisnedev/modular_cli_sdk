@@ -16,7 +16,6 @@ import 'module_builder.dart';
 import 'output.dart';
 import 'plan.dart';
 import 'query.dart';
-import 'route_pattern.dart';
 
 /// Entry point for a modular CLI application.
 ///
@@ -53,21 +52,36 @@ class ModularCli {
   /// [planSink] files the plan that `--plan` produces, and returns where it put
   /// it. Defaults to filing it nowhere: the plan is printed, and whether a
   /// project keeps plans on disk is that project's decision, not this SDK's.
-  ModularCli({Approver? approver, PlanSink? planSink})
-    : _approver = approver,
-      _planSink = planSink;
+  ///
+  /// [suggestionDistance] is the maximum restricted edit distance a "did you
+  /// mean" suggestion (both from [suggest] and from a rejected invocation's
+  /// own error message) is allowed to be, in the sense
+  /// [CommandCatalog.suggest] defines it. Required, not defaulted: how
+  /// forgiving a typo suggestion should be is a fact about this CLI's own
+  /// vocabulary (a CLI with many short, similar command words wants a
+  /// tighter distance than one with few, long ones), not a number this SDK
+  /// should assume silently.
+  ModularCli({
+    Approver? approver,
+    PlanSink? planSink,
+    required int suggestionDistance,
+  }) : _approver = approver,
+       _planSink = planSink,
+       _suggestionDistance = suggestionDistance;
 
   final Approver? _approver;
   final PlanSink? _planSink;
+  final int _suggestionDistance;
 
   late final CliRouter _root = CliRouter(globalOptions: globalOptionSpecs);
   final CommandCatalog _catalog = CommandCatalog();
 
-  /// Every registered route's dispatch handler, keyed by
-  /// [CommandContract.name]. Shared by every [ModuleBuilder] this instance
-  /// builds, so [shortcut] can find a target route's handler no matter
-  /// which module registered it.
-  final Map<String, CliHandler> _handlersByName = {};
+  /// Every registered route's business logic, keyed by
+  /// [CommandContract.route]. Shared by every [ModuleBuilder] this instance
+  /// builds, so [shortcut] can find a target route's logic no matter which
+  /// module registered it, and dispatch it under the shortcut's own
+  /// contract. See [ContractAwareBody].
+  final Map<String, ContractAwareBody> _bodiesByName = {};
 
   /// Every registered route with its declared contract — the single source help
   /// is rendered from.
@@ -96,13 +110,13 @@ class ModularCli {
 
   /// Register a root-level [Query] (no module prefix).
   ///
-  /// [contract] defaults to [CliContract.none]: see [ModuleBuilder.query].
+  /// [contract] is required: see [ModuleBuilder.query].
   ModularCli query<I extends Input, O extends Output>(
     String route,
     Query<I, O> Function(CliRequest req) queryFactory, {
     required bool globals,
+    required CliContract contract,
     String? description,
-    CliContract contract = CliContract.none,
   }) {
     _builderFor('', _root).query<I, O>(
       route,
@@ -119,13 +133,13 @@ class ModularCli {
   /// Root routes have dispatch priority over mounted modules (inherent to
   /// `cli_router`'s two-phase dispatch).
   ///
-  /// [contract] defaults to [CliContract.none]: see [ModuleBuilder.command].
+  /// [contract] is required: see [ModuleBuilder.command].
   ModularCli command<I extends Input, O extends Output>(
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
     required bool globals,
+    required CliContract contract,
     String? description,
-    CliContract contract = CliContract.none,
   }) {
     _builderFor('', _root).command<I, O>(
       route,
@@ -167,8 +181,14 @@ class ModularCli {
   /// available through a shortcut route itself; a caller is directed to
   /// [target]'s own help.
   ///
-  /// Throws [ArgumentError] if [target] has not been registered yet:
-  /// shortcuts must be declared after their target.
+  /// [contract] declares only options and constraints: a shortcut's
+  /// positionals are taken from [target]'s own positional declarations,
+  /// matched by name, and bound to whichever cardinality [pattern] itself
+  /// gives them. See [ModuleBuilder.shortcut] for the full account,
+  /// including issue #27's own example.
+  ///
+  /// Throws [ArgumentError] if [target] names no registered route, more
+  /// than one, or if [contract] declares a positional directly.
   ModularCli shortcut(
     String pattern, {
     required String target,
@@ -176,35 +196,27 @@ class ModularCli {
     CliContract contract = CliContract.none,
     String? description,
   }) {
-    final handler = _handlersByName[target];
-    if (handler == null) {
-      throw ArgumentError(
-        'shortcut("$pattern") targets "$target", which is not a '
-        'registered route. Register the target with query(), command() or '
-        'a ModuleBuilder before declaring a shortcut to it.',
-      );
-    }
-    validateContractPositionals(pattern, contract);
-    _root.cmd(
+    _builderFor('', _root).shortcut(
       pattern,
-      handler,
-      options: contract.toOptionSpecs(),
+      target: target,
       globals: globals,
+      contract: contract,
       description: description,
     );
     return this;
   }
 
   /// The registered route word closest to [word]: see
-  /// [CommandCatalog.suggest].
-  String? suggest(String word, {int maxDistance = 2}) =>
-      _catalog.suggest(word, maxDistance: maxDistance);
+  /// [CommandCatalog.suggest]. Uses this CLI's own [_suggestionDistance]
+  /// unless [maxDistance] overrides it for this one call.
+  String? suggest(String word, {int? maxDistance}) =>
+      _catalog.suggest(word, maxDistance: maxDistance ?? _suggestionDistance);
 
   ModuleBuilder _builderFor(String name, CliRouter router) => ModuleBuilder(
     moduleName: name,
     router: router,
     catalog: _catalog,
-    handlersByName: _handlersByName,
+    bodiesByName: _bodiesByName,
     approver: _approver,
     planSink: _planSink,
   );
@@ -259,6 +271,7 @@ class ModularCli {
       'help *',
       (req) => HelpQuery(HelpInput(_catalog, focus: req.rest)),
       globals: true,
+      contract: CliContract.none,
       description: 'Show the commands this CLI accepts',
     );
   }
@@ -307,12 +320,25 @@ class ModularCli {
       ? ExitCode.invalidUsage
       : ExitCode.validationFailed;
 
-  /// Machine-readable counterpart of [_exitCodeFor], in the same
-  /// `SCREAMING_SNAKE_CASE` a [CommandException.code] uses, so a caller
-  /// parsing `--json` output sees one error vocabulary regardless of whether
-  /// the rejection came from `cli_router` itself or from a handler.
-  String _errorCodeFor(CliRejectionKind kind) =>
-      _structuralKinds.contains(kind) ? 'INVALID_USAGE' : 'VALIDATION_FAILED';
+  /// Machine-readable counterpart of [_exitCodeFor]: one kebab-case `id` per
+  /// [CliRejectionKind], the fixed table this SDK's README documents. Every
+  /// error this SDK writes in JSON mode, whichever path produced it
+  /// (`cli_router`'s own rejection or a handler's [CommandException]), uses
+  /// the same kebab-case `id` vocabulary, so a caller parsing `--json`
+  /// output never has to tell the two sources apart.
+  String _errorIdFor(CliRejectionKind kind) => switch (kind) {
+    CliRejectionKind.unknownCommand => 'unknown-command',
+    CliRejectionKind.incomplete => 'incomplete-command',
+    CliRejectionKind.missingArgument => 'missing-argument',
+    CliRejectionKind.extraArgument => 'extra-argument',
+    CliRejectionKind.unknownOption => 'unknown-option',
+    CliRejectionKind.misplacedOption => 'misplaced-option',
+    CliRejectionKind.missingRequiredOption => 'missing-required-option',
+    CliRejectionKind.repeatedOption => 'repeated-option',
+    CliRejectionKind.invalidShortOption => 'invalid-short-option',
+    CliRejectionKind.missingValue => 'missing-value',
+    CliRejectionKind.unexpectedValue => 'unexpected-value',
+  };
 
   /// The one piece of structured detail this SDK can name without guessing:
   /// which declared parameter a [CliRejectionKind.missingRequiredOption]
@@ -455,13 +481,13 @@ class ModularCli {
       final details = _detailsFor(rejection, contract);
       err.writeln(
         jsonEncode({
-          'error': _errorCodeFor(rejection.kind),
-          'message': message,
-          'exitCode': exitCode,
-          'isRetryable': false,
-          'kind': rejection.kind.name,
-          if (contract != null) 'contract': contract.toJson(),
-          if (details != null) 'details': details,
+          'error': {
+            'id': _errorIdFor(rejection.kind),
+            'message': message,
+            'exitCode': exitCode,
+            if (contract != null) 'contract': contract.toJson(),
+            if (details != null) 'details': details,
+          },
         }),
       );
       return exitCode;
@@ -512,7 +538,10 @@ class ModularCli {
     if (match == null) return finalMessage;
     final offending = match.group(1)!;
     if (offending.isEmpty) return finalMessage;
-    final suggestion = _catalog.suggest(offending);
+    final suggestion = _catalog.suggest(
+      offending,
+      maxDistance: _suggestionDistance,
+    );
     if (suggestion == null) return finalMessage;
     return "$finalMessage. Did you mean '$suggestion'?";
   }

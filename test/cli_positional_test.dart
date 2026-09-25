@@ -27,7 +27,7 @@ void main() {
         () => mode.parse('delete'),
         throwsA(
           isA<CommandException>()
-              .having((e) => e.code, 'code', 'VALIDATION_FAILED')
+              .having((e) => e.id, 'id', 'validation-failed')
               .having((e) => e.exitCode, 'exitCode', ExitCode.validationFailed)
               .having(
                 (e) => e.details,

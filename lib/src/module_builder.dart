@@ -8,6 +8,7 @@ import 'cli_contract.dart';
 import 'cli_output.dart';
 import 'cli_output_json.dart';
 import 'cli_output_text.dart';
+import 'cli_positional.dart';
 import 'cli_request_values.dart';
 import 'command.dart';
 import 'command_catalog.dart';
@@ -37,17 +38,32 @@ import 'route_pattern.dart';
 ///   m.command('new <slug>', (req) => OpenRequisition(...)); // both, declared
 /// });
 /// ```
+/// A route's business logic, reusable under a different [CommandContract]
+/// than the one it was originally registered under.
+///
+/// [callingEntry] carries both the contract to apply the invocation against
+/// (which may be a [ModularCli.shortcut]'s own, stricter contract, not the
+/// target's) and the name to report as [PlanDocument.route] for a command:
+/// dispatch always runs as whichever route the caller actually typed, never
+/// silently as the route it happens to share logic with.
+typedef ContractAwareBody =
+    Future<int> Function(
+      CliRequest req,
+      CliOutput output,
+      CommandContract callingEntry,
+    );
+
 class ModuleBuilder {
   ModuleBuilder({
     required this.moduleName,
     required CliRouter router,
     required CommandCatalog catalog,
-    required Map<String, CliHandler> handlersByName,
+    required Map<String, ContractAwareBody> bodiesByName,
     Approver? approver,
     PlanSink? planSink,
   }) : _router = router,
        _catalog = catalog,
-       _handlersByName = handlersByName,
+       _bodiesByName = bodiesByName,
        _approver = approver,
        _planSink = planSink;
 
@@ -57,12 +73,17 @@ class ModuleBuilder {
   final CliRouter _router;
   final CommandCatalog _catalog;
 
-  /// Every registered route's actual dispatch handler, keyed by
-  /// [CommandContract.name]: shared with every other [ModuleBuilder] this
-  /// SDK builds (all backed by the same [ModularCli]), so [ModularCli.shortcut]
-  /// can look a target route's handler up regardless of which module
-  /// registered it.
-  final Map<String, CliHandler> _handlersByName;
+  /// Every registered route's own business logic, keyed by
+  /// [CommandContract.route]: the exact pattern as registered, not the
+  /// name with its positionals stripped, so `show` and `show <id>` (two
+  /// different routes that happen to share a name) each keep their own
+  /// entry instead of the second silently overwriting the first.
+  ///
+  /// Shared with every other [ModuleBuilder] this SDK builds (all backed by
+  /// the same [ModularCli]), so [ModularCli.shortcut] can find a target
+  /// route's logic regardless of which module registered it, and dispatch
+  /// it under the shortcut's own contract rather than the target's.
+  final Map<String, ContractAwareBody> _bodiesByName;
   final Approver? _approver;
   final PlanSink? _planSink;
 
@@ -71,25 +92,32 @@ class ModuleBuilder {
   /// It is not given `--plan` or `--apply`, and passing either is rejected as
   /// the undeclared option it is. Nothing has to be written to make that true.
   ///
-  /// [contract] defaults to [CliContract.none]: a query that takes nothing
-  /// declares that explicitly, by the value it did not have to name, rather
-  /// than by an absent argument silently meaning the same thing.
+  /// [contract] is required: a query that takes nothing declares that
+  /// explicitly, with [CliContract.none], rather than an absent argument
+  /// silently meaning the same thing.
   void query<I extends Input, O extends Output>(
     String route,
     Query<I, O> Function(CliRequest req) queryFactory, {
     required bool globals,
+    required CliContract contract,
     String? description,
-    CliContract contract = CliContract.none,
   }) {
     final entry = _register(
       route,
       kind: CommandKind.query,
       description: description,
       contract: contract,
+      globals: globals,
     );
 
-    _mount(route, entry, globals: globals, (req, output) async {
-      final unit = queryFactory(applyDeclaredContract(req, entry.contract));
+    Future<int> body(
+      CliRequest req,
+      CliOutput output,
+      CommandContract callingEntry,
+    ) async {
+      final unit = queryFactory(
+        applyDeclaredContract(req, callingEntry.contract),
+      );
 
       final invalid = unit.validate();
       if (invalid != null) throw _rejection(invalid);
@@ -97,7 +125,15 @@ class ModuleBuilder {
       final result = await unit.execute();
       output.writeObject(result.toJson(), textOverride: result.toText());
       return result.exitCode;
-    });
+    }
+
+    _bodiesByName[entry.route] = body;
+    _mount(
+      route,
+      entry,
+      globals: globals,
+      (req, output) => body(req, output, entry),
+    );
   }
 
   /// Register a [Command] — a route that changes something.
@@ -107,25 +143,31 @@ class ModuleBuilder {
   /// built. The author writes none of that.
   ///
   /// Unlike [query], a command is **always** enforced against at least the
-  /// three flags: [contract] defaulting to [CliContract.none] still gains
-  /// them, because a route that changes something cannot be invoked without
+  /// three flags: [contract] gains them regardless of what it declares,
+  /// because a route that changes something cannot be invoked without
   /// choosing one, and the flags have to be declared to be typed at all.
+  /// [contract] itself is still required, for the same reason as [query]'s.
   void command<I extends Input, O extends Output>(
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
     required bool globals,
+    required CliContract contract,
     String? description,
-    CliContract contract = CliContract.none,
   }) {
     final entry = _register(
       route,
       kind: CommandKind.command,
       description: description,
       contract: contract.withOptions(ChangeFlags.params),
+      globals: globals,
     );
 
-    _mount(route, entry, globals: globals, (req, output) async {
-      final applied = applyDeclaredContract(req, entry.contract);
+    Future<int> body(
+      CliRequest req,
+      CliOutput output,
+      CommandContract callingEntry,
+    ) async {
+      final applied = applyDeclaredContract(req, callingEntry.contract);
       final unit = commandFactory(applied);
 
       final invalid = unit.validate();
@@ -135,8 +177,128 @@ class ModuleBuilder {
       final unusable = flags.validate();
       if (unusable != null) throw _rejection(unusable);
 
-      return _carryOut(unit, flags, entry, output, req);
-    });
+      return _carryOut(unit, flags, callingEntry, output, req);
+    }
+
+    _bodiesByName[entry.route] = body;
+    _mount(
+      route,
+      entry,
+      globals: globals,
+      (req, output) => body(req, output, entry),
+    );
+  }
+
+  /// Registers [pattern] as a route that runs the same business logic
+  /// already registered for [target] (the full name of a route already
+  /// registered via [query], [command] or another [ModuleBuilder], e.g.
+  /// `'eval rpn'`), but dispatched through [pattern]'s own, independently
+  /// declared [contract] (types, defaults, constraints) and [globals]
+  /// scope, never the target's (issue #27 section 4: "a declared route
+  /// that runs the target's handler with a narrower contract").
+  ///
+  /// [contract] must declare only options and constraints: a shortcut's
+  /// positionals are not declared by the caller but taken from [target]'s
+  /// own positional declarations, matched by name, and bound to whichever
+  /// cardinality [pattern] itself gives them — the exact line from issue
+  /// #27, `shortcut('<program>', target: 'eval rpn', globals: false)`,
+  /// works with no explicit [contract] at all, because `program` is looked
+  /// up on the target and rebound `required` (the shorter spelling has no
+  /// `[...]`) even though the target's own declaration of it is optional.
+  ///
+  /// Throws [ArgumentError] when [target] names no registered route, more
+  /// than one (a shortcut's target must be unambiguous), when [contract]
+  /// declares any positional itself, or when [pattern] names a positional
+  /// [target] does not declare.
+  void shortcut(
+    String pattern, {
+    required String target,
+    required bool globals,
+    CliContract contract = CliContract.none,
+    String? description,
+  }) {
+    final matches = _catalog.commands.where((c) => c.name == target).toList();
+    if (matches.isEmpty) {
+      throw ArgumentError(
+        'shortcut("$pattern") targets "$target", which is not a '
+        'registered route. Register the target with query(), command() or '
+        'a ModuleBuilder before declaring a shortcut to it.',
+      );
+    }
+    if (matches.length > 1) {
+      throw ArgumentError(
+        'shortcut("$pattern") targets "$target", which is ambiguous: it '
+        'matches more than one registered route '
+        '(${matches.map((c) => c.route).join(', ')}).',
+      );
+    }
+    if (contract.positionals.isNotEmpty) {
+      throw ArgumentError(
+        'shortcut("$pattern") declares positional(s) directly in its own '
+        'contract (${contract.positionals.map((p) => p.name).join(', ')}). '
+        'A shortcut\'s positionals are taken from its target ("$target") '
+        'automatically, by name; declare none here.',
+      );
+    }
+
+    final targetEntry = matches.single;
+    final body = _bodiesByName[targetEntry.route];
+    if (body == null) {
+      // Every catalog entry gets a body registered alongside it, in the
+      // same call, so this would be an inconsistency in this SDK itself.
+      throw StateError(
+        'shortcut("$pattern") found no dispatch body for "$target".',
+      );
+    }
+
+    final routePattern = RoutePattern(pattern);
+    final derivedPositionals = [
+      for (final name in routePattern.positionals)
+        _positionalFromTarget(targetEntry, name, pattern, target, routePattern),
+    ];
+
+    final shortcutContract = CliContract(
+      options: contract.options,
+      positionals: derivedPositionals,
+      constraints: contract.constraints,
+    );
+    validateContractPositionals(pattern, shortcutContract);
+
+    final entry = CommandContract(
+      route: pattern,
+      module: moduleName,
+      kind: targetEntry.kind,
+      description: description,
+      contract: shortcutContract,
+      globals: globals,
+    );
+
+    _mount(
+      pattern,
+      entry,
+      globals: globals,
+      (req, output) => body(req, output, entry),
+    );
+  }
+
+  CliPositional _positionalFromTarget(
+    CommandContract targetEntry,
+    String name,
+    String pattern,
+    String target,
+    RoutePattern routePattern,
+  ) {
+    for (final positional in targetEntry.contract.positionals) {
+      if (positional.name == name) {
+        return positional.withRequired(
+          routePattern.requiredPositionals.contains(name),
+        );
+      }
+    }
+    throw ArgumentError(
+      'shortcut("$pattern") declares positional "<$name>" but its target '
+      '("$target") declares no positional of that name.',
+    );
   }
 
   // ── The lifecycle of a command ────────────────────────────────────────────
@@ -235,6 +397,7 @@ class ModuleBuilder {
     required CommandKind kind,
     required String? description,
     required CliContract contract,
+    required bool globals,
   }) {
     // Build-time, not runtime: a route/contract mismatch (missing, extra,
     // misnamed, duplicate or wrongly-required/optional positional) is an
@@ -247,6 +410,7 @@ class ModuleBuilder {
       kind: kind,
       description: description,
       contract: contract,
+      globals: globals,
     );
     _catalog.register(entry);
     return entry;
@@ -284,10 +448,29 @@ class ModuleBuilder {
               isQuiet: isQuiet,
             );
 
+      // A value the caller actually supplied is checked before `--help` is
+      // even considered: unlike a missing required option (`cli_router`
+      // itself refuses to resolve the invocation at all) or an unmet
+      // constraint (only ever checked inside `body`, so it stays correctly
+      // skipped below), a badly typed value is this SDK's own concern, and
+      // nothing catches it before this point (issue #27 section 5: "help
+      // loses to an option error").
+      try {
+        validateSuppliedOptionValues(req, entry.contract);
+      } on CommandException catch (e) {
+        return _reject(
+          e,
+          req,
+          output,
+          entry,
+          showsContractOnRejection: !isJsonMode,
+        );
+      }
+
       // Asked for the contract, not for the work: help short-circuits a
-      // resolved invocation before enforcement or the handler ever run, so
-      // `--help` alongside other options answers with the contract rather
-      // than acting on it.
+      // resolved invocation before the handler itself ever runs, so
+      // `--help` alongside other, well-typed options answers with the
+      // contract rather than acting on it.
       if (req.flagBool('help')) {
         output.writeObject(
           entry.toJson(),
@@ -316,16 +499,10 @@ class ModuleBuilder {
       globals: globals,
       description: entry.description,
     );
-
-    // Shared across every `ModuleBuilder` this SDK builds, so
-    // `ModularCli.shortcut` can dispatch to a route's exact handler
-    // (`--help` handling, `CommandException` rejection and all), regardless
-    // of which module registered it.
-    _handlersByName[entry.name] = handler;
   }
 
   CommandException _rejection(String message) => CommandException(
-    code: 'VALIDATION_FAILED',
+    id: 'validation-failed',
     message: message,
     exitCode: ExitCode.validationFailed,
   );

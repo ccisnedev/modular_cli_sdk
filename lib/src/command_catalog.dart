@@ -23,6 +23,7 @@ class CommandContract {
     required this.route,
     required this.module,
     required this.contract,
+    required this.globals,
     this.kind = CommandKind.command,
     this.description,
   });
@@ -61,6 +62,14 @@ class CommandContract {
 
   final String? description;
 
+  /// Whether this route accepts the global options (`--json`, `--quiet`,
+  /// `--help`) alongside its own declared contract. Stored here, not just
+  /// passed to `cli_router.cmd`, so help can render exactly the options a
+  /// route actually accepts: a route registered `globals: false` never
+  /// takes `--json`/`--quiet`/`--help`, and listing them anyway told a
+  /// reader to type something the route itself would then reject.
+  final bool globals;
+
   /// The command's full declared contract: its options, its positionals, and
   /// the cross-field rules that hold between them.
   ///
@@ -80,6 +89,7 @@ class CommandContract {
   Map<String, dynamic> toJson() => {
     'route': route,
     'kind': kind.name,
+    'globals': globals,
     if (module.isNotEmpty) 'module': module,
     if (description != null) 'description': description,
     ...contract.toJson(),

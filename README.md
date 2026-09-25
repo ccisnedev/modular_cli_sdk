@@ -18,12 +18,13 @@ import 'package:cli_router/cli_router.dart';
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 
 void main(List<String> args) async {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
 
   // Reads. No --plan, no --apply — it has nothing to plan.
   cli.query<VersionInput, VersionOutput>(
     'version',
     (req) => VersionQuery(VersionInput.fromCliRequest(req)),
+    contract: CliContract.none,
     description: 'Print version info',
   );
 
@@ -248,7 +249,7 @@ Run the same code from source and it does not:
 
 ```bash
 dart run example/beside_executable.dart greet
-# Error: no assets/ folder beside this executable: the CLI is running from source [ASSETS_NOT_FOUND]
+# Error: no assets/ folder beside this executable: the CLI is running from source [assets-not-found]
 #   lookedFor: <your-dart-sdk>/assets/greeting.txt
 #   resolvedExecutable: <your-dart-sdk>/bin/dart.exe
 # exit code 4
@@ -335,24 +336,23 @@ registration, before the route can ever be dispatched to.
 narrower contract:
 
 ```dart
-cli.shortcut(
-  '<program>',
-  target: 'eval rpn',
-  globals: false,
-  contract: CliContract(
-    positionals: [CliPositional.string('program', required: true)],
-  ),
-  description: 'Shorthand for `eval rpn <program>`',
-);
+cli.shortcut('<program>', target: 'eval rpn', globals: false);
 ```
 
 `mycli '1 2 +'` then runs the same handler as `mycli eval rpn '1 2 +'`, but
 through its own, narrower contract: here, with `globals: false`, none of the
 SDK's global options (`--plan`, `--apply`, `--json`, and so on) are accepted
-on the shortcut itself. `target` must already be registered; registering a
-shortcut to a route that does not exist is an `ArgumentError`. Like every
-other registration call, `globals` is required: there is no default that
-would silently decide it for you.
+on the shortcut itself. A shortcut never declares its own positionals —
+`program` is taken from the target's own declaration, by name, and rebound to
+whichever cardinality `<program>` itself gives it (`required` here, even
+though the target's own `[<program>]` makes it optional). `contract` is
+optional and defaults to `CliContract.none`; passing one lets a shortcut add
+its own options or constraints on top. `target` must already be registered
+and name exactly one route; registering a shortcut to a route that does not
+exist, or that matches more than one registered route, is an `ArgumentError`,
+and so is declaring a positional directly in a shortcut's own `contract`.
+Like every other registration call, `globals` is required: there is no
+default that would silently decide it for you.
 
 **`suggest()`** answers "did you mean?" over the command catalog:
 
@@ -400,8 +400,8 @@ A `help` command you register yourself always wins over the built-in one.
 - `DeclaredDefault<T>`: a default value that carries its own `reason`, which help renders alongside it
 - Native help: `help`, no args, `--help`/`-h` on stdout with exit 0; `help --json` for machines, with `kind` on every route. `--help` wins over enforcement on an otherwise-invalid invocation, so asking how a command is used never requires already knowing
 - `Input` / `Output` — typed DTOs for I/O
-- `CommandException` — structured errors with code, message, exit code, and retryable flag
-- A router-level rejection (unknown command, missing required option, and so on) is reported through the same JSON error envelope as a `CommandException`: `error` (a machine-readable code), `message`, `exitCode`, `isRetryable`, and `details` when the SDK can name the specific parameter at fault
+- `CommandException` — structured errors with a kebab-case `id`, message, required exit code, and optional `details`
+- A router-level rejection (unknown command, missing required option, and so on) is reported through the same JSON error envelope as a `CommandException`: `{"error": {"id", "message", "exitCode", ...}}`, with `contract` and `details` present only when they apply — see [Error handling](#error-handling)
 - `ModularCli` + `ModuleBuilder` — module registration and routing
 - Root routes — register without a module prefix via `cli.query()` / `cli.command()`
 - `--json` global flag — machine-readable JSON output
@@ -433,7 +433,7 @@ Future<MyOutput> execute() async {
   final ticket = await repository.findById(input.ticketId);
   if (ticket == null) {
     throw CommandException(
-      code: 'TICKET_NOT_FOUND',
+      id: 'ticket-not-found',
       message: 'Ticket #${input.ticketId} not found',
       exitCode: ExitCode.notFound,
     );
@@ -443,13 +443,51 @@ Future<MyOutput> execute() async {
 ```
 
 ```
-Error: Ticket #42 not found [TICKET_NOT_FOUND]
+Error: Ticket #42 not found [ticket-not-found]
 ```
 
 With `--json`:
 ```json
-{"error": "TICKET_NOT_FOUND", "message": "Ticket #42 not found", "exitCode": 4, "isRetryable": false}
+{"error": {"id": "ticket-not-found", "message": "Ticket #42 not found", "exitCode": 4}}
 ```
+
+Every error written in JSON mode — a `CommandException` thrown from a command,
+a router-level rejection (unknown command, missing required option, and so
+on), a plugin error — uses this one shape, nested under `"error"`:
+
+```json
+{"error": {"id": "<kebab-case id>", "message": "...", "exitCode": <int>, "contract": {...}, "details": {...}}}
+```
+
+`id` is always kebab-case. `contract` (the failing route's contract, when one
+is known) and `details` (a typed map of extra fields — a validation
+failure's `parameter`, or a domain error's own fields, such as a calculatrix
+parse error's `token` and `position`) are both optional: present only when
+they apply. There is no `kind` field and no `isRetryable` field.
+
+A `CommandException`'s own `id` is chosen by the code that throws it (and
+must be kebab-case — the constructor throws `ArgumentError` otherwise). A
+router-level rejection's `id` comes from a fixed table, one entry per
+`CliRejectionKind`:
+
+| Rejection | `id` |
+| --- | --- |
+| Unknown command | `unknown-command` |
+| Incomplete command | `incomplete-command` |
+| Missing required argument | `missing-argument` |
+| Extra argument | `extra-argument` |
+| Unknown option | `unknown-option` |
+| Misplaced option | `misplaced-option` |
+| Missing required option | `missing-required-option` |
+| Repeated option | `repeated-option` |
+| Invalid short option | `invalid-short-option` |
+| Missing option value | `missing-value` |
+| Unexpected option value | `unexpected-value` |
+
+A contract violation the SDK itself enforces (a required option missing, a
+value of the wrong type, an allow-list mismatch, a failed `CliConstraint`)
+raises a `CommandException` with `id: 'validation-failed'` — the one `id`
+this table does not list, because it is not a router rejection.
 
 ---
 

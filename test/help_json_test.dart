@@ -17,10 +17,12 @@ class _AddInput extends Input {
         abbr: 'a',
         required: true,
         repeatable: false,
+        defaultValue: null,
         description: 'First operand',
       ),
       CliParam.integer(
         'b',
+        abbr: null,
         required: false,
         repeatable: false,
         defaultValue: const DeclaredDefault(
@@ -63,7 +65,7 @@ class _AddCommand implements Query<_AddInput, _SumOutput> {
 }
 
 ModularCli _buildCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
   cli.module('math', (m) {
     m.query<_AddInput, _SumOutput>(
       'add',

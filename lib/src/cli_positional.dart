@@ -89,6 +89,24 @@ class CliPositional {
     description: description,
   );
 
+  /// The same declared positional (name, type, values, description), bound
+  /// to a different [required] cardinality.
+  ///
+  /// Used to carry a target route's own positional declaration onto a
+  /// [ModularCli.shortcut] that renames it: the *name* and *type* a
+  /// shortcut's positional means are the target's, but whether it is
+  /// required is a fact about the shortcut's own pattern, not the target's
+  /// (`eval rpn [<program>]` declares `program` optional; a shortcut
+  /// pattern of plain `<program>`, with no brackets, makes the same name
+  /// required for that shorter spelling).
+  CliPositional withRequired(bool required) => CliPositional._(
+    name: name,
+    type: type,
+    required: required,
+    values: values,
+    description: description,
+  );
+
   /// Coerce the raw word `cli_router` bound to [name] into the declared
   /// type.
   Object parse(String rawValue) {
@@ -120,7 +138,7 @@ class CliPositional {
   };
 
   CommandException _rejected(String reason) => CommandException(
-    code: 'VALIDATION_FAILED',
+    id: 'validation-failed',
     message: '<$name>: $reason',
     exitCode: ExitCode.validationFailed,
     details: {'parameter': name},

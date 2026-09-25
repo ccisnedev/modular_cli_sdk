@@ -2,6 +2,7 @@ import 'cli_param.dart';
 import 'cli_positional.dart';
 import 'command_catalog.dart';
 import 'global_options.dart';
+import 'route_pattern.dart';
 
 /// Renders the command catalog as the plain, aligned text a user reads.
 ///
@@ -59,9 +60,11 @@ class HelpRenderer {
         ..add('Parameters:')
         ..addAll(_paramLines(contract.declaredParams));
     }
-    lines
-      ..add('')
-      ..addAll(_globalOptionsSection());
+    if (contract.globals) {
+      lines
+        ..add('')
+        ..addAll(_globalOptionsSection());
+    }
     return lines.join('\n');
   }
 
@@ -182,6 +185,7 @@ class HelpRenderer {
       RegExp(r'\s*(\[<[^>]+>\]|<[^>]+>|\*)'),
       '',
     );
+    final hasWildcard = RoutePattern(contract.route).hasWildcard;
     // `cli_router`'s grammar requires every option to precede the first
     // positional on the actual command line (spec 8.2: "options go before
     // the program"), so the usage line is written in that same order,
@@ -192,6 +196,7 @@ class HelpRenderer {
       route,
       if (contract.options.isNotEmpty) '[options]',
       if (positionals.isNotEmpty) positionals,
+      if (hasWildcard) '*',
     ].join(' ');
   }
 

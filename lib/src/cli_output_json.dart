@@ -50,6 +50,6 @@ class JsonCliOutput implements CliOutput {
 
   @override
   void writeError(CommandException error) {
-    stderr.writeln(_encoder.convert(error.toJson()));
+    stderr.writeln(_encoder.convert({'error': error.toJson()}));
   }
 }

@@ -45,16 +45,19 @@ class ChangeFlags {
   static final List<CliParam> params = [
     CliParam.flag(
       'plan',
+      abbr: null,
       repeatable: false,
       description: 'Show what would change; change nothing',
     ),
     CliParam.flag(
       'apply',
+      abbr: null,
       repeatable: false,
       description: 'Show what would change, take approval, then do it',
     ),
     CliParam.flag(
       'autoapprove',
+      abbr: null,
       repeatable: false,
       description:
           'With --apply, act without asking — for agents and CI, where '

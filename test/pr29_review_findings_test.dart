@@ -25,8 +25,8 @@ class _RpnInput extends Input {
   static final constraintContract = CliContract(
     positionals: [CliPositional.string('program', required: false)],
     options: [
-      CliParam.flag('file', repeatable: false),
-      CliParam.flag('stdin', repeatable: false),
+      CliParam.flag('file', abbr: null, repeatable: false),
+      CliParam.flag('stdin', abbr: null, repeatable: false),
     ],
     constraints: const [
       ExactlyOne(['program', 'file', 'stdin']),
@@ -74,7 +74,7 @@ class _RpnCommand implements Query<_RpnInput, _RpnOutput> {
 }
 
 ModularCli _buildConstraintCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
   cli.module('eval', (m) {
     m.query<_RpnInput, _RpnOutput>(
       'rpn [<program>]',
@@ -102,9 +102,11 @@ class _RpnModeInput extends Input {
     options: [
       CliParam.enumeration(
         'mode',
+        abbr: null,
         required: true,
         repeatable: false,
         values: const ['add', 'sub'],
+        defaultValue: null,
         description: 'How to evaluate',
       ),
     ],
@@ -159,7 +161,7 @@ class _MarkerCommand implements Query<_MarkerInput, _MarkerOutput> {
 }
 
 ModularCli _buildIdentityCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
   cli.module('eval', (m) {
     m.query<_RpnModeInput, _RpnOutput>(
       'rpn [<program>]',
@@ -187,9 +189,7 @@ ModularCli _buildShortcutCli() {
     '<program>',
     target: 'eval rpn',
     globals: false,
-    contract: CliContract(
-      positionals: [CliPositional.string('program', required: true)],
-    ),
+    contract: CliContract.none,
   );
   return cli;
 }
@@ -243,8 +243,10 @@ class _RepeatInput extends Input {
     options: [
       CliParam.integer(
         'count',
+        abbr: null,
         required: false,
         repeatable: true,
+        defaultValue: null,
         description: 'One or more counts',
       ),
     ],
@@ -279,7 +281,7 @@ class _RepeatCommand implements Query<_RepeatInput, _RepeatOutput> {
 }
 
 ModularCli _buildRepeatCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
   cli.query<_RepeatInput, _RepeatOutput>(
     'repeat',
     (req) => _RepeatCommand(_RepeatInput(const [])),
@@ -321,7 +323,7 @@ class _ConfigCommand implements Query<_ConfigInput, _ConfigOutput> {
 // ── Finding 10 fixture: a typo'd nested command ───────────────────────────
 
 ModularCli _buildSuggestCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
   cli.module('commands', (m) {
     m.query<_ShowInput, _ShowOutput>(
       'show <id>',
@@ -420,7 +422,7 @@ void main() {
 
     test('a shortcut to an unregistered target is an ArgumentError', () {
       expect(
-        () => ModularCli().shortcut(
+        () => ModularCli(suggestionDistance: 2).shortcut(
           '<x>',
           target: 'nope',
           globals: false,
@@ -431,12 +433,27 @@ void main() {
         throwsArgumentError,
       );
     });
+
+    // Issue #27, section 4, gives this exact line as the shorthand a caller
+    // should be able to write: no `contract:` argument at all. `contract`
+    // defaults to `CliContract.none`, and `program` is still derived from
+    // the target and rebound `required` by the route pattern.
+    test('the exact issue #27 example compiles and runs with no contract '
+        'argument at all', () async {
+      final cli = _buildConstraintCli();
+      cli.shortcut('<program>', target: 'eval rpn', globals: false);
+
+      final result = await _runWith(cli, ['1 2 +']);
+
+      expect(result.exitCode, equals(ExitCode.ok));
+      expect(result.stdout, contains('source: program'));
+    });
   });
 
   // ── 3. cli.module('', ...) ────────────────────────────────────────────────
   group("finding 3: cli.module('', ...) registers directly on the root", () {
     test('it does not throw, and the route it declares runs', () async {
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
       expect(
         () => cli.module('', (m) {
           m.query<_MarkerInput, _MarkerOutput>(
@@ -455,7 +472,7 @@ void main() {
     });
 
     test('the registered route belongs to no module', () {
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
       cli.module('', (m) {
         m.query<_MarkerInput, _MarkerOutput>(
           'root-thing',
@@ -479,7 +496,7 @@ void main() {
       // used to register successfully, and `show bad` used to exit 0
       // because `CliContract.none`-like enforcement never checked the
       // positional's name against the route at all.
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
       expect(
         () => cli.query<_ShowInput, _ShowOutput>(
           'show <id>',
@@ -494,7 +511,7 @@ void main() {
     });
 
     test('a missing positional declaration', () {
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
       expect(
         () => cli.query<_ShowInput, _ShowOutput>(
           'show <id>',
@@ -507,7 +524,7 @@ void main() {
     });
 
     test('an extra positional declaration', () {
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
       expect(
         () => cli.query<_MarkerInput, _MarkerOutput>(
           'show',
@@ -522,7 +539,7 @@ void main() {
     });
 
     test('a duplicate positional declaration', () {
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
       expect(
         () => cli.query<_ShowInput, _ShowOutput>(
           'show <id>',
@@ -540,7 +557,7 @@ void main() {
     });
 
     test('a route-optional segment declared required is an ArgumentError', () {
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
       expect(
         () => cli.query<_MarkerInput, _MarkerOutput>(
           'note [<name>]',
@@ -557,7 +574,7 @@ void main() {
     test(
       'a route-required segment declared optional is also an ArgumentError',
       () {
-        final cli = ModularCli();
+        final cli = ModularCli(suggestionDistance: 2);
         expect(
           () => cli.query<_MarkerInput, _MarkerOutput>(
             'note <name>',
@@ -574,7 +591,7 @@ void main() {
 
     test('declared correctly, an optional segment registers and runs both '
         'with and without it', () async {
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
       cli.query<_MarkerInput, _MarkerOutput>(
         'note [<name>]',
         (req) => _MarkerCommand(_MarkerInput()),
@@ -628,6 +645,7 @@ void main() {
       expect(
         () => CliParam.enumeration(
           'format',
+          abbr: null,
           required: false,
           repeatable: false,
           values: const ['text', 'shout'],
@@ -643,7 +661,7 @@ void main() {
           '${Directory.systemTemp.path}/definitely-missing-'
           '${DateTime.now().microsecondsSinceEpoch}.cfg';
 
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
       cli.query<_ConfigInput, _ConfigOutput>(
         'cfg',
         (req) => _ConfigCommand(_ConfigInput()),
@@ -652,6 +670,7 @@ void main() {
           options: [
             CliParam.path(
               'config',
+              abbr: null,
               required: false,
               repeatable: false,
               mustExist: true,
@@ -723,7 +742,8 @@ void main() {
           ]);
 
           expect(result.exitCode, equals(ExitCode.validationFailed));
-          final error = jsonDecode(result.stderr) as Map<String, dynamic>;
+          final envelope = jsonDecode(result.stderr) as Map<String, dynamic>;
+          final error = envelope['error'] as Map<String, dynamic>;
           expect(error['contract'], isNotNull);
           expect(error['details'], containsPair('parameter', 'mode'));
         },
@@ -760,8 +780,9 @@ void main() {
           '--bogus',
         ]);
 
-        final error = jsonDecode(result.stderr) as Map<String, dynamic>;
-        expect(error['kind'], equals('unknownOption'));
+        final envelope = jsonDecode(result.stderr) as Map<String, dynamic>;
+        final error = envelope['error'] as Map<String, dynamic>;
+        expect(error['id'], equals('unknown-option'));
         expect(error['message'], isNot(contains('not a complete command')));
         expect(error['message'], contains('--bogus'));
       },
@@ -776,6 +797,7 @@ void main() {
         CommandContract(
           route: 'show <id>',
           module: '',
+          globals: true,
           contract: CliContract(
             positionals: [CliPositional.integer('id', required: true)],
           ),
@@ -791,6 +813,7 @@ void main() {
         CommandContract(
           route: 'show <id>',
           module: '',
+          globals: true,
           contract: CliContract.none,
         ),
       );
@@ -801,10 +824,20 @@ void main() {
     test('breaks a tie in distance by catalog registration order', () {
       final catalog = CommandCatalog();
       catalog.register(
-        CommandContract(route: 'a', module: '', contract: CliContract.none),
+        CommandContract(
+          route: 'a',
+          module: '',
+          globals: true,
+          contract: CliContract.none,
+        ),
       );
       catalog.register(
-        CommandContract(route: 'b', module: '', contract: CliContract.none),
+        CommandContract(
+          route: 'b',
+          module: '',
+          globals: true,
+          contract: CliContract.none,
+        ),
       );
 
       // Both 'a' and 'b' are one substitution away from 'c'; 'a' was

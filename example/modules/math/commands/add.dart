@@ -17,6 +17,7 @@ class AddInput extends Input {
         abbr: 'a',
         required: true,
         repeatable: false,
+        defaultValue: null,
         description: 'First operand',
       ),
       CliParam.integer(
@@ -24,6 +25,7 @@ class AddInput extends Input {
         abbr: 'b',
         required: true,
         repeatable: false,
+        defaultValue: null,
         description: 'Second operand',
       ),
     ],

@@ -10,11 +10,12 @@ import 'doubles.dart';
 void main() {
   group('a registered query', () {
     test('runs and writes its output', () async {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2)
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
           globals: true,
+          contract: CliContract.none,
           description: 'Count things',
         );
 
@@ -26,11 +27,12 @@ void main() {
     });
 
     test('rejects --plan, because it changes nothing to plan', () async {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2)
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
           globals: true,
+          contract: CliContract.none,
         );
 
       final err = MemorySink();
@@ -41,11 +43,12 @@ void main() {
     });
 
     test('rejects --apply for the same reason', () async {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2)
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
           globals: true,
+          contract: CliContract.none,
         );
 
       final err = MemorySink();
@@ -56,11 +59,12 @@ void main() {
     });
 
     test('still validates its input', () async {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2)
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(-1)),
           globals: true,
+          contract: CliContract.none,
         );
 
       final err = MemorySink();
@@ -71,12 +75,13 @@ void main() {
     });
 
     test('can be registered inside a module', () async {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2)
         ..module('things', (m) {
           m.query<CountInput, CountOutput>(
             'count',
             (req) => CountQuery(CountInput(7)),
             globals: true,
+            contract: CliContract.none,
           );
         });
 
@@ -90,33 +95,36 @@ void main() {
 
   group('the catalog', () {
     test('records a query as a query', () {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2)
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
           globals: true,
+          contract: CliContract.none,
         );
 
       expect(cli.catalog.forRoute('count')!.kind, CommandKind.query);
     });
 
     test('records a command as a command', () {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2)
         ..command<TouchInput, TouchOutput>(
           'touch',
           (req) => TouchCommand(TouchInput()),
           globals: true,
+          contract: CliContract.none,
         );
 
       expect(cli.catalog.forRoute('touch')!.kind, CommandKind.command);
     });
 
     test('publishes the kind, so an agent can tell a reader from a writer', () {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2)
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
           globals: true,
+          contract: CliContract.none,
         );
 
       expect(cli.catalog.forRoute('count')!.toJson()['kind'], 'query');
@@ -125,7 +133,7 @@ void main() {
     test(
       'gives help itself as a query, because help changes nothing',
       () async {
-        final cli = ModularCli();
+        final cli = ModularCli(suggestionDistance: 2);
         await cli.run(['help'], stdout: MemorySink());
 
         expect(cli.catalog.forName('help')!.kind, CommandKind.query);

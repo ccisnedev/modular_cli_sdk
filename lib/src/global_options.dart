@@ -11,6 +11,7 @@ import 'cli_param.dart';
 final List<CliParam> globalOptions = [
   CliParam.flag(
     'json',
+    abbr: null,
     repeatable: false,
     description: 'Emit machine-readable JSON',
   ),

@@ -16,17 +16,19 @@ void main() {
     late String listing;
 
     setUp(() async {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2)
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
           globals: true,
+          contract: CliContract.none,
           description: 'Count things',
         )
         ..command<TouchInput, TouchOutput>(
           'touch',
           (req) => TouchCommand(TouchInput()),
           globals: true,
+          contract: CliContract.none,
           description: 'Touch things',
         );
 
@@ -64,11 +66,12 @@ void main() {
       () async {
         // Two headings over one list would be noise, and every CLI written before
         // commands existed is this shape.
-        final cli = ModularCli()
+        final cli = ModularCli(suggestionDistance: 2)
           ..query<CountInput, CountOutput>(
             'count',
             (req) => CountQuery(CountInput(3)),
             globals: true,
+            contract: CliContract.none,
             description: 'Count things',
           );
 
@@ -83,16 +86,18 @@ void main() {
 
   group('help --json', () {
     test('carries the kind of every route', () async {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2)
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
           globals: true,
+          contract: CliContract.none,
         )
         ..command<TouchInput, TouchOutput>(
           'touch',
           (req) => TouchCommand(TouchInput()),
           globals: true,
+          contract: CliContract.none,
         );
 
       final out = MemorySink();

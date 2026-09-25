@@ -6,8 +6,10 @@ void main() {
     test('an integer option carries its declared facets', () {
       final param = CliParam.integer(
         'count',
+        abbr: null,
         required: false,
         repeatable: false,
+        defaultValue: null,
         description: 'How many',
       );
 
@@ -30,9 +32,11 @@ void main() {
       expect(
         () => CliParam.enumeration(
           'format',
+          abbr: null,
           required: false,
           repeatable: false,
           values: const [],
+          defaultValue: null,
         ),
         throwsArgumentError,
       );
@@ -41,9 +45,11 @@ void main() {
     test('a path may require the target to exist', () {
       final param = CliParam.path(
         'config',
+        abbr: null,
         required: false,
         repeatable: false,
         mustExist: true,
+        defaultValue: null,
       );
 
       expect(param.mustExist, isTrue);
@@ -55,6 +61,7 @@ void main() {
       expect(
         () => CliParam.string(
           'name',
+          abbr: null,
           required: true,
           repeatable: false,
           defaultValue: const DeclaredDefault('World', reason: 'fallback'),
@@ -66,6 +73,7 @@ void main() {
     test('an optional param may declare a default with its reason', () {
       final param = CliParam.string(
         'name',
+        abbr: null,
         required: false,
         repeatable: false,
         defaultValue: const DeclaredDefault(
@@ -85,9 +93,11 @@ void main() {
     test('an enumeration restricts its accepted values', () {
       final param = CliParam.enumeration(
         'format',
+        abbr: null,
         required: false,
         repeatable: false,
         values: const ['text', 'json'],
+        defaultValue: null,
       );
 
       expect(param.values, equals(['text', 'json']));
@@ -100,11 +110,18 @@ void main() {
           abbr: 'a',
           required: false,
           repeatable: false,
+          defaultValue: null,
         ).aliases,
         equals(['a']),
       );
       expect(
-        CliParam.integer('count', required: false, repeatable: false).aliases,
+        CliParam.integer(
+          'count',
+          abbr: null,
+          required: false,
+          repeatable: false,
+          defaultValue: null,
+        ).aliases,
         isEmpty,
       );
     });
@@ -117,6 +134,7 @@ void main() {
         abbr: 'c',
         required: true,
         repeatable: false,
+        defaultValue: null,
         description: 'How many',
       ).toJson();
 
@@ -134,6 +152,7 @@ void main() {
     test('omits absent facets and includes the declared ones', () {
       final json = CliParam.enumeration(
         'format',
+        abbr: null,
         required: false,
         repeatable: false,
         defaultValue: const DeclaredDefault('text', reason: 'plain by default'),
@@ -150,26 +169,49 @@ void main() {
   group('CliParam parsing of a raw argument value', () {
     test('coerces to the declared type', () {
       expect(
-        CliParam.integer('a', required: false, repeatable: false).parse('42'),
+        CliParam.integer(
+          'a',
+          abbr: null,
+          required: false,
+          repeatable: false,
+          defaultValue: null,
+        ).parse('42'),
         equals(42),
       );
       expect(
-        CliParam.number('r', required: false, repeatable: false).parse('1.5'),
+        CliParam.number(
+          'r',
+          abbr: null,
+          required: false,
+          repeatable: false,
+          defaultValue: null,
+        ).parse('1.5'),
         equals(1.5),
       );
       expect(
-        CliParam.string('n', required: false, repeatable: false).parse('World'),
+        CliParam.string(
+          'n',
+          abbr: null,
+          required: false,
+          repeatable: false,
+          defaultValue: null,
+        ).parse('World'),
         equals('World'),
       );
-      expect(CliParam.flag('v', repeatable: false).parse(''), isTrue);
+      expect(
+        CliParam.flag('v', abbr: null, repeatable: false).parse(''),
+        isTrue,
+      );
     });
 
     test('reports a value it cannot coerce', () {
       expect(
         () => CliParam.integer(
           'a',
+          abbr: null,
           required: false,
           repeatable: false,
+          defaultValue: null,
         ).parse('abc'),
         throwsA(isA<CommandException>()),
       );
@@ -179,9 +221,11 @@ void main() {
       expect(
         () => CliParam.enumeration(
           'format',
+          abbr: null,
           required: false,
           repeatable: false,
           values: const ['text', 'json'],
+          defaultValue: null,
         ).parse('xml'),
         throwsA(isA<CommandException>()),
       );
@@ -191,9 +235,11 @@ void main() {
       expect(
         () => CliParam.path(
           'config',
+          abbr: null,
           required: false,
           repeatable: false,
           mustExist: true,
+          defaultValue: null,
         ).parse('/no/such/file/anywhere.yaml'),
         throwsA(isA<CommandException>()),
       );
@@ -202,9 +248,11 @@ void main() {
     test('accepts a path that must exist and does', () {
       final param = CliParam.path(
         'config',
+        abbr: null,
         required: false,
         repeatable: false,
         mustExist: true,
+        defaultValue: null,
       );
       // The package's own pubspec.yaml always exists at the working directory
       // this suite runs from.

@@ -89,7 +89,7 @@ class GreetQuery implements Query<GreetInput, GreetOutput> {
       // not that the file is missing — it is that a CLI in this situation
       // usually reports a broken installation and lets you go looking for one.
       throw CommandException(
-        code: 'ASSETS_NOT_FOUND',
+        id: 'assets-not-found',
         message:
             'no assets/ folder beside this executable: the CLI is running from source',
         exitCode: ExitCode.notFound,
@@ -115,12 +115,13 @@ Future<int> runBesideExecutable(
   IOSink? stdout,
   IOSink? stderr,
 }) async {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
 
   cli.query<GreetInput, GreetOutput>(
     'greet',
     (req) => GreetQuery(GreetInput.fromCliRequest(req)),
     globals: true,
+    contract: CliContract.none,
     description: 'Read the greeting shipped beside this executable',
   );
 

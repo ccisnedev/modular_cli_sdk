@@ -17,6 +17,7 @@ class _AddInput extends Input {
         abbr: 'a',
         required: true,
         repeatable: false,
+        defaultValue: null,
         description: 'First operand',
       ),
       CliParam.integer(
@@ -24,6 +25,7 @@ class _AddInput extends Input {
         abbr: 'b',
         required: true,
         repeatable: false,
+        defaultValue: null,
         description: 'Second operand',
       ),
     ],
@@ -85,12 +87,13 @@ class _VersionCommand implements Query<_VersionInput, _VersionOutput> {
 }
 
 ModularCli _buildCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
 
   cli.query<_VersionInput, _VersionOutput>(
     'version',
     (req) => _VersionCommand(_VersionInput()),
     globals: true,
+    contract: CliContract.none,
     description: 'Print application version',
   );
 
@@ -168,6 +171,7 @@ void main() {
           '',
           (req) => _VersionCommand(_VersionInput()),
           globals: true,
+          contract: CliContract.none,
           description: 'Show the dashboard',
         );
 
@@ -224,11 +228,12 @@ void main() {
     test(
       'a help command registered by the developer overrides the auto one',
       () async {
-        final cli = ModularCli();
+        final cli = ModularCli(suggestionDistance: 2);
         cli.query<_VersionInput, _VersionOutput>(
           'help',
           (req) => _VersionCommand(_VersionInput()),
           globals: true,
+          contract: CliContract.none,
           description: 'My own help',
         );
 

@@ -39,6 +39,7 @@ class WriteNoteInput extends Input {
     options: [
       CliParam.string(
         'dir',
+        abbr: null,
         required: false,
         repeatable: false,
         defaultValue: const DeclaredDefault(
@@ -49,8 +50,10 @@ class WriteNoteInput extends Input {
       ),
       CliParam.string(
         'body',
+        abbr: null,
         required: false,
         repeatable: false,
+        defaultValue: null,
         description: 'What the note says',
       ),
     ],

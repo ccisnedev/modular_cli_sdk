@@ -111,7 +111,7 @@ class CliContract {
       final violation = constraint.check(present);
       if (violation != null) {
         throw CommandException(
-          code: 'VALIDATION_FAILED',
+          id: 'validation-failed',
           message: violation,
           exitCode: ExitCode.validationFailed,
         );

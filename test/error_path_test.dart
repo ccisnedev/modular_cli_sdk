@@ -17,6 +17,7 @@ class _AddInput extends Input {
         abbr: 'a',
         required: true,
         repeatable: false,
+        defaultValue: null,
         description: 'First operand',
       ),
       CliParam.integer(
@@ -24,6 +25,7 @@ class _AddInput extends Input {
         abbr: 'b',
         required: true,
         repeatable: false,
+        defaultValue: null,
         description: 'Second operand',
       ),
     ],
@@ -60,7 +62,7 @@ class _AddCommand implements Query<_AddInput, _SumOutput> {
 }
 
 ModularCli _buildCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
   cli.module('math', (m) {
     m.query<_AddInput, _SumOutput>(
       'add',
@@ -223,8 +225,9 @@ void main() {
       final result = await _run(['math', 'add', '--b', '7', '--json']);
 
       expect(result.exitCode, equals(ExitCode.validationFailed));
-      final error = jsonDecode(result.stderr) as Map<String, dynamic>;
-      expect(error['error'], equals('VALIDATION_FAILED'));
+      final envelope = jsonDecode(result.stderr) as Map<String, dynamic>;
+      final error = envelope['error'] as Map<String, dynamic>;
+      expect(error['id'], equals('missing-required-option'));
     });
   });
 }

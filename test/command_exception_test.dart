@@ -3,62 +3,142 @@ import 'package:test/test.dart';
 
 void main() {
   group('CommandException', () {
-    test('should store code, message, and details', () {
+    test('stores id, message, exitCode and details', () {
       final error = CommandException(
-        code: 'NOT_FOUND',
+        id: 'not-found',
         message: 'Resource not found',
         exitCode: ExitCode.notFound,
         details: {'id': '42'},
       );
 
-      expect(error.code, 'NOT_FOUND');
+      expect(error.id, 'not-found');
       expect(error.message, 'Resource not found');
       expect(error.exitCode, ExitCode.notFound);
       expect(error.details, {'id': '42'});
     });
 
-    test('should default isRetryable to false', () {
-      final error = CommandException(code: 'FAIL', message: 'Something broke');
+    test('exitCode is required, with no default', () {
+      final error = CommandException(
+        id: 'fail',
+        message: 'Something broke',
+        exitCode: ExitCode.genericError,
+      );
 
-      expect(error.isRetryable, isFalse);
+      expect(error.exitCode, ExitCode.genericError);
     });
 
-    test('should serialize to JSON with all fields', () {
+    test('carries no isRetryable field at all', () {
       final error = CommandException(
-        code: 'CONFLICT',
+        id: 'conflict',
         message: 'State conflict',
         exitCode: ExitCode.conflict,
-        isRetryable: true,
         details: {'current': 'open', 'requested': 'closed'},
       );
 
       final json = error.toJson();
-      expect(json['error'], 'CONFLICT');
-      expect(json['message'], 'State conflict');
-      expect(json['exitCode'], ExitCode.conflict);
-      expect(json['isRetryable'], true);
-      expect(json['details'], {'current': 'open', 'requested': 'closed'});
+      expect(json.containsKey('isRetryable'), isFalse);
     });
 
-    test('should serialize to JSON omitting null details', () {
-      final error = CommandException(code: 'GENERIC', message: 'Oops');
+    group('id must be kebab-case', () {
+      test('accepts lowercase words separated by single hyphens', () {
+        expect(
+          () => CommandException(
+            id: 'ticket-not-found',
+            message: 'm',
+            exitCode: ExitCode.notFound,
+          ),
+          returnsNormally,
+        );
+      });
+
+      test('accepts a single lowercase word', () {
+        expect(
+          () => CommandException(id: 'conflict', message: 'm', exitCode: 1),
+          returnsNormally,
+        );
+      });
+
+      test('rejects SCREAMING_SNAKE_CASE', () {
+        expect(
+          () => CommandException(
+            id: 'NOT_FOUND',
+            message: 'm',
+            exitCode: ExitCode.notFound,
+          ),
+          throwsArgumentError,
+        );
+      });
+
+      test('rejects camelCase', () {
+        expect(
+          () => CommandException(id: 'notFound', message: 'm', exitCode: 1),
+          throwsArgumentError,
+        );
+      });
+
+      test('rejects uppercase letters', () {
+        expect(
+          () => CommandException(id: 'Not-Found', message: 'm', exitCode: 1),
+          throwsArgumentError,
+        );
+      });
+
+      test('rejects a leading or trailing hyphen', () {
+        expect(
+          () => CommandException(id: '-not-found', message: 'm', exitCode: 1),
+          throwsArgumentError,
+        );
+        expect(
+          () => CommandException(id: 'not-found-', message: 'm', exitCode: 1),
+          throwsArgumentError,
+        );
+      });
+
+      test('rejects a doubled hyphen', () {
+        expect(
+          () => CommandException(id: 'not--found', message: 'm', exitCode: 1),
+          throwsArgumentError,
+        );
+      });
+
+      test('rejects an empty id', () {
+        expect(
+          () => CommandException(id: '', message: 'm', exitCode: 1),
+          throwsArgumentError,
+        );
+      });
+    });
+
+    test('toJson serializes id, message, exitCode; omits null details', () {
+      final error = CommandException(
+        id: 'generic',
+        message: 'Oops',
+        exitCode: ExitCode.genericError,
+      );
 
       final json = error.toJson();
+      expect(json, {
+        'id': 'generic',
+        'message': 'Oops',
+        'exitCode': ExitCode.genericError,
+      });
       expect(json.containsKey('details'), isFalse);
     });
 
-    test('should map error code to correct exit code', () {
+    test('toJson includes details when set', () {
       final error = CommandException(
-        code: 'UNAUTHORIZED',
+        id: 'unauthorized',
         message: 'Bad token',
         exitCode: ExitCode.unauthorized,
+        details: {'token': 'abc123', 'position': 4},
       );
 
-      expect(error.exitCode, 5);
+      final json = error.toJson();
+      expect(json['details'], {'token': 'abc123', 'position': 4});
     });
 
-    test('should implement Exception interface', () {
-      final error = CommandException(code: 'E', message: 'm');
+    test('implements the Exception interface', () {
+      final error = CommandException(id: 'e', message: 'm', exitCode: 1);
       expect(error, isA<Exception>());
     });
   });
