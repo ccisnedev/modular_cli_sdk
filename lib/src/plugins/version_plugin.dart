@@ -6,19 +6,20 @@ import '../query.dart';
 
 /// `version` prints the host CLI's own name and version.
 ///
-/// The simplest of the three standard plugins: by default it reads nothing
-/// but [CliPluginHost.metadata], so a host that registers a bare
-/// `VersionPlugin()` must have been constructed with
-/// `ModularCli(name: ..., version: ...)`. [version], when given, is reported
-/// in place of [CliHostMetadata.version] (the name still always comes from
-/// the host): a plugin that ships as its own versioned unit, distinct from
-/// the umbrella CLI's own version, names itself this way rather than by
-/// overwriting the host's.
+/// [version] is the CLI's version, and is required: a CLI's version has
+/// exactly one source, this one, never a silent fallback to whatever
+/// `ModularCli(version: ...)` happened to be given. When both are given and
+/// disagree, that is a build-time contradiction, not something [setup]
+/// resolves by picking one: it fails with [CliPluginError]
+/// (`PLUGIN_VERSION_MISMATCH`), naming both versions, so the two are kept in
+/// sync deliberately rather than by one silently winning. The host must
+/// still have been constructed with `ModularCli(name: ..., version: ...)`
+/// for its name (and, when checked, its version) to exist at all.
 class VersionPlugin implements CliPlugin {
-  const VersionPlugin({this.version});
+  const VersionPlugin({required this.version});
 
-  /// Reported in place of the host's own version when given.
-  final String? version;
+  /// This CLI's version, reported by `version`, `doctor`, and `upgrade`.
+  final String version;
 
   @override
   CliPluginManifest get manifest => const CliPluginManifest(
@@ -33,14 +34,20 @@ class VersionPlugin implements CliPlugin {
     // Read once, at setup: a CLI missing a name/version fails while its
     // plugin set is being built, not on the first person who runs `version`.
     final metadata = host.metadata();
-    final reportedVersion = version ?? metadata.version;
+    if (metadata.version != version) {
+      throw CliPluginError(
+        'PLUGIN_VERSION_MISMATCH',
+        'VersionPlugin was given version "$version", but ModularCli was '
+            'given version "${metadata.version}". A CLI has exactly one '
+            'version: give the same one to both, or only to whichever one '
+            'is authoritative.',
+        pluginId: manifest.id,
+      );
+    }
     host.registerQuery<VersionInput, VersionOutput>(
       'version',
-      (req) => VersionQuery(
-        VersionInput(),
-        name: metadata.name,
-        version: reportedVersion,
-      ),
+      (req) =>
+          VersionQuery(VersionInput(), name: metadata.name, version: version),
       description: "Print this CLI's name and version",
     );
   }

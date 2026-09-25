@@ -13,6 +13,7 @@ import '../doctor_plugin.dart';
 import 'cli_downloader.dart';
 import 'cli_file_system.dart';
 import 'cli_platform.dart';
+import 'cli_process_launcher.dart';
 import 'cli_release_source.dart';
 
 /// `upgrade` / `uninstall`: installs a compiled release of this CLI over
@@ -34,16 +35,19 @@ class InstallationPlugin implements CliPlugin {
     CliDownloader? downloader,
     CliFileSystem? fileSystem,
     CliPlatform? platform,
+    CliProcessLauncher? processLauncher,
   }) : releaseSource = releaseSource ?? HttpCliReleaseSource(),
        downloader = downloader ?? HttpCliDownloader(),
        fileSystem = fileSystem ?? const IoCliFileSystem(),
-       platform = platform ?? const IoCliPlatform();
+       platform = platform ?? const IoCliPlatform(),
+       processLauncher = processLauncher ?? const IoCliProcessLauncher();
 
   final CliInstallationConfig config;
   final CliReleaseSource releaseSource;
   final CliDownloader downloader;
   final CliFileSystem fileSystem;
   final CliPlatform platform;
+  final CliProcessLauncher processLauncher;
 
   @override
   CliPluginManifest get manifest => CliPluginManifest(
@@ -88,6 +92,8 @@ class InstallationPlugin implements CliPlugin {
         UninstallInput(),
         config: config,
         fileSystem: fileSystem,
+        platform: platform,
+        processLauncher: processLauncher,
       ),
       description: 'Remove this CLI',
     );
@@ -115,14 +121,15 @@ class InstallationPlugin implements CliPlugin {
         message: '${config.alias} was not found on PATH',
       );
     }
-    // Compared by canonical identity, not by path string: a valid symlink
+    // Compared by same-file identity, not by path string: a valid symlink
     // (`cx -> calculatrix`) resolves under each name to a different path on
     // disk even though both ultimately open the same file, and a
-    // string-equality check would report that as broken.
+    // string-equality check would report that as broken. sameFile also
+    // catches a hard-linked alias, which canonicalize alone cannot: a hard
+    // link has no symlink target to resolve, so two hard-linked paths
+    // canonicalize to two different strings despite naming the same inode.
     final isSameBinary =
-        binaryPath != null &&
-        fileSystem.canonicalize(aliasPath) ==
-            fileSystem.canonicalize(binaryPath);
+        binaryPath != null && fileSystem.sameFile(aliasPath, binaryPath);
     if (!isSameBinary) {
       return CliCheckResult(
         status: CliCheckStatus.error,
@@ -429,6 +436,25 @@ class UpgradeCommand
       );
     }
 
+    // Resolved before planning, not written to blindly: config.executable
+    // may itself be a symlink (a distro package manager, or a previous
+    // install, having put the real binary elsewhere and pointed PATH's
+    // entry at it through a link). Writing to the un-resolved path would
+    // replace the link itself with a plain file, leaving whatever the link
+    // used to point at untouched and un-upgraded, and severing the link. The
+    // resolved path is what actually gets written, and what the plan
+    // reports, so an approver sees the real target rather than the alias.
+    final String resolvedPath;
+    try {
+      resolvedPath = fileSystem.canonicalize(installPath);
+    } on Object catch (e) {
+      throw CommandException(
+        code: 'file-access-denied',
+        message: 'Could not resolve $installPath to an install target: $e',
+        exitCode: ExitCode.genericError,
+      );
+    }
+
     final download = DownloadAssetStep(
       downloader: downloader,
       url: asset.downloadUrl,
@@ -436,7 +462,7 @@ class UpgradeCommand
     );
     final install = InstallExecutableStep(
       fileSystem: fileSystem,
-      path: installPath,
+      path: resolvedPath,
       download: download,
     );
     return [download, install];
@@ -547,9 +573,17 @@ class UninstallOutput extends Output {
     required this.exitCode,
     this.errorId,
     this.errorMessage,
+    this.notes = const [],
   });
 
   final List<String> removed;
+
+  /// Explanatory notes a step attached to its outcome, e.g.
+  /// [SelfDeleteExecutableStep]'s "will be removed when this process exits":
+  /// prose an outcome's verb and target alone cannot say, and that must
+  /// still reach whoever reads this output rather than being dropped.
+  final List<String> notes;
+
   final String? errorId;
   final String? errorMessage;
 
@@ -561,6 +595,7 @@ class UninstallOutput extends Output {
     if (errorId != null) 'error': errorId,
     if (errorMessage != null) 'message': errorMessage,
     'removed': removed,
+    if (notes.isNotEmpty) 'notes': notes,
   };
 }
 
@@ -573,6 +608,8 @@ class UninstallCommand
     this.input, {
     required this.config,
     required this.fileSystem,
+    required this.platform,
+    required this.processLauncher,
   });
 
   @override
@@ -580,6 +617,8 @@ class UninstallCommand
 
   final CliInstallationConfig config;
   final CliFileSystem fileSystem;
+  final CliPlatform platform;
+  final CliProcessLauncher processLauncher;
 
   String? _nothingToDo;
 
@@ -594,27 +633,45 @@ class UninstallCommand
     final steps = <Step>[];
 
     final executablePath = fileSystem.resolveOnPath(config.executable);
-    if (executablePath != null) {
-      steps.add(RemoveFileStep(fileSystem: fileSystem, path: executablePath));
-    }
+    final aliasPath = fileSystem.resolveOnPath(config.alias);
 
     // The alias is only ever removed here when it currently points at this
     // same binary: an alias resolving elsewhere, or not at all, is left
-    // alone rather than guessed at. Compared by canonical identity, not by
-    // path string, for the same reason _checkAlias is: a valid symlink
-    // resolves under each name to a different path on disk even though both
-    // ultimately open the same file. When both names resolve to the exact
-    // same raw path, only one delete step is queued; the entry has already
-    // been removed once as the executable, and a second delete of the same
-    // path is rejected rather than silently repeated.
-    final aliasPath = fileSystem.resolveOnPath(config.alias);
+    // alone rather than guessed at. Compared by sameFile identity, not by
+    // path string, for the same reason _checkAlias is: a valid symlink (or
+    // hard link) resolves under each name to a different path on disk even
+    // though both ultimately open the same file. When both names resolve to
+    // the exact same raw path, only one delete step is queued; the entry is
+    // removed once, as the executable, rather than twice.
     final isSameBinary =
         aliasPath != null &&
         executablePath != null &&
-        fileSystem.canonicalize(aliasPath) ==
-            fileSystem.canonicalize(executablePath);
-    if (isSameBinary && aliasPath != executablePath) {
+        fileSystem.sameFile(aliasPath, executablePath);
+    final removeAlias = isSameBinary && aliasPath != executablePath;
+
+    // The alias's own step is queued before the executable's: deleting the
+    // target first would leave the symlinked alias dangling, and
+    // File.delete on a dangling symlink fails on Linux (it stats through
+    // the link before removing it, and a dangling link has nothing at the
+    // other end to stat). Removing the alias while it is still a valid
+    // link, then the target, avoids that failure entirely.
+    if (removeAlias) {
       steps.add(RemoveFileStep(fileSystem: fileSystem, path: aliasPath));
+    }
+
+    if (executablePath != null) {
+      // On Windows, the running executable cannot simply be deleted: the
+      // loader holds it open. It is instead moved aside and a detached
+      // process is started to delete it once this one has exited.
+      steps.add(
+        platform.operatingSystem == 'windows'
+            ? SelfDeleteExecutableStep(
+                fileSystem: fileSystem,
+                processLauncher: processLauncher,
+                path: executablePath,
+              )
+            : RemoveFileStep(fileSystem: fileSystem, path: executablePath),
+      );
     }
 
     if (steps.isEmpty) {
@@ -627,6 +684,10 @@ class UninstallCommand
   @override
   UninstallOutput describe(Execution execution) {
     final removed = execution.outcomes.map((o) => o.target).toList();
+    final notes = execution.outcomes
+        .map((o) => o.detail)
+        .whereType<String>()
+        .toList();
 
     final failure = execution.failure;
     if (failure != null) {
@@ -642,10 +703,95 @@ class UninstallCommand
         exitCode: ExitCode.genericError,
         errorId: id,
         errorMessage: message,
+        notes: notes,
       );
     }
 
-    return UninstallOutput(removed: removed, exitCode: ExitCode.ok);
+    return UninstallOutput(
+      removed: removed,
+      exitCode: ExitCode.ok,
+      notes: notes,
+    );
+  }
+}
+
+/// Removes the currently-running executable on Windows, where a plain
+/// delete of it is not possible: the loader keeps a mapped executable's
+/// directory entry from being deleted (though, since Vista, not from being
+/// renamed) while it is running.
+///
+/// [path] is moved aside to `<path>.uninstall-<pid>.old`, then a detached
+/// `cmd /c` process is started that waits for this process (identified by
+/// [CliProcessLauncher.currentPid]) to exit before deleting the renamed
+/// file. This step's own [Outcome] reports [path] as removed once the move
+/// succeeds, since from the caller's perspective it is gone (nothing on
+/// `PATH` resolves to it any more); [preview] says explicitly that the
+/// actual deletion happens later, so `--plan`/`--apply` output does not
+/// imply the file disappears the instant this step runs.
+///
+/// Starting the detached process is not allowed to fail silently: if
+/// [CliProcessLauncher.start] itself throws, this step fails with
+/// `file-access-denied` naming the renamed file, rather than reporting a
+/// success that leaves a `.old` file behind forever.
+class SelfDeleteExecutableStep implements Step {
+  SelfDeleteExecutableStep({
+    required this.fileSystem,
+    required this.processLauncher,
+    required this.path,
+  });
+
+  final CliFileSystem fileSystem;
+  final CliProcessLauncher processLauncher;
+  final String path;
+
+  @override
+  Preview preview() => Preview(
+    verb: 'remove',
+    target: path,
+    detail: '$path will be removed when this process exits',
+  );
+
+  @override
+  Future<Outcome> perform(StepContext context) async {
+    final pid = processLauncher.currentPid;
+    final renamedPath = '$path.uninstall-$pid.old';
+
+    try {
+      await fileSystem.rename(path, renamedPath);
+    } on Object catch (e) {
+      throw CliInstallStepFailure(
+        'file-access-denied',
+        'Could not move $path aside for removal: $e',
+      );
+    }
+
+    // Polls, from the detached process, for the PID this process is running
+    // under to stop appearing in `tasklist`, then deletes the renamed file.
+    // Bounded at 300 one-second checks (5 minutes) rather than looping
+    // forever: a process that never exits should not leave a runaway
+    // `cmd.exe` behind it either.
+    final script =
+        'for /l %n in (1,1,300) do ('
+        'tasklist /fi "PID eq $pid" 2>nul | find "$pid" >nul '
+        '|| (del /f /q "$renamedPath" & exit /b 0) & '
+        'timeout /t 1 /nobreak >nul'
+        ')';
+
+    try {
+      await processLauncher.start('cmd', ['/c', script]);
+    } on Object catch (e) {
+      throw CliInstallStepFailure(
+        'file-access-denied',
+        '$path was moved to $renamedPath but the process that removes it '
+            'could not be started: $e. Delete $renamedPath manually.',
+      );
+    }
+
+    return Outcome(
+      verb: 'remove',
+      target: path,
+      detail: '$path will be removed when this process exits',
+    );
   }
 }
 

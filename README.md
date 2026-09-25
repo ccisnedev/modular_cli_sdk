@@ -420,7 +420,7 @@ hand-wiring the routes itself.
 
 ```dart
 final cli = ModularCli(name: 'mycli', version: '1.4.0')
-  ..plugin(const VersionPlugin())
+  ..plugin(const VersionPlugin(version: '1.4.0'))
   ..plugin(const DoctorPlugin())
   ..plugin(InstallationPlugin(
     config: CliInstallationConfig(
@@ -459,7 +459,7 @@ build-time `CliPluginError`, not a silently-dropped value.
 
 | Plugin | Registers | Needs |
 | --- | --- | --- |
-| `VersionPlugin` | `version` | `ModularCli(name:, version:)` |
+| `VersionPlugin(version:)` | `version` | `ModularCli(name:, version:)`; must match |
 | `DoctorPlugin` | `doctor`, and the `doctor.checks` extension point | (none) |
 | `InstallationPlugin` | `upgrade`, `uninstall`; contributes 3 checks to `doctor.checks` | `DoctorPlugin`, a `CliInstallationConfig` |
 

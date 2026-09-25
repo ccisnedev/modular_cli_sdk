@@ -60,7 +60,7 @@ Future<int> runExample(
     suggestionDistance: 2,
     name: 'example',
     version: '0.2.0',
-  )..plugin(const VersionPlugin());
+  )..plugin(const VersionPlugin(version: '0.2.0'));
 
   // The root command: what the bare invocation runs. Registering it means this
   // CLI, not the help, owns the empty invocation.

@@ -118,26 +118,79 @@ Review findings against issue #28, found before this release shipped.
   stored failure instead of silently skipping validation and using a
   half-built plugin set; `.plugin()` after either a successful or a failed
   build throws `StateError`, instead of being accepted and never run
-- **The topological sort is stable.** Registration order now breaks ties
-  among a plugin's own `requires`, so registering `a` (`requires: ['c',
-  'b']`), then `b`, then `c` always runs `setup()` in the order `b`, `c`,
-  `a`
+- **The topological sort breaks ties by registration order.** (Superseded by
+  the Kahn's-algorithm rewrite below, which this same release also ships.)
 - **Declaring an extension point a second time is rejected outright.**
   `host.declareExtensionPoint<T>(id)` now throws `CliPluginError` on any
   second declaration of the same `id`, whether or not the second `T` matches
   the first, before touching registry state; the type check on a duplicate
   id was previously skipped
 - **`VersionPlugin(version: '0.8.0')` now compiles and reports that version.**
-  The example from issue #28 works as written. Host metadata is kept: a
-  `ModularCli` still needs `name` and `version` for `VersionPlugin` to have
-  anything to fall back to, and `name` always comes from `metadata()`, but
-  `VersionPlugin`'s new optional `version` parameter, when given, is reported
-  instead of `CliHostMetadata.version`
+  (Superseded below: `version` is now required, not a fallback.)
 - **The newer-release doctor warning names the corrective command.** The
   `release` check's warning text now reads `A newer release is available:
   <tag> (current: <version>). Run "<alias> upgrade --apply" to install it.`,
   matching what issue #28 prescribes, rather than announcing the release
   without saying what to do about it
+
+### Fixed (second review round)
+
+A second pass over #30 found 8 more issues, all against the same code this
+release already touched.
+
+- **A failed Windows self-replacing write no longer loses the installation.**
+  `writeExecutable` used to delete the previous executable's backup before
+  the final rename into place, so a rename failure left nothing at the
+  destination. The backup is now kept until that rename succeeds, and
+  restored from if it does not; the failure is still reported as
+  `file-access-denied` naming the reason
+- **`uninstall --apply` of the running executable on Windows no longer fails
+  outright.** Windows will not let a running executable delete itself, but it
+  will let one be renamed: the step now moves it to
+  `<name>.uninstall-<pid>.old` and starts a detached process that deletes
+  that file once this process exits, reporting explicitly (in both the step's
+  preview and its outcome) that removal is deferred rather than immediate.
+  Starting that detached process is not allowed to fail silently: if it
+  cannot be started, the step fails with `file-access-denied` naming the
+  file to delete by hand
+- **`uninstall` no longer deletes a target before its symlinked alias.** The
+  alias step is now queued before the executable's, and `delete` checks each
+  path's type without following links (`FileSystemEntity.typeSync(...,
+  followLinks: false)`), removing a link with `Link.delete()` rather than
+  `File.delete()`, which fails on a dangling symlink on Linux
+- **`upgrade` through a symlinked executable now replaces the binary, not the
+  link.** The install target is resolved (`canonicalize`) before planning,
+  and the resolved path, not the symlinked `PATH` entry, is what gets
+  written and what the plan reports; a resolution failure is reported as
+  `file-access-denied` instead of silently installing over the symlink
+- **`VersionPlugin`'s version is no longer a fallback.** `version` is now a
+  required constructor parameter, not an optional one read from host
+  metadata when absent. A `VersionPlugin` version that disagrees with
+  `ModularCli`'s own now fails at build time with `CliPluginError`
+  (`PLUGIN_VERSION_MISMATCH`), rather than one silently overriding the
+  other: a CLI has exactly one version
+- **The topological sort is Kahn-stable, not just tie-broken.** The previous
+  fix broke ties within a single plugin's own `requires` list, but a
+  depth-first visit can still order two plugins with no relationship to each
+  other out of registration order when they are reached through different
+  paths. `orderCliPlugins` now runs Kahn's algorithm directly: on every
+  round, scan every not-yet-ordered plugin, in registration order, and take
+  the first whose dependencies are all already ordered. Registering `a`
+  (`requires: ['c']`), `b` (independent) and `c`, in that order, now runs
+  `setup()` as `b`, `c`, `a`
+- **POSIX execute checks now ask "can the calling user run this," not "does
+  any execute bit exist."** `resolveOnPath` used to accept a file with any
+  execute bit set anywhere in its mode; it now looks up the file's owner and
+  the calling process's uid/gid (via `id -u`, `id -G` and `stat`) and checks
+  only the bit that actually governs this process: owner, group or other.
+  Mode `0641` (owner `rw-`, group `r--`, other `--x`), owned by the calling
+  user, is now correctly treated as not executable
+- **A hard-linked alias is now recognized as the same file as its target.**
+  `canonicalize` only resolves symlinks, so two hard-linked paths compared
+  that way still read as different files. `CliFileSystem` gained `sameFile`,
+  which falls back to `FileSystemEntity.identicalSync` after `canonicalize`
+  disagrees, and `doctor`'s `alias` check and `uninstall` both use it in
+  place of a bare `canonicalize` comparison
 
 ### Notes
 

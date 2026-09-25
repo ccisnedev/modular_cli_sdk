@@ -75,6 +75,8 @@ export 'src/plugins/installation/cli_file_system.dart'
     show CliFileSystem, IoCliFileSystem;
 export 'src/plugins/installation/cli_platform.dart'
     show CliPlatform, IoCliPlatform;
+export 'src/plugins/installation/cli_process_launcher.dart'
+    show CliProcessLauncher, IoCliProcessLauncher;
 export 'src/plugins/installation/cli_release_source.dart'
     show
         CliRelease,
@@ -91,6 +93,7 @@ export 'src/plugins/installation/installation_plugin.dart'
         InstallExecutableStep,
         InstallationPlugin,
         RemoveFileStep,
+        SelfDeleteExecutableStep,
         UninstallCommand,
         UninstallInput,
         UninstallOutput,

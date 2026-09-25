@@ -164,23 +164,29 @@ class CliPluginError implements Exception {
   String toString() => 'CliPluginError($code): $message';
 }
 
-enum _VisitState { visiting, visited }
-
 /// Orders [plugins] so each comes after every plugin named in its
 /// [CliPluginManifest.requires], directly or transitively (a dependency
 /// topological sort), while preserving the original registration order among
 /// plugins with no dependency relationship to one another.
 ///
-/// A depth-first visit in registration order does both at once: each plugin
-/// pulls its own dependencies in ahead of itself the first time it is
-/// visited, and a plugin with no unresolved dependency is appended in the
-/// order [plugins] presented it.
+/// Kahn's algorithm, run deterministically: repeatedly scan the plugins not
+/// yet ordered, in their original registration order, and take the first one
+/// whose every `requires` id has already been ordered. A depth-first visit
+/// (this function's previous implementation) does not do this: it orders a
+/// plugin's dependencies in the order *that plugin* listed them in
+/// `requires`, not in the order they were registered, so two independent
+/// dependencies of the same plugin can come out in the wrong relative order.
+/// Always picking the earliest-registered *eligible* plugin, over the whole
+/// remaining set rather than just one plugin's own requirements, is what
+/// keeps registration order as the tie-break everywhere, not only within a
+/// single plugin's dependency list.
 ///
 /// Throws [CliPluginError]:
 ///  * `PLUGIN_DUPLICATE_ID`: two plugins share an id.
 ///  * `PLUGIN_DEPENDENCY_MISSING`: a required id is not among [plugins].
 ///  * `PLUGIN_DEPENDENCY_CYCLE`: a plugin requires itself, directly or
-///    through others.
+///    through others: no plugin in the remaining set is ever eligible, so a
+///    full scan finds none.
 List<CliPlugin> orderCliPlugins(Iterable<CliPlugin> plugins) {
   final pluginList = plugins.toList(growable: false);
 
@@ -215,14 +221,24 @@ List<CliPlugin> orderCliPlugins(Iterable<CliPlugin> plugins) {
     }
   }
 
-  final visitState = <String, _VisitState>{};
   final ordered = <CliPlugin>[];
+  final done = <String>{};
+  final remaining = List<CliPlugin>.of(pluginList);
 
-  void visit(CliPlugin plugin) {
-    final id = plugin.manifest.id;
-    final state = visitState[id];
-    if (state == _VisitState.visited) return;
-    if (state == _VisitState.visiting) {
+  while (remaining.isNotEmpty) {
+    CliPlugin? next;
+    for (final candidate in remaining) {
+      if (candidate.manifest.requires.every(done.contains)) {
+        next = candidate;
+        break;
+      }
+    }
+
+    if (next == null) {
+      // A full scan of everything left found nobody whose requirements are
+      // already satisfied: every remaining plugin is waiting, directly or
+      // transitively, on another remaining plugin, which is exactly a cycle.
+      final id = remaining.first.manifest.id;
       throw CliPluginError(
         'PLUGIN_DEPENDENCY_CYCLE',
         'A plugin dependency cycle was detected at "$id".',
@@ -231,28 +247,11 @@ List<CliPlugin> orderCliPlugins(Iterable<CliPlugin> plugins) {
       );
     }
 
-    visitState[id] = _VisitState.visiting;
-    // Walked over [pluginList], in registration order, rather than over
-    // `plugin.manifest.requires` itself: a plugin naming more than one
-    // dependency would otherwise be ordered by the order it *listed* them
-    // in, which is not a fact about the plugin set a host controls. Filtering
-    // [pluginList] by the required-id set visits the same dependencies, but
-    // in the order they were registered, which is what breaks a tie between
-    // two of a plugin's own dependencies that have no order relative to each
-    // other.
-    final requiredIds = plugin.manifest.requires.toSet();
-    for (final candidate in pluginList) {
-      if (requiredIds.contains(candidate.manifest.id)) {
-        visit(candidate);
-      }
-    }
-    visitState[id] = _VisitState.visited;
-    ordered.add(plugin);
+    ordered.add(next);
+    done.add(next.manifest.id);
+    remaining.remove(next);
   }
 
-  for (final plugin in pluginList) {
-    visit(plugin);
-  }
   return ordered;
 }
 

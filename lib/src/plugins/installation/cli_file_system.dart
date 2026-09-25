@@ -30,16 +30,37 @@ abstract class CliFileSystem {
   Future<void> writeExecutable(String path, List<int> bytes);
 
   /// Remove the file at [path].
+  ///
+  /// [path] may itself be a symlink: the link entry is removed, not
+  /// whatever it points at, and this succeeds even when the link is
+  /// dangling (its target no longer exists).
   Future<void> delete(String path);
+
+  /// Renames (moves) the file at [from] to [to], both within the same
+  /// filesystem. Used where a file must be moved out of the way rather than
+  /// deleted outright, e.g. a running Windows executable that cannot be
+  /// deleted but can be renamed.
+  Future<void> rename(String from, String to);
 
   /// The canonical, symlink-resolved form of [path], or [path] itself when
   /// it cannot be resolved (nothing exists there, or resolution fails).
   ///
-  /// Two paths that name the same file on disk, however they got there (a
-  /// symlink, a hard link, redundant `.` segments), canonicalize to the same
-  /// string; comparing paths by this rather than by their raw string form is
-  /// how a valid symlinked alias is told apart from a dangling one.
+  /// Two paths that name the same file on disk by way of a symlink
+  /// canonicalize to the same string; comparing paths by this rather than by
+  /// their raw string form is how a valid symlinked alias is told apart from
+  /// a dangling one. This does *not* catch a hard link: a hard link has no
+  /// symlink target to resolve, so two hard-linked paths canonicalize to two
+  /// different strings despite naming the same inode. Use [sameFile] where
+  /// that also has to be caught.
   String canonicalize(String path) => path;
+
+  /// Whether [a] and [b] name the same file on disk, however they got there:
+  /// the same raw path, a symlink to the other, or a hard link sharing the
+  /// other's inode. This is the strict superset of [canonicalize] equality
+  /// that a hard-linked alias needs: [canonicalize] alone reports two
+  /// hard-linked paths as different files, since neither is a symlink
+  /// pointing at the other.
+  bool sameFile(String a, String b);
 }
 
 /// Resolves against the real `PATH` and writes to the real filesystem.
@@ -80,7 +101,7 @@ class IoCliFileSystem implements CliFileSystem {
         final candidate = '$dir${io.Platform.pathSeparator}$candidateName';
         final file = io.File(candidate);
         if (!file.existsSync()) continue;
-        if (isWindows || _hasExecuteBit(file.statSync().mode)) {
+        if (isWindows || _canExecute(candidate, file.statSync().mode)) {
           return candidate;
         }
       }
@@ -108,8 +129,89 @@ class IoCliFileSystem implements CliFileSystem {
     return [for (final ext in extensions) '$name$ext'];
   }
 
-  /// Owner, group, or other execute bit: `0o111`.
+  /// Owner, group, or other execute bit: `0o111`. Used as a permissive
+  /// fallback by [_canExecute] when ownership cannot be determined, and by
+  /// [writeExecutable] to verify a `chmod +x` it just ran itself (where the
+  /// calling user is, by construction, the file's own owner, so "any
+  /// execute bit" and "the owner's execute bit" agree).
   bool _hasExecuteBit(int mode) => (mode & 0x49) != 0;
+
+  /// Whether the calling process may execute the file at [path], given its
+  /// already-read [mode]. Checks the one bit that actually governs this
+  /// process, the way the kernel does: the owner bit when this process's uid
+  /// owns [path], the group bit when one of this process's gids matches
+  /// [path]'s gid, otherwise the other bit. "Any execute bit is set" (the
+  /// previous check) is wrong here: mode `0641` (owner `rw-`, group `r--`,
+  /// other `--x`) has an execute bit set, but the file's own owner cannot
+  /// run it.
+  ///
+  /// Falls back to [_hasExecuteBit] when ownership cannot be determined at
+  /// all (no working `stat` on this platform), rather than reporting every
+  /// file as non-executable.
+  bool _canExecute(String path, int mode) {
+    final owner = _ownerOf(path);
+    if (owner == null) return _hasExecuteBit(mode);
+    final (uid, gid) = owner;
+
+    final currentUid = _currentUid();
+    if (currentUid != null && currentUid == uid) {
+      return (mode & 0x40) != 0; // owner: 0o100
+    }
+    final currentGids = _currentGids();
+    if (currentGids != null && currentGids.contains(gid)) {
+      return (mode & 0x08) != 0; // group: 0o010
+    }
+    return (mode & 0x01) != 0; // other: 0o001
+  }
+
+  int? _currentUid() {
+    try {
+      final result = io.Process.runSync('id', const ['-u']);
+      if (result.exitCode != 0) return null;
+      return int.tryParse((result.stdout as String).trim());
+    } on Object {
+      return null;
+    }
+  }
+
+  Set<int>? _currentGids() {
+    try {
+      final result = io.Process.runSync('id', const ['-G']);
+      if (result.exitCode != 0) return null;
+      return (result.stdout as String)
+          .trim()
+          .split(RegExp(r'\s+'))
+          .map(int.tryParse)
+          .whereType<int>()
+          .toSet();
+    } on Object {
+      return null;
+    }
+  }
+
+  /// The owning `(uid, gid)` of the file at [path], or null when it cannot
+  /// be determined. Tries GNU coreutils' `stat -c`, then BSD/macOS's
+  /// `stat -f`, since [IoCliFileSystem] itself does not know which `stat`
+  /// this machine has.
+  (int, int)? _ownerOf(String path) {
+    for (final args in [
+      ['-c', '%u:%g', path],
+      ['-f', '%u:%g', path],
+    ]) {
+      try {
+        final result = io.Process.runSync('stat', args);
+        if (result.exitCode != 0) continue;
+        final parts = (result.stdout as String).trim().split(':');
+        if (parts.length != 2) continue;
+        final uid = int.tryParse(parts[0]);
+        final gid = int.tryParse(parts[1]);
+        if (uid != null && gid != null) return (uid, gid);
+      } on Object {
+        continue;
+      }
+    }
+    return null;
+  }
 
   @override
   String canonicalize(String path) {
@@ -117,6 +219,21 @@ class IoCliFileSystem implements CliFileSystem {
       return io.File(path).resolveSymbolicLinksSync();
     } on io.FileSystemException {
       return path;
+    }
+  }
+
+  @override
+  bool sameFile(String a, String b) {
+    if (a == b) return true;
+    if (canonicalize(a) == canonicalize(b)) return true;
+    // canonicalize only resolves symlinks; two hard-linked paths have no
+    // symlink between them to resolve and so canonicalize to two different
+    // strings despite sharing the same inode. identicalSync checks that
+    // directly.
+    try {
+      return io.FileSystemEntity.identicalSync(a, b);
+    } on io.FileSystemException {
+      return false;
     }
   }
 
@@ -152,10 +269,38 @@ class IoCliFileSystem implements CliFileSystem {
       // while mapped, which is why the new file only takes [path]'s name
       // after the old one has been moved out of the way.
       final destination = io.File(path);
+      String? backupPath;
       if (destination.existsSync()) {
-        final backupPath =
+        backupPath =
             '$path.old-${io.pid}-${DateTime.now().microsecondsSinceEpoch}';
         await destination.rename(backupPath);
+      }
+
+      try {
+        // A separate, overridable step (not inlined) so a test can make
+        // exactly this rename fail without a second process actually
+        // holding [path] open: the backup must still exist, restorable,
+        // when it does.
+        await renameIntoPlace(temp, path);
+      } on Object {
+        // The rename into place failed. [path] no longer exists (moved to
+        // [backupPath] above), so the previous installation is restored
+        // from the backup before the original failure is let through:
+        // deleting the backup up front, as this used to, would otherwise
+        // leave the installation gone on a failed upgrade rather than
+        // merely not-yet-upgraded.
+        if (backupPath != null) {
+          try {
+            await io.File(backupPath).rename(path);
+          } on Object {
+            // Best effort: the original failure below is still what the
+            // caller needs to see, even if the restore itself fails too.
+          }
+        }
+        rethrow;
+      }
+
+      if (backupPath != null) {
         try {
           await io.File(backupPath).delete();
         } on Object {
@@ -164,7 +309,6 @@ class IoCliFileSystem implements CliFileSystem {
           // upgrade that has already succeeded.
         }
       }
-      await temp.rename(path);
     } on Object {
       if (temp.existsSync()) {
         try {
@@ -178,8 +322,33 @@ class IoCliFileSystem implements CliFileSystem {
     }
   }
 
+  /// Renames [temp] to [path] as the last step of a Windows self-replacing
+  /// write. Exposed as its own overridable method purely as a test seam: a
+  /// subclass in a test can override this to throw on demand, which is the
+  /// only way to exercise [writeExecutable]'s Windows failure-and-restore
+  /// path, since nothing in `dart:io` lets a test provoke a rename failure
+  /// at this exact point otherwise. Production code never overrides this.
+  Future<void> renameIntoPlace(io.File temp, String path) async {
+    await temp.rename(path);
+  }
+
   @override
   Future<void> delete(String path) async {
-    await io.File(path).delete();
+    // A symlink is deleted as itself, not through a stat of whatever it
+    // points at: File.delete's own implementation resolves the path first,
+    // which fails on a dangling symlink (one whose target no longer exists)
+    // even though removing the link entry itself has nothing to do with
+    // whether its target exists.
+    final type = io.FileSystemEntity.typeSync(path, followLinks: false);
+    if (type == io.FileSystemEntityType.link) {
+      await io.Link(path).delete();
+    } else {
+      await io.File(path).delete();
+    }
+  }
+
+  @override
+  Future<void> rename(String from, String to) async {
+    await io.File(from).rename(to);
   }
 }
