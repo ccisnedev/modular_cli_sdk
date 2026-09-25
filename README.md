@@ -411,6 +411,80 @@ A `help` command you register yourself always wins over the built-in one.
 
 ---
 
+## Plugins
+
+A `CliPlugin` registers routes the way `main()` does, but is written by
+someone who is not your CLI: a shared package that wants to add `version`,
+`doctor`, or an installer to whatever CLI depends on it, without that CLI
+hand-wiring the routes itself.
+
+```dart
+final cli = ModularCli(name: 'mycli', version: '1.4.0')
+  ..plugin(const VersionPlugin())
+  ..plugin(const DoctorPlugin())
+  ..plugin(InstallationPlugin(
+    config: CliInstallationConfig(
+      repository: 'you/mycli',
+      tagPrefix: 'cli-v',       // your app's own `v*` tags are left alone
+      executable: 'mycli',
+      alias: 'mc',
+      assets: {'linux': 'mycli-linux', 'macos': 'mycli-macos', 'windows': 'mycli-windows.exe'},
+    ),
+  ));
+
+final code = await cli.run(args); // buildPlugins() runs once, before routing
+```
+
+**A plugin declares what it needs, not where it must sit.** Its
+`CliPluginManifest` names an `id`, a `version`, the `hostApiVersion` it was
+built against, and which other plugin ids it `requires`. Plugins are ordered
+by that dependency graph before any `setup()` runs — `InstallationPlugin`
+contributes checks to `DoctorPlugin`'s extension point regardless of which
+one you called `.plugin()` on first, as long as it declares
+`requires: ['modular_cli.doctor']`.
+
+**The whole set builds, or none of it does.** A missing dependency, a cycle,
+two plugins sharing an `id`, or a `hostApiVersion` this host's plugin API does
+not satisfy is a `CliPluginError` thrown before any plugin's `setup()` runs —
+there is no state where half the plugins registered their routes and the rest
+did not.
+
+**Extension points are typed.** A plugin that wants other plugins to extend it
+calls `host.declareExtensionPoint<CliDoctorCheck>('doctor.checks')` once; a
+contributor calls `host.contribute<CliDoctorCheck>('doctor.checks', check)`.
+Contributing to an id nobody declared, or contributing the wrong type, is a
+build-time `CliPluginError` — not a silently-dropped value.
+
+### The three standard plugins
+
+| Plugin | Registers | Needs |
+| --- | --- | --- |
+| `VersionPlugin` | `version` | `ModularCli(name:, version:)` |
+| `DoctorPlugin` | `doctor`, and the `doctor.checks` extension point | — |
+| `InstallationPlugin` | `upgrade`, `uninstall`; contributes 3 checks to `doctor.checks` | `DoctorPlugin`, a `CliInstallationConfig` |
+
+`doctor` runs every contributed `CliDoctorCheck` and reports them together,
+exiting `ExitCode.configError` (78) if any one of them errored — a warning is
+shown but never fails the run. `InstallationPlugin`'s three checks are
+`binary` (is `executable` on `PATH`), `alias` (does `alias`, if present,
+resolve to the same binary) and `release` (is a newer tagged release
+available) — the first two error when wrong, the third only ever warns,
+including when the lookup itself fails.
+
+`upgrade` and `uninstall` are ordinary `Command`s: `--plan` shows what would
+happen, `--apply` (with approval, or `--autoapprove`) does it, and a step that
+fails stops the run at that step with nothing rolled back — the same contract
+every command in this SDK already has. Looking up the release happens before
+either flag is branched on, so a failed lookup reports
+`release-lookup-failed` and exits `1` under `--plan` too, not only `--apply`.
+
+Every network, filesystem and platform access `InstallationPlugin` makes goes
+through an injectable interface (`CliReleaseSource`, `CliDownloader`,
+`CliFileSystem`, `CliPlatform`), each with a real (`Http*`/`Io*`) default —
+pass your own in tests, and nothing downloads or touches a real install path.
+
+---
+
 ## Features
 
 - `Query<I, O>` — reads and answers; pure business logic, no I/O concerns
@@ -425,6 +499,8 @@ A `help` command you register yourself always wins over the built-in one.
 - A router-level rejection (unknown command, missing required option, and so on) is reported through the same JSON error envelope as a `CommandException`: `{"error": {"id", "message", "exitCode", ...}}`, with `contract` and `details` present only when they apply (see [Error handling](#error-handling))
 - `ModularCli` + `ModuleBuilder` — module registration and routing
 - Root routes — register without a module prefix via `cli.query()` / `cli.command()`
+- `CliPlugin` / `ModularCli.plugin()` — a package registers routes and extension-point contributions into a host CLI, ordered by declared dependencies and validated as a whole before any of it runs
+- Three standard plugins — `VersionPlugin`, `DoctorPlugin`, `InstallationPlugin` (`upgrade` / `uninstall` against tagged GitHub releases)
 - `--json` global flag — machine-readable JSON output
 - `--quiet` global flag — suppress informational messages
 - TTY detection — automatic format selection

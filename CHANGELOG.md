@@ -4,6 +4,90 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.7.0
+
+A CLI built on this SDK had no way to let another package add commands to it.
+Issue [#28](https://github.com/macss-dev/modular_cli_sdk/issues/28) asked for
+a plugin system and three standard plugins — `version`, `doctor` and an
+installer (`upgrade` / `uninstall`) — built on it.
+
+### Added
+
+- **`CliPlugin`, `CliPluginHost`, `ModularCli.plugin()`.** A plugin declares a
+  `CliPluginManifest` (`id`, `version`, `hostApiVersion`, `requires`) and a
+  `setup(CliPluginHost host)` that registers routes and reads or contributes
+  to extension points. `ModularCli.plugin(...)` queues one; nothing runs until
+  `run()` (or `buildPlugins()`, for a test that wants the routes without
+  running) is called — once, ever, per `ModularCli`
+- **Dependency ordering, not registration order.** Plugins are topologically
+  sorted by `requires` before any `setup()` runs, so a plugin that contributes
+  to another plugin's extension point does not have to be registered after it
+  — only declared as requiring it. A cycle, a missing dependency, two plugins
+  sharing an `id`, or a `hostApiVersion` constraint this host's plugin API
+  (`cliPluginHostApiVersion`, currently `1.0.0`) does not satisfy all fail the
+  whole build before any plugin's `setup()` runs — there is no partially built
+  plugin set
+- **Extension points.** `host.declareExtensionPoint<T>(id)`,
+  `host.contribute<T>(id, value)`, `host.contributions<T>(id)`. Contributing to
+  an undeclared id, or contributing a value of the wrong `T`, is a build-time
+  `CliPluginError` — an extension point is typed, not a bag of `Object?`
+- **`CliPluginError`** — one exception for every build-time plugin failure
+  (`PLUGIN_DUPLICATE_ID`, `PLUGIN_DEPENDENCY_MISSING`,
+  `PLUGIN_DEPENDENCY_CYCLE`, `PLUGIN_INCOMPATIBLE_HOST_API`,
+  `PLUGIN_DUPLICATE_ROUTE`, `PLUGIN_EXTENSION_POINT_UNDECLARED`,
+  `PLUGIN_EXTENSION_POINT_TYPE_MISMATCH`), carrying `code`, `message`,
+  `pluginId` and, where relevant, `resourceId`
+- **`ModularCli(name:, version:)`** — a CLI's own identity, read back by
+  plugins through `CliPluginHost.metadata()`. Both or neither: a `name`
+  without a `version` (or vice versa) is an `ArgumentError`, not a half
+  identity a plugin might rely on
+- **`VersionPlugin`** — registers `version`, printing the host's `name` and
+  `version`. Reads `metadata()` at `setup()`, not inside the route handler, so
+  a host missing its identity fails while the plugin set is built rather than
+  on the first person who runs `version`
+- **`DoctorPlugin`** — registers `doctor`, running every `CliDoctorCheck`
+  contributed to `DoctorPlugin.extensionPoint` and reporting them together.
+  A check answers `ok`, `warning` or `error`; `doctor`'s exit code is
+  `ExitCode.configError` (78) if any check errored, `ExitCode.ok` otherwise —
+  a warning is visible but never fails the run
+- **`InstallationPlugin`** — configured with a `CliInstallationConfig`
+  (`repository`, `tagPrefix`, `executable`, `alias`, `assets`), it registers
+  `upgrade` and `uninstall` as `Command`s (so both are subject to
+  `--plan`/`--apply`/`--autoapprove` like any other command in this SDK) and
+  contributes three checks (`binary`, `alias`, `release`) to
+  `DoctorPlugin.extensionPoint` — it `requires: ['modular_cli.doctor']`.
+  `upgrade` looks up this repository's GitHub releases, keeps only tags
+  starting with `tagPrefix` (so an application's own `v*` tags and the CLI's
+  `cli-v*` tags coexist in one repository), picks the newest one newer than
+  the host's current version, downloads the asset named for the current
+  platform and installs it over whatever `executable` currently resolves to
+  on `PATH`. `uninstall` removes that binary, and the `alias` too but only
+  when it currently resolves to the same path — an alias pointing elsewhere,
+  or missing, is left alone. Every network, filesystem and platform access
+  (`CliReleaseSource`, `CliDownloader`, `CliFileSystem`, `CliPlatform`) is
+  behind an injectable interface with a `Http*`/`Io*` default, so the test
+  suite never downloads anything or touches a real install path
+
+### Notes
+
+- **No archive format.** An asset is assumed to be the executable itself;
+  extracting a `.tar.gz` or `.zip` release asset is not implemented, because
+  neither issue #28 nor the read portions of the calculatrix spec describe
+  one. A host whose releases are archives needs its own `CliDownloader` that
+  unpacks before this plugin writes the result
+- **A failed release lookup exits non-zero even under `--plan`.** `upgrade`
+  and `uninstall` look the release up inside `steps()`, which runs before the
+  framework branches on `--plan` vs `--apply` — so `release-lookup-failed` is
+  reported and the run exits `ExitCode.genericError` (1) whichever flag was
+  given, rather than `--plan` silently showing nothing
+- **A step failure stops the run at that step; nothing already done is rolled
+  back**, matching `preview_executor`'s existing contract for every command in
+  this SDK. `upgrade`'s failure output distinguishes a download that never
+  produced bytes (`download-failed`) from a download that succeeded but could
+  not be written (`file-access-denied`), and names which steps completed
+- `dart analyze` is clean except for the expected `invalid_dependency`
+  warning on the local path dependency on `cli_router`
+
 ## 0.6.0
 
 Built against `cli_router: { path: ../cli_router-0.2.0 }`. The constraint
