@@ -42,8 +42,7 @@ abstract class CliFileSystem {
   /// deleted but can be renamed.
   Future<void> rename(String from, String to);
 
-  /// The canonical, symlink-resolved form of [path], or [path] itself when
-  /// it cannot be resolved (nothing exists there, or resolution fails).
+  /// The canonical, symlink-resolved form of [path].
   ///
   /// Two paths that name the same file on disk by way of a symlink
   /// canonicalize to the same string; comparing paths by this rather than by
@@ -52,6 +51,13 @@ abstract class CliFileSystem {
   /// symlink target to resolve, so two hard-linked paths canonicalize to two
   /// different strings despite naming the same inode. Use [sameFile] where
   /// that also has to be caught.
+  ///
+  /// A resolution failure (nothing exists at [path], a link in the chain is
+  /// dangling, or resolution otherwise fails) must be thrown, not swallowed
+  /// into returning [path] itself: a caller resolving an install target
+  /// before writing to it relies on that failure surfacing, since silently
+  /// falling back to the un-resolved path is how an upgrade ends up
+  /// replacing a symlink itself instead of what it points at.
   String canonicalize(String path) => path;
 
   /// Whether [a] and [b] name the same file on disk, however they got there:
@@ -214,13 +220,7 @@ class IoCliFileSystem implements CliFileSystem {
   }
 
   @override
-  String canonicalize(String path) {
-    try {
-      return io.File(path).resolveSymbolicLinksSync();
-    } on io.FileSystemException {
-      return path;
-    }
-  }
+  String canonicalize(String path) => io.File(path).resolveSymbolicLinksSync();
 
   @override
   bool sameFile(String a, String b) {

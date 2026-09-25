@@ -643,20 +643,38 @@ class UninstallCommand
     // though both ultimately open the same file. When both names resolve to
     // the exact same raw path, only one delete step is queued; the entry is
     // removed once, as the executable, rather than twice.
-    final isSameBinary =
-        aliasPath != null &&
-        executablePath != null &&
-        fileSystem.sameFile(aliasPath, executablePath);
-    final removeAlias = isSameBinary && aliasPath != executablePath;
-
-    // The alias's own step is queued before the executable's: deleting the
-    // target first would leave the symlinked alias dangling, and
-    // File.delete on a dangling symlink fails on Linux (it stats through
-    // the link before removing it, and a dangling link has nothing at the
-    // other end to stat). Removing the alias while it is still a valid
-    // link, then the target, avoids that failure entirely.
-    if (removeAlias) {
-      steps.add(RemoveFileStep(fileSystem: fileSystem, path: aliasPath));
+    //
+    // sameFile resolves both paths through canonicalize before comparing
+    // them, and canonicalize is strict: a resolution failure (a dangling
+    // link in the chain, a permission error) is thrown rather than
+    // swallowed. That failure is turned into the same file-access-denied
+    // CommandException every other build failure here reports, rather than
+    // being let through as a raw, unhandled exception.
+    //
+    // The whole comparison, including the step it may queue, stays inside
+    // this one null-check so aliasPath and executablePath stay promoted to
+    // non-null throughout: splitting the boolean result out into its own
+    // variable for use further down loses that promotion.
+    if (aliasPath != null && executablePath != null) {
+      final bool isSameBinary;
+      try {
+        isSameBinary = fileSystem.sameFile(aliasPath, executablePath);
+      } on Object catch (e) {
+        throw CommandException(
+          code: 'file-access-denied',
+          message: 'Could not compare $aliasPath with $executablePath: $e',
+          exitCode: ExitCode.genericError,
+        );
+      }
+      // The alias's own step is queued before the executable's: deleting
+      // the target first would leave the symlinked alias dangling, and
+      // File.delete on a dangling symlink fails on Linux (it stats through
+      // the link before removing it, and a dangling link has nothing at
+      // the other end to stat). Removing the alias while it is still a
+      // valid link, then the target, avoids that failure entirely.
+      if (isSameBinary && aliasPath != executablePath) {
+        steps.add(RemoveFileStep(fileSystem: fileSystem, path: aliasPath));
+      }
     }
 
     if (executablePath != null) {
