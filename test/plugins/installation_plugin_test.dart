@@ -1108,7 +1108,10 @@ void main() {
       // here for a path to escape or break out of.
       expect(payload['parentPid'], 4242);
       expect(payload['paths'], ['/usr/local/bin/cx.uninstall-4242.old']);
-      expect(payload['timeoutMs'], cleanupWorkerParentExitTimeoutMs);
+      // No timeoutMs field: the worker waits for the parent to exit with
+      // no time limit once it arms deletion, so there is nothing here to
+      // configure a cap for.
+      expect(payload.containsKey('timeoutMs'), isFalse);
       // No silent success: the plan says explicitly that removal is
       // deferred, rather than implying the file is already gone.
       expect(
