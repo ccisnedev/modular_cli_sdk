@@ -73,6 +73,24 @@ const String cleanupWorkerPayloadEnvVar = 'CLI_CLEANUP_PAYLOAD';
 /// path.
 const String cleanupWorkerReadyMarkerPathEnvVar = 'CLI_CLEANUP_READY_PATH';
 
+/// The ready-marker file's own name, inside the private directory
+/// [IoCliProcessLauncher] creates. The CLI builds the marker's full path
+/// from this name and the private directory's own path; the worker
+/// receives that same full path directly, through
+/// [cleanupWorkerReadyMarkerPathEnvVar].
+const String cleanupWorkerReadyMarkerFileName = 'ready';
+
+/// The name of the marker file [tryClaimReadyMarker] renames the ready
+/// marker to when the CLI wins the single-winner claim. A sibling of the
+/// ready marker, inside the same private directory.
+const String cleanupWorkerAcceptedMarkerFileName = 'accepted';
+
+/// The name of the marker file the cleanup worker's own bootstrap script
+/// renames the ready marker to when it wins the single-winner claim by
+/// reaching its own claim deadline first. A sibling of the ready marker,
+/// inside the same private directory.
+const String cleanupWorkerAbandonedMarkerFileName = 'abandoned';
+
 /// The cleanup worker's bootstrap script, fixed and never interpolated:
 /// every piece of run-specific data (which process to wait for, which paths
 /// to delete, how long to wait) travels through the environment variable
@@ -91,17 +109,41 @@ const String cleanupWorkerReadyMarkerPathEnvVar = 'CLI_CLEANUP_READY_PATH';
 /// worker starts is treated as already gone rather than an error, but any
 /// other failure retaining the handle, such as access denied on a
 /// protected process, is not, and stops the worker before the ready marker
-/// is created), refuse to go on if the payload's own marker-creation
-/// deadline has already passed, create the ready-marker file (failing,
-/// rather than recreating anything, if the private directory is gone or
-/// the marker already exists), wait up to the given timeout for the parent
-/// to exit, and only on a confirmed exit delete each given path with
-/// `Remove-Item -LiteralPath` under `$ErrorActionPreference = 'Stop'`. A
-/// timed-out wait deletes nothing. The worker owns no temporary file of its
-/// own to clean up on the way out: the ready-marker file lives inside the
-/// private directory [IoCliProcessLauncher] created and is [
-/// IoCliProcessLauncher]'s own responsibility to remove, once it has seen
-/// the marker (or given up waiting for it).
+/// is created; the handle is retrieved through the explicit `get_Handle()`
+/// accessor, not the bare `.Handle` property, since Windows PowerShell
+/// 5.1's property-getter syntax has been observed to return `$null`
+/// instead of throwing on an access-denied process even under
+/// `$ErrorActionPreference = 'Stop'`, and the returned handle is itself
+/// validated as non-null and non-zero before going on), refuse to go on if
+/// the payload's own marker-creation deadline has already passed, create
+/// the ready-marker file (failing, rather than recreating anything, if the
+/// private directory is gone or the marker already exists).
+///
+/// From there, an absolute deadline alone cannot decide who wins the race
+/// against [IoCliProcessLauncher]: a CLI thread suspended right up to its
+/// own deadline can still resume after it and disagree with a worker that
+/// created its marker in time. So the worker and the CLI instead settle it
+/// with a single atomic rename, the only primitive where exactly one of
+/// two competing attempts can ever succeed: the CLI claims by renaming the
+/// ready marker to [cleanupWorkerAcceptedMarkerFileName]
+/// ([IoCliProcessLauncher.startCleanupWorker]'s own [tryClaimReadyMarker]
+/// seam does this); the worker below claims abandonment, past its own
+/// `claimDeadlineUnixMs`, by renaming the same ready marker to
+/// [cleanupWorkerAbandonedMarkerFileName] with `[System.IO.File]::Move`,
+/// which throws cleanly when the source is already gone. Deletion is armed
+/// only once the accepted marker is actually observed to exist, whether
+/// while still polling for it or, after a failed abandon rename, as
+/// confirmation that the rename failed because the CLI's claim really did
+/// win first, not for some other reason. Only when armed does the worker
+/// wait up to the given timeout for the parent to exit and, on a confirmed
+/// exit, delete each given path with `Remove-Item -LiteralPath` under
+/// `$ErrorActionPreference = 'Stop'`, followed by its own private
+/// directory: ownership of removing it belongs to the worker on this path,
+/// never to [IoCliProcessLauncher], since deleting it immediately after a
+/// successful claim would race the worker's own, still-pending, first look
+/// at the accepted marker. A worker that never arms deletes nothing and
+/// leaves the private directory for [IoCliProcessLauncher] to remove, the
+/// same as a worker that never even reaches the ready marker.
 const String cleanupWorkerBootstrapScript = r'''
 $ErrorActionPreference = 'Stop'
 $data = $env:CLI_CLEANUP_PAYLOAD | ConvertFrom-Json
@@ -109,60 +151,129 @@ $parentPid = [int]$data.parentPid
 $paths = @($data.paths)
 $timeoutMs = [int]$data.timeoutMs
 $markerDeadlineUnixMs = [int64]$data.markerDeadlineUnixMs
+$claimDeadlineUnixMs = [int64]$data.claimDeadlineUnixMs
 $ReadyMarkerPath = $env:CLI_CLEANUP_READY_PATH
+$PrivateDir = Split-Path -Parent $ReadyMarkerPath
+$AcceptedMarkerPath = Join-Path $PrivateDir 'accepted'
+$AbandonedMarkerPath = Join-Path $PrivateDir 'abandoned'
 
 $parent = $null
 try {
     $parent = [System.Diagnostics.Process]::GetProcessById($parentPid)
 } catch [System.ArgumentException] {
-    # No process with that id exists: the parent already exited before the
-    # worker got a chance to look. Not an error to stop the worker for.
     $parent = $null
 }
 
-# Deliberately outside the catch above: any other failure retaining a
-# handle on a process that does exist (for example, access denied on a
-# protected process) must stop the worker before the ready marker is
-# created, so the CLI sees no marker in time and reports
-# cleanup-start-failed instead of a worker that silently is not actually
-# holding what it needs.
 if ($null -ne $parent) {
-    $null = $parent.Handle
+    $handle = $parent.get_Handle()
+    if ($null -eq $handle -or $handle -eq [IntPtr]::Zero) {
+        exit 1
+    }
 }
 
-# Closes the race where startCleanupWorker has already given up waiting for
-# a marker and deleted the private directory it created. Past this
-# deadline the worker refuses to create the marker (or, since File.Open
-# with CreateNew never creates a missing parent directory, the directory
-# either) and exits, deleting nothing. The CLI polls often enough, well
-# under the safety margin baked into this deadline, that a marker created
-# before it is always seen before the CLI's own, later deadline runs out.
 $nowUnixMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 if ($nowUnixMs -gt $markerDeadlineUnixMs) {
     exit 1
 }
 
-# CreateNew fails, rather than silently recreating anything, when the
-# private directory is already gone (the CLI gave up waiting and deleted
-# it) or when the marker somehow already exists: it never creates a
-# missing parent directory the way a forced item creation would.
 $markerStream = [System.IO.File]::Open(
     $ReadyMarkerPath,
     [System.IO.FileMode]::CreateNew
 )
 $markerStream.Close()
 
-$exited = $true
-if ($null -ne $parent) {
-    $exited = $parent.WaitForExit($timeoutMs)
+$armed = $false
+while ($true) {
+    if (Test-Path -LiteralPath $AcceptedMarkerPath) {
+        $armed = $true
+        break
+    }
+    $nowUnixMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    if ($nowUnixMs -gt $claimDeadlineUnixMs) {
+        try {
+            [System.IO.File]::Move($ReadyMarkerPath, $AbandonedMarkerPath)
+        } catch {
+        }
+        if (Test-Path -LiteralPath $AcceptedMarkerPath) {
+            $armed = $true
+        }
+        break
+    }
+    Start-Sleep -Milliseconds 50
 }
 
-if ($exited) {
-    foreach ($path in $paths) {
-        Remove-Item -LiteralPath $path
+if ($armed) {
+    $exited = $true
+    if ($null -ne $parent) {
+        $exited = $parent.WaitForExit($timeoutMs)
+    }
+    if ($exited) {
+        foreach ($path in $paths) {
+            Remove-Item -LiteralPath $path
+        }
+        Remove-Item -LiteralPath $PrivateDir -Recurse
     }
 }
 ''';
+
+/// Attempts the single-winner claim of the ready marker at
+/// [readyMarkerPath], atomically renaming it to [acceptedMarkerPath].
+/// Returns true when the rename succeeded: this call, and only this call
+/// (or the worker's own competing rename to the abandoned marker, exactly
+/// one of the two), won the claim, since a rename of a source path that no
+/// longer exists always fails. Returns false, creating nothing, when the
+/// ready marker does not exist to rename, whether because the worker
+/// never created it yet or because the worker's own rename already won.
+///
+/// This is the exact primitive [IoCliProcessLauncher.startCleanupWorker]
+/// and [cleanupWorkerBootstrapScript] each use, on either side of the same
+/// race, to decide the claim with a single atomic filesystem operation
+/// rather than by comparing two independently read clocks: pulled out as
+/// its own pure, synchronous function so a test can exercise both a win
+/// and a loss directly, against real files, without needing a real
+/// subprocess or a suspended thread to provoke either deterministically.
+bool tryClaimReadyMarker(String readyMarkerPath, String acceptedMarkerPath) {
+  try {
+    io.File(readyMarkerPath).renameSync(acceptedMarkerPath);
+    return true;
+  } on io.FileSystemException {
+    return false;
+  }
+}
+
+/// Polls [tryClaimReadyMarker] against [readyMarkerPath] and
+/// [acceptedMarkerPath] until it wins the claim or [deadline] (read
+/// through [now]) passes, waiting [pollInterval] between attempts.
+///
+/// The claim is always attempted first, before [deadline] is even
+/// checked, on every iteration including the first: this is what closes
+/// the exact race Codex described, where a CLI thread is suspended right
+/// up to its own deadline and only resumes after it. A deadline check
+/// alone would give up right away without ever trying again; attempting
+/// the claim first means a marker the worker created in time is still won
+/// even by a caller whose own clock already reads past the deadline by
+/// the time it gets to run at all.
+///
+/// [now] and [pollInterval] are both injectable so a test can exercise
+/// both outcomes, winning and losing, deterministically rather than
+/// depending on real wall-clock timing.
+Future<bool> pollForClaim({
+  required String readyMarkerPath,
+  required String acceptedMarkerPath,
+  required DateTime deadline,
+  required Duration pollInterval,
+  required DateTime Function() now,
+}) async {
+  while (true) {
+    if (tryClaimReadyMarker(readyMarkerPath, acceptedMarkerPath)) {
+      return true;
+    }
+    if (!now().isBefore(deadline)) {
+      return false;
+    }
+    await Future<void>.delayed(pollInterval);
+  }
+}
 
 /// The UTF-16LE byte encoding of [s]'s UTF-16 code units. [s] is always
 /// [cleanupWorkerBootstrapScript] here, which is fixed ASCII text with no
@@ -301,17 +412,17 @@ abstract class CliProcessLauncher {
   /// of it is interpolated into a script or a command line, so nothing in
   /// it needs shell escaping.
   ///
-  /// Returns null on a clean success, or a warning naming a problem that
-  /// does not change the outcome (currently: the implementation's own
-  /// private temporary directory could not be removed once the worker
-  /// confirmed ready) but that a caller must not discard either.
+  /// Completes on a clean success: the worker has won the single-winner
+  /// claim over the ready marker and now owns deleting the given paths,
+  /// and its own private directory, once the watched process exits.
   ///
   /// Throws [CliCleanupWorkerStartFailure] when the worker cannot be started
-  /// at all, or does not confirm readiness in time. A worker that starts,
-  /// confirms readiness, and then fails on its own later (after this process
-  /// has already exited, with nobody left to observe it) is not this
-  /// method's concern.
-  Future<String?> startCleanupWorker(Map<String, Object?> payload);
+  /// at all, does not confirm readiness in time, or never wins the claim
+  /// (having abandoned it, or the claim deadline having passed). A worker
+  /// that wins the claim and then fails on its own later (after this
+  /// process has already exited, with nobody left to observe it) is not
+  /// this method's concern.
+  Future<void> startCleanupWorker(Map<String, Object?> payload);
 }
 
 /// Launches a real, detached PowerShell cleanup worker.
@@ -363,9 +474,21 @@ abstract class CliProcessLauncher {
 /// or race. That directory's path is never passed on any command line
 /// either; only the ready-marker file's own path, inside it, travels
 /// through the environment variable named by
-/// [cleanupWorkerReadyMarkerPathEnvVar]. This class removes that directory
-/// itself once it has seen the marker, or once it gives up waiting for one,
-/// so nothing is left behind either way.
+/// [cleanupWorkerReadyMarkerPathEnvVar].
+///
+/// Who removes that directory depends on which side wins the single-winner
+/// claim over the ready marker (see [tryClaimReadyMarker],
+/// [pollForClaim] and [cleanupWorkerBootstrapScript]): when this class's own
+/// claim never succeeds, whether because the worker never confirmed ready
+/// or because the worker abandoned the claim first, this class removes the
+/// directory itself before returning, the same as before there was a claim
+/// to make at all. When this class's claim succeeds, the worker owns
+/// removing the directory instead, once it has actually finished deleting
+/// the given paths: removing it here immediately after a successful claim
+/// would race the worker's own, still-pending, first look at the accepted
+/// marker, and a directory gone before the worker ever observes that marker
+/// is indistinguishable, to the worker, from never having been claimed at
+/// all.
 class IoCliProcessLauncher implements CliProcessLauncher {
   /// [startupTimeout] and [markerDeadlineSafetyMargin] override
   /// [cleanupWorkerStartupTimeout] and
@@ -388,7 +511,7 @@ class IoCliProcessLauncher implements CliProcessLauncher {
   int get currentPid => io.pid;
 
   @override
-  Future<String?> startCleanupWorker(Map<String, Object?> payload) async {
+  Future<void> startCleanupWorker(Map<String, Object?> payload) async {
     final environment = io.Platform.environment;
     final powershellPath = powershellExecutablePath(environment);
     final cmdPath = cmdExecutablePath(environment);
@@ -406,20 +529,32 @@ class IoCliProcessLauncher implements CliProcessLauncher {
     CliCleanupWorkerStartFailure? startFailure;
     try {
       final readyMarkerPath =
-          '${privateDir.path}${io.Platform.pathSeparator}ready';
+          '${privateDir.path}${io.Platform.pathSeparator}'
+          '$cleanupWorkerReadyMarkerFileName';
+      final acceptedMarkerPath =
+          '${privateDir.path}${io.Platform.pathSeparator}'
+          '$cleanupWorkerAcceptedMarkerFileName';
 
       final startedAt = DateTime.now();
-      // A single origin for both deadlines below: the worker's own,
-      // carried through the payload as Unix epoch milliseconds (UTC, so
-      // both processes compare it against the same origin regardless of
-      // local time zone), and the CLI's own further down, kept a fixed
-      // safety margin apart so the CLI's poll interval always has time to
-      // observe a marker the worker created in time.
+      // A single origin for all three deadlines below: the worker's own
+      // marker-creation deadline and claim deadline, both carried through
+      // the payload as Unix epoch milliseconds (UTC, so both processes
+      // compare them against the same origin regardless of local time
+      // zone), and this class's own poll deadline further down. The
+      // marker-creation deadline is kept a fixed safety margin ahead of
+      // this class's poll deadline so its poll interval always has time to
+      // observe a marker the worker created in time; the claim deadline
+      // matches this class's own poll deadline exactly, since the claim
+      // itself, not either side's clock, is what decides who wins once a
+      // marker exists.
       final markerDeadlineUnixMs =
           startedAt.toUtc().millisecondsSinceEpoch +
           (_startupTimeout - _markerDeadlineSafetyMargin).inMilliseconds;
+      final cliDeadline = startedAt.add(_startupTimeout);
+      final claimDeadlineUnixMs = cliDeadline.toUtc().millisecondsSinceEpoch;
       final effectivePayload = Map<String, Object?>.from(payload)
-        ..['markerDeadlineUnixMs'] = markerDeadlineUnixMs;
+        ..['markerDeadlineUnixMs'] = markerDeadlineUnixMs
+        ..['claimDeadlineUnixMs'] = claimDeadlineUnixMs;
 
       final workerEnvironment = Map<String, String>.from(environment)
         ..[cleanupWorkerPayloadEnvVar] = jsonEncode(effectivePayload)
@@ -454,30 +589,42 @@ class IoCliProcessLauncher implements CliProcessLauncher {
         );
       }
 
-      final cliDeadline = startedAt.add(_startupTimeout);
-      while (!io.File(readyMarkerPath).existsSync()) {
-        if (DateTime.now().isAfter(cliDeadline)) {
-          throw CliCleanupWorkerStartFailure(
-            'The cleanup worker did not confirm it was ready within '
-            '${_startupTimeout.inSeconds}s.',
-          );
-        }
-        await Future<void>.delayed(cleanupWorkerReadyPollInterval);
+      final claimed = await pollForClaim(
+        readyMarkerPath: readyMarkerPath,
+        acceptedMarkerPath: acceptedMarkerPath,
+        deadline: cliDeadline,
+        pollInterval: cleanupWorkerReadyPollInterval,
+        now: DateTime.now,
+      );
+      if (!claimed) {
+        throw CliCleanupWorkerStartFailure(
+          'The cleanup worker did not confirm it was ready within '
+          '${_startupTimeout.inSeconds}s.',
+        );
       }
+
+      // The claim succeeded: the worker now owns deleting the given paths,
+      // and its own private directory, once the watched process exits.
+      // Nothing further here needs, or may touch, that directory; see the
+      // class doc comment for why removing it here would race the
+      // worker's own, still-pending, first look at the marker this call
+      // just created.
+      return;
     } on CliCleanupWorkerStartFailure catch (e) {
       startFailure = e;
     }
 
-    // Whether the worker confirmed ready or startCleanupWorker gave up
-    // waiting for it, nothing after this point needs the private
-    // directory, and leaving it behind on every run of a long-lived CLI is
-    // exactly the leak this removes. Unlike a bare "best effort" catch,
-    // though, a failure to remove it here is not discarded: it is folded
-    // into the CliCleanupWorkerStartFailure above when there is one, or
-    // returned as a warning on the success path, because a leftover
-    // private directory is exactly the kind of thing a caller (and,
-    // through it, an operator reading uninstall's own output) needs to be
-    // told about rather than have hidden from them.
+    // Reached only when the claim was never made: the worker never
+    // confirmed ready in time, or it abandoned the claim first. Either
+    // way, nothing after this point needs the private directory, and
+    // leaving it behind on every run of a long-lived CLI is exactly the
+    // leak this removes. Unlike a bare "best effort" catch, though, a
+    // failure to remove it here is not discarded: it is folded into the
+    // CliCleanupWorkerStartFailure below, because a leftover private
+    // directory is exactly the kind of thing a caller (and, through it, an
+    // operator reading uninstall's own output) needs to be told about
+    // rather than have hidden from them.
+    final failure = startFailure;
     String? cleanupFailureDetail;
     try {
       deletePrivateDirectory(privateDir);
@@ -487,16 +634,10 @@ class IoCliProcessLauncher implements CliProcessLauncher {
           '${privateDir.path}: $e';
     }
 
-    if (startFailure != null) {
-      if (cleanupFailureDetail == null) throw startFailure;
-      throw CliCleanupWorkerStartFailure(
-        '${startFailure.message} Additionally, $cleanupFailureDetail.',
-      );
-    }
-
-    if (cleanupFailureDetail == null) return null;
-    return 'The cleanup worker started successfully, but '
-        '$cleanupFailureDetail.';
+    if (cleanupFailureDetail == null) throw failure;
+    throw CliCleanupWorkerStartFailure(
+      '${failure.message} Additionally, $cleanupFailureDetail.',
+    );
   }
 
   /// Removes [privateDir], if it still exists, once
