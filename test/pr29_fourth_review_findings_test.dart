@@ -69,18 +69,6 @@ CliContract _shortcutOwnContract() => CliContract(
   ],
 );
 
-ModularCli _cliWithWidgetTarget() {
-  final cli = ModularCli(suggestionDistance: 2);
-  cli.query<_WidgetInput, _WidgetOutput>(
-    'widget',
-    (req) => _WidgetQuery(_WidgetInput()),
-    globals: true,
-    description: 'The shortcut target',
-    contract: CliContract.none,
-  );
-  return cli;
-}
-
 /// A target declaring an optional `id` positional, so a shortcut can bind
 /// it under either cardinality (issue #27 section 4: a shortcut rebinds a
 /// target's own positional to whichever cardinality its own pattern gives
