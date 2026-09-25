@@ -59,11 +59,13 @@ class ModuleBuilder {
     required CliRouter router,
     required CommandCatalog catalog,
     required Map<String, ContractAwareBody> bodiesByName,
+    required Map<String, CommandContract> shortcutContractsByRoute,
     Approver? approver,
     PlanSink? planSink,
   }) : _router = router,
        _catalog = catalog,
        _bodiesByName = bodiesByName,
+       _shortcutContractsByRoute = shortcutContractsByRoute,
        _approver = approver,
        _planSink = planSink;
 
@@ -84,6 +86,14 @@ class ModuleBuilder {
   /// route's logic regardless of which module registered it, and dispatch
   /// it under the shortcut's own contract rather than the target's.
   final Map<String, ContractAwareBody> _bodiesByName;
+
+  /// Every shortcut's own contract, keyed the same way [_bodiesByName]
+  /// keys its body: shared with every other [ModuleBuilder] this SDK
+  /// builds, so [ModularCli] can check a shortcut's own supplied option
+  /// values before letting `--help` win a rejection, even though a
+  /// shortcut is deliberately given no [_catalog] entry of its own. See
+  /// [ModularCli._shortcutContractFor].
+  final Map<String, CommandContract> _shortcutContractsByRoute;
   final Approver? _approver;
   final PlanSink? _planSink;
 
@@ -285,6 +295,14 @@ class ModuleBuilder {
       contract: shortcutContract,
       globals: globals,
     );
+
+    // Not registered with [_catalog] — see this method's own doc comment
+    // ("deliberately not given its own CommandCatalog entry") — but kept
+    // here, keyed exactly as [_mount] below registers it with
+    // `cli_router`, so [ModularCli] can still validate a badly typed
+    // supplied value against a shortcut's own contract before letting
+    // `--help` win a rejection (round-4 review finding 1).
+    _shortcutContractsByRoute[pattern] = entry;
 
     _mount(
       pattern,

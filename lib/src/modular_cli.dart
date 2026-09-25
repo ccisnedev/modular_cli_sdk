@@ -86,6 +86,20 @@ class ModularCli {
   /// contract. See [ContractAwareBody].
   final Map<String, ContractAwareBody> _bodiesByName = {};
 
+  /// Every shortcut's own contract, keyed by its route pattern exactly as
+  /// registered with `cli_router` (the same key [_bodiesByName] uses).
+  /// [ModuleBuilder.shortcut] does not add its entry to [_catalog] (a
+  /// shortcut is deliberately not given its own catalog entry: see
+  /// [shortcut]'s own doc comment), which otherwise left a shortcut
+  /// invisible to [_contractFor] — used by [_handleRejection] to check a
+  /// badly typed supplied value before letting `--help` win a rejection —
+  /// so an invalid value on a shortcut silently lost to `--help` instead of
+  /// being reported (round-4 review finding 1). This lookup exists only for
+  /// that check; it is never consulted by [_emitFocusedHelp] or
+  /// [_emitRejectionError], so a shortcut's own contract still never shows
+  /// up in help or a JSON error's `contract` field, exactly as documented.
+  final Map<String, CommandContract> _shortcutContractsByRoute = {};
+
   /// Every registered route with its declared contract — the single source help
   /// is rendered from.
   CommandCatalog get catalog => _catalog;
@@ -225,6 +239,7 @@ class ModularCli {
     router: router,
     catalog: _catalog,
     bodiesByName: _bodiesByName,
+    shortcutContractsByRoute: _shortcutContractsByRoute,
     approver: _approver,
     planSink: _planSink,
   );
@@ -402,7 +417,16 @@ class ModularCli {
       // failure `cli_router` cannot see for itself, and it must not lose
       // to --help just because the rejection that surfaced it happens to
       // be one help otherwise wins.
-      final contract = _contractFor(rejection);
+      //
+      // A shortcut route has no catalog entry (by design: see [shortcut]'s
+      // doc comment), so _contractFor() alone cannot see it, and this
+      // check would otherwise be silently skipped for one.
+      // _shortcutContractFor() is consulted only here, as a fallback:
+      // _emitFocusedHelp() below still resolves help from _contractFor()
+      // alone, so a shortcut's own contract still never appears in help or
+      // a JSON error's `contract` field (round-4 review finding 1).
+      final contract =
+          _contractFor(rejection) ?? _shortcutContractFor(rejection);
       if (contract != null) {
         try {
           validateSuppliedOptionValues(rejection.options, contract.contract);
@@ -626,6 +650,20 @@ class ModularCli {
     if (route != null) return _catalog.forRoute(route.pattern);
     if (rejection.consumed.isEmpty) return null;
     return _catalog.forName(rejection.consumed.join(' '));
+  }
+
+  /// The same lookup as [_contractFor], over [_shortcutContractsByRoute]
+  /// instead of [_catalog]: a shortcut's own contract, keyed the same way
+  /// [_bodiesByName] keys its body (the route pattern exactly as given to
+  /// `cli_router`). Used only to validate a supplied option value before
+  /// deciding whether `--help` wins (round-4 review finding 1) — never to
+  /// choose what a rejection's help or JSON `contract` field shows, which
+  /// stays keyed off [_catalog] alone, through [_contractFor].
+  CommandContract? _shortcutContractFor(CliRejection rejection) {
+    final route = rejection.route;
+    if (route != null) return _shortcutContractsByRoute[route.pattern];
+    if (rejection.consumed.isEmpty) return null;
+    return _shortcutContractsByRoute[rejection.consumed.join(' ')];
   }
 
   /// Every registered route that continues [attempted].
