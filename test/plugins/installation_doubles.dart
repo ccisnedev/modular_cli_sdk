@@ -212,6 +212,7 @@ class FakeProcessLauncher implements CliProcessLauncher {
     int pid = 4242,
     this.startError,
     this.readyLine = 'READY',
+    this.cleanupWarning,
   }) : currentPid = pid;
 
   @override
@@ -226,11 +227,18 @@ class FakeProcessLauncher implements CliProcessLauncher {
   /// or a real timeout.
   final String? readyLine;
 
+  /// Returned by [startCleanupWorker] on success, standing in for the
+  /// warning [IoCliProcessLauncher] returns when the worker confirmed ready
+  /// but its own private temporary directory could not be removed
+  /// afterwards. Left null, [startCleanupWorker] returns null: a clean
+  /// success with nothing to warn about.
+  final String? cleanupWarning;
+
   /// Every payload passed to [startCleanupWorker], in order.
   final List<Map<String, Object?>> startedCleanupWorkers = [];
 
   @override
-  Future<void> startCleanupWorker(Map<String, Object?> payload) async {
+  Future<String?> startCleanupWorker(Map<String, Object?> payload) async {
     if (startError != null) throw startError!;
     if (readyLine != 'READY') {
       throw CliCleanupWorkerStartFailure(
@@ -239,5 +247,6 @@ class FakeProcessLauncher implements CliProcessLauncher {
       );
     }
     startedCleanupWorkers.add(payload);
+    return cleanupWarning;
   }
 }

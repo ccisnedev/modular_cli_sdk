@@ -1150,6 +1150,46 @@ void main() {
       },
     );
 
+    // Round 5 finding 4: a private-directory cleanup failure inside
+    // IoCliProcessLauncher, after the worker confirmed ready, used to be
+    // swallowed (a "best effort" catch with nothing after it). It is now
+    // returned as a warning that this step must attach to the schedule
+    // outcome's own detail rather than discard, so it reaches both the
+    // JSON result and the text output through the same notes/detail path
+    // as every other outcome.
+    test(
+      'on Windows, a cleanup-directory warning from the process launcher '
+      'is attached to the schedule outcome, not discarded',
+      () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final processLauncher = FakeProcessLauncher(
+          pid: 4242,
+          cleanupWarning:
+              'could not remove its private temporary directory '
+              '/tmp/cli_cleanup_abc123: Exception: directory busy',
+        );
+        final cli = _cliWith(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            platform: const FakePlatform('windows'),
+            processLauncher: processLauncher,
+          ),
+        );
+
+        final out = MemorySink();
+        final code = await cli.run([
+          'uninstall',
+          '--apply',
+          '--autoapprove',
+        ], stdout: out);
+
+        expect(code, ExitCode.ok);
+        expect(out.output, contains('scheduled: [/usr/local/bin/cx]'));
+        expect(out.output, contains('cli_cleanup_abc123'));
+        expect(out.output, contains('directory busy'));
+      },
+    );
+
     test('on Windows, if the cleanup worker cannot be started, uninstall '
         'fails with cleanup-start-failed instead of a silent success', () async {
       final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});

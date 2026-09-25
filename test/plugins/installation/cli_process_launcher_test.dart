@@ -52,26 +52,96 @@ void main() {
 
     test(
       'signals readiness through a marker file named by an environment '
-      'variable',
+      'variable, created without recreating a missing parent directory',
       () {
         expect(
           cleanupWorkerBootstrapScript,
           contains(r'$env:' + cleanupWorkerReadyMarkerPathEnvVar),
         );
-        expect(cleanupWorkerBootstrapScript, contains('New-Item'));
+        // Round 5 finding 2: New-Item -Force recreates a private directory
+        // the CLI already deleted after giving up waiting, letting a late
+        // worker silently schedule a deletion the CLI already reported as
+        // failed. File.Open with CreateNew fails instead, both when the
+        // directory is gone and when the marker somehow already exists.
+        expect(
+          cleanupWorkerBootstrapScript,
+          contains('[System.IO.FileMode]::CreateNew'),
+        );
+        expect(cleanupWorkerBootstrapScript, isNot(contains('New-Item')));
+        expect(cleanupWorkerBootstrapScript, isNot(contains('-Force')));
       },
     );
 
     test('retains a handle on the parent process before signalling ready', () {
       expect(cleanupWorkerBootstrapScript, contains('GetProcessById'));
       expect(cleanupWorkerBootstrapScript, contains(r'$parent.Handle'));
-      final newItemIndex = cleanupWorkerBootstrapScript.indexOf('New-Item');
+      final markerIndex = cleanupWorkerBootstrapScript.indexOf(
+        '[System.IO.FileMode]::CreateNew',
+      );
       final handleIndex = cleanupWorkerBootstrapScript.indexOf(
         r'$parent.Handle',
       );
       expect(handleIndex, greaterThanOrEqualTo(0));
-      expect(newItemIndex, greaterThan(handleIndex));
+      expect(markerIndex, greaterThan(handleIndex));
     });
+
+    // Round 5 finding 1: GetProcessById throwing System.ArgumentException
+    // means no such process exists, which is genuinely "the parent already
+    // exited" and safe to treat as $parent = $null. Any other failure
+    // retaining a handle on a process that does exist (most notably,
+    // access denied on .Handle itself for a protected process) must not be
+    // folded into that same "already exited" outcome: it has to stop the
+    // worker before the ready marker is created, so the CLI sees no marker
+    // in time and reports cleanup-start-failed instead of a worker that
+    // silently is not actually holding what it needs.
+    test(
+      'catches only ArgumentException around GetProcessById, so a '
+      'different failure retaining the handle is not folded into '
+      '"parent already exited"',
+      () {
+        expect(
+          cleanupWorkerBootstrapScript,
+          contains('catch [System.ArgumentException]'),
+        );
+        final catchIndex = cleanupWorkerBootstrapScript.indexOf(
+          'catch [System.ArgumentException]',
+        );
+        final handleIndex = cleanupWorkerBootstrapScript.indexOf(
+          r'$parent.Handle',
+        );
+        expect(catchIndex, greaterThanOrEqualTo(0));
+        expect(handleIndex, greaterThanOrEqualTo(0));
+        // The handle access sits after the typed catch block closes, not
+        // inside a try that would catch a Win32Exception from it too.
+        expect(handleIndex, greaterThan(catchIndex));
+      },
+    );
+
+    // Round 5 finding 2: closes the race where startCleanupWorker has
+    // already given up waiting for a marker and deleted the private
+    // directory it created. Past this deadline (computed by the CLI from
+    // its own startup timeout and safety margin, carried in the payload)
+    // the worker refuses to create the marker and exits, deleting nothing,
+    // rather than silently scheduling a deletion the CLI already reported
+    // as failed.
+    test(
+      'refuses to create the marker past a deadline read from the payload',
+      () {
+        expect(cleanupWorkerBootstrapScript, contains('markerDeadlineUnixMs'));
+        expect(
+          cleanupWorkerBootstrapScript,
+          contains('ToUnixTimeMilliseconds'),
+        );
+        final deadlineCheckIndex = cleanupWorkerBootstrapScript.indexOf(
+          'markerDeadlineUnixMs',
+        );
+        final markerIndex = cleanupWorkerBootstrapScript.indexOf(
+          '[System.IO.FileMode]::CreateNew',
+        );
+        expect(deadlineCheckIndex, greaterThanOrEqualTo(0));
+        expect(markerIndex, greaterThan(deadlineCheckIndex));
+      },
+    );
 
     test('waits for the parent to exit before deleting anything', () {
       expect(cleanupWorkerBootstrapScript, contains('WaitForExit'));
@@ -508,6 +578,229 @@ Future<void> main(List<String> args) async {
       timeout: const Timeout(Duration(seconds: 40)),
     );
 
+    // Round 5 finding 1.
+    test(
+      'a parent process the worker cannot get a handle on (as opposed to '
+      'one that does not exist) stops the worker before it creates the '
+      'marker, so startCleanupWorker reports cleanup-start-failed rather '
+      'than silently treating access-denied as "parent already exited"',
+      () async {
+        // pid 4 is the Windows kernel's own "System" process: a real,
+        // always-running pid, so GetProcessById(4) itself succeeds and this
+        // is not the "no such process" ArgumentException case finding 1
+        // also has to tell apart. Reading .Handle on the resulting Process
+        // object is what is expected to throw. If this environment's token
+        // can retain a handle on it after all, the premise this test needs
+        // does not hold here, and it skips with that reason rather than
+        // asserting a behaviour it cannot actually provoke.
+        final probe = await io.Process.run('powershell', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          r'try { $null = ([System.Diagnostics.Process]::GetProcessById(4)).Handle; "handle-ok" } catch { "handle-denied" }',
+        ]);
+        if (probe.stdout.toString().trim() != 'handle-denied') {
+          markTestSkipped(
+            'this environment\'s token can retain a Process.Handle on pid '
+            '4 (the System process), so it cannot reproduce the '
+            'access-denied case this test needs: ${probe.stdout}',
+          );
+          return;
+        }
+
+        final before = _existingCleanupPrivateDirs();
+        const launcher = IoCliProcessLauncher();
+
+        await expectLater(
+          launcher.startCleanupWorker({
+            'parentPid': 4,
+            'paths': <String>[],
+            'timeoutMs': 1000,
+          }),
+          throwsA(isA<CliCleanupWorkerStartFailure>()),
+        );
+
+        expect(
+          _existingCleanupPrivateDirs(),
+          before,
+          reason:
+              'a worker stopped by an access-denied handle failure must '
+              'leave no private directory behind either',
+        );
+      },
+      skip: io.Platform.isWindows
+          ? false
+          : 'launches a real Windows PowerShell cleanup worker',
+      timeout: const Timeout(Duration(seconds: 40)),
+    );
+
+    // Round 5 finding 2(b).
+    test(
+      'a worker that starts too close to the CLI giving up refuses to '
+      'create the marker, or recreate the private directory, and deletes '
+      'nothing',
+      () async {
+        final tempDir = io.Directory.systemTemp.createTempSync(
+          'cleanup_worker_deadline_test_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final targetPath =
+            '${tempDir.path}${io.Platform.pathSeparator}victim.txt';
+        io.File(targetPath).writeAsStringSync('gone soon');
+
+        final before = _existingCleanupPrivateDirs();
+
+        // A safety margin almost as large as the startup timeout itself
+        // leaves the worker only a few milliseconds, from launch, to
+        // create its marker: nowhere near enough for a real powershell.exe
+        // process to even finish starting, let alone parse its payload and
+        // reach the marker-creation step. The CLI's own timeout is left
+        // long enough (2s) for that real process to actually run to
+        // completion (refusing to create the marker, and so deleting
+        // nothing) before this test moves on to asserting that.
+        final launcher = IoCliProcessLauncher(
+          startupTimeout: const Duration(seconds: 2),
+          markerDeadlineSafetyMargin: const Duration(milliseconds: 1990),
+        );
+
+        await expectLater(
+          launcher.startCleanupWorker({
+            'parentPid': io.pid,
+            'paths': [targetPath],
+            'timeoutMs': 60000,
+          }),
+          throwsA(isA<CliCleanupWorkerStartFailure>()),
+        );
+
+        // Gives the real, still-running worker time to reach its own
+        // deadline check and exit, so a bug that let it through would
+        // already have shown itself by the time the assertions below run.
+        await Future<void>.delayed(const Duration(seconds: 3));
+
+        expect(
+          io.File(targetPath).existsSync(),
+          isTrue,
+          reason:
+              'a worker that started past its own deadline must delete '
+              'nothing',
+        );
+        expect(
+          _existingCleanupPrivateDirs(),
+          before,
+          reason:
+              'a worker that started past its own deadline must not '
+              'recreate the private directory the CLI already gave up on',
+        );
+      },
+      skip: io.Platform.isWindows
+          ? false
+          : 'launches a real Windows PowerShell cleanup worker',
+      timeout: const Timeout(Duration(seconds: 40)),
+    );
+
+    // Round 5 finding 4: the two tests below use _FailingCleanupDirectory
+    // Launcher's deletePrivateDirectory seam to provoke a real private
+    // directory cleanup failure deterministically, since nothing portable
+    // lets a test make a real deleteSync fail at exactly this point
+    // otherwise.
+    test(
+      'returns a warning naming the private directory and the error when '
+      'cleanup of it fails after the worker confirms ready',
+      () async {
+        final tempDir = io.Directory.systemTemp.createTempSync(
+          'cleanup_worker_dir_warning_test_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final targetPath =
+            '${tempDir.path}${io.Platform.pathSeparator}victim.txt';
+        io.File(targetPath).writeAsStringSync('gone soon');
+
+        final parent = await io.Process.start('powershell', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Start-Sleep -Seconds 60',
+        ]);
+
+        try {
+          final launcher = _FailingCleanupDirectoryLauncher(
+            Exception('directory busy'),
+          );
+          final warning = await launcher.startCleanupWorker({
+            'parentPid': parent.pid,
+            'paths': [targetPath],
+            'timeoutMs': 60000,
+          });
+
+          expect(warning, isNotNull);
+          expect(warning, contains('directory busy'));
+          expect(warning, contains('cli_cleanup_'));
+
+          // The primary outcome (the worker did confirm ready) is still
+          // what happened: the target still exists only because the
+          // parent process above is still alive, not because anything
+          // failed to schedule.
+          expect(io.File(targetPath).existsSync(), isTrue);
+        } finally {
+          try {
+            parent.kill();
+          } on Object {
+            // Already gone; nothing left to clean up.
+          }
+        }
+      },
+      skip: io.Platform.isWindows
+          ? false
+          : 'launches a real Windows PowerShell cleanup worker',
+      timeout: const Timeout(Duration(seconds: 40)),
+    );
+
+    test(
+      'a launch failure names a cleanup-directory failure in its own '
+      'message when both fail',
+      () async {
+        final launcher = _FailingCleanupDirectoryLauncher(
+          Exception('directory busy'),
+          startupTimeout: const Duration(milliseconds: 500),
+        );
+
+        await expectLater(
+          launcher.startCleanupWorker({
+            // Not an integer: the worker's $ErrorActionPreference = 'Stop'
+            // makes [int]$data.parentPid throw before it ever creates its
+            // ready-marker file, so this never confirms ready and
+            // startCleanupWorker times out waiting for it, the primary
+            // failure this test's cleanup-directory failure must be
+            // attached to rather than replace.
+            'parentPid': 'not-a-pid',
+            'paths': <String>[],
+            'timeoutMs': 1000,
+          }),
+          throwsA(
+            isA<CliCleanupWorkerStartFailure>()
+                .having(
+                  (e) => e.message,
+                  'message',
+                  contains('did not confirm it was ready'),
+                )
+                .having(
+                  (e) => e.message,
+                  'message',
+                  contains('directory busy'),
+                ),
+          ),
+        );
+      },
+      skip: io.Platform.isWindows
+          ? false
+          : 'launches a real Windows PowerShell cleanup worker',
+      timeout: const Timeout(Duration(seconds: 40)),
+    );
+
     test(
       'leaves no private directory behind when the worker never confirms '
       'ready',
@@ -542,6 +835,29 @@ Future<void> main(List<String> args) async {
       timeout: const Timeout(Duration(seconds: 40)),
     );
   });
+}
+
+/// A real [IoCliProcessLauncher] whose [deletePrivateDirectory] seam always
+/// throws [cleanupError] in place of actually removing the private
+/// directory. Overriding this one method, rather than the whole class,
+/// exercises startCleanupWorker's own handling of a real cleanup failure
+/// (a warning on success, folded into the thrown
+/// [CliCleanupWorkerStartFailure]'s message on failure) through the real
+/// adapter, since nothing portable lets a test provoke a real
+/// directory-deletion failure at exactly this point otherwise. Production
+/// code never overrides this.
+class _FailingCleanupDirectoryLauncher extends IoCliProcessLauncher {
+  _FailingCleanupDirectoryLauncher(
+    this.cleanupError, {
+    Duration startupTimeout = cleanupWorkerStartupTimeout,
+  }) : super(startupTimeout: startupTimeout);
+
+  final Object cleanupError;
+
+  @override
+  void deletePrivateDirectory(io.Directory privateDir) {
+    throw cleanupError;
+  }
 }
 
 /// Decodes UTF-16LE [bytes] to UTF-16 code units. The inverse of the
