@@ -476,7 +476,7 @@ class ModuleBuilder {
       // nothing catches it before this point (issue #27 section 5: "help
       // loses to an option error").
       try {
-        validateSuppliedOptionValues(req, entry.contract);
+        validateSuppliedOptionValues(req.options, entry.contract);
       } on CommandException catch (e) {
         return _reject(
           e,

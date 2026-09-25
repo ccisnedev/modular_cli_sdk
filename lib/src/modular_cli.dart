@@ -7,6 +7,8 @@ import 'approver.dart';
 import 'cli_contract.dart';
 import 'command.dart';
 import 'command_catalog.dart';
+import 'command_exception.dart';
+import 'declared_arguments.dart';
 import 'exit_codes.dart';
 import 'global_options.dart';
 import 'help_command.dart';
@@ -364,9 +366,52 @@ class ModularCli {
     final jsonMode = rejection.options.any((o) => o.spec.name == 'json');
 
     if (helpRequested && _helpWinsKinds.contains(rejection.kind)) {
+      // A value the caller actually supplied is checked before letting
+      // --help win, exactly as ModuleBuilder checks it before answering
+      // --help on a resolved invocation (issue #27 section 5: "help loses
+      // to an option error"). A missing required option or an unmet
+      // constraint stay correctly skipped here: cli_router already
+      // refused to resolve on the first, and the second is never checked
+      // outside applyDeclaredContract. A badly typed supplied value
+      // (`math add --a bad --help`, with --b also missing) is the one
+      // failure `cli_router` cannot see for itself, and it must not lose
+      // to --help just because the rejection that surfaced it happens to
+      // be one help otherwise wins.
+      final contract = _contractFor(rejection);
+      if (contract != null) {
+        try {
+          validateSuppliedOptionValues(rejection.options, contract.contract);
+        } on CommandException catch (e) {
+          return _emitCommandException(e, err, jsonMode: jsonMode);
+        }
+      }
       return _emitFocusedHelp(rejection, out, jsonMode: jsonMode);
     }
     return _emitRejectionError(rejection, err, jsonMode: jsonMode);
+  }
+
+  /// Writes a [CommandException] raised while resolving a rejection (not
+  /// while running a handler body) in the same envelope shape
+  /// [CliOutput.writeError] writes: a [ModuleBuilder] route has an
+  /// [CliOutput] to delegate to by the time it can catch one, but a
+  /// rejection this SDK is still classifying does not, so the two writers
+  /// are kept in the same shape independently rather than shared.
+  int _emitCommandException(
+    CommandException error,
+    io.IOSink err, {
+    required bool jsonMode,
+  }) {
+    if (jsonMode) {
+      err.writeln(jsonEncode({'error': error.toJson()}));
+      return error.exitCode;
+    }
+    err.writeln('Error: ${error.message} [${error.id}]');
+    if (error.details != null && error.details!.isNotEmpty) {
+      for (final entry in error.details!.entries) {
+        err.writeln('  ${entry.key}: ${entry.value}');
+      }
+    }
+    return error.exitCode;
   }
 
   /// Help for a rejection `--help` won: the most specific thing the router

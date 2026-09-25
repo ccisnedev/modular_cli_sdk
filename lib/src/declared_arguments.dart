@@ -95,7 +95,7 @@ List<ParsedOption> _findAll(List<ParsedOption> options, String name) => [
     if (option.spec.name == name) option,
 ];
 
-/// Type-checks every option value the caller actually supplied on [req]
+/// Type-checks every option value the caller actually supplied in [options]
 /// against [contract], without synthesizing defaults, coercing positionals
 /// or checking constraints.
 ///
@@ -107,9 +107,19 @@ List<ParsedOption> _findAll(List<ParsedOption> options, String name) => [
 /// to parse (`repeat --count bad --help`) is the one kind of failure that
 /// must not lose to `--help`, because unlike the other two, `cli_router`
 /// itself has no way to catch it: nothing here runs until this SDK does.
-void validateSuppliedOptionValues(CliRequest req, CliContract contract) {
+///
+/// Takes the raw [ParsedOption]s rather than a [CliRequest] so it can be
+/// called both on a resolved invocation's `req.options` (from
+/// [ModuleBuilder]'s own handler) and on a rejected one's
+/// `CliRejection.options` (from [ModularCli]'s help-precedence check): a
+/// rejection has no [CliRequest] to offer, `cli_router` never resolves one
+/// for an invocation it refuses.
+void validateSuppliedOptionValues(
+  List<ParsedOption> options,
+  CliContract contract,
+) {
   for (final param in contract.options) {
-    for (final occurrence in _findAll(req.options, param.name)) {
+    for (final occurrence in _findAll(options, param.name)) {
       param.parse(occurrence.value ?? '');
     }
   }
