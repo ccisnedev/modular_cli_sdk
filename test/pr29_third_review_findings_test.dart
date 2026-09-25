@@ -115,6 +115,74 @@ void main() {
       });
     },
   );
+
+  group(
+    'finding 2: a middleware that throws while building its own handler '
+    'must not escape run()',
+    () {
+      test('a synchronous throw from the outer (next) { ... } body is '
+          'caught, not just one from the returned inner handler', () async {
+        final cli = ModularCli(suggestionDistance: 2);
+        cli.query<_WidgetInput, _WidgetOutput>(
+          'widget',
+          (req) => _WidgetQuery(_WidgetInput()),
+          globals: true,
+          description: 'A route to dispatch middleware through',
+          contract: CliContract.none,
+        );
+        cli.use(
+          (next) {
+            // Thrown while the middleware is still being built, before the
+            // returned handler is ever invoked with a request.
+            throw CommandException(
+              id: 'middleware-construction-blew-up',
+              message: 'the middleware failed while building its handler',
+              exitCode: ExitCode.conflict,
+            );
+          },
+        );
+
+        final err = MemorySink();
+        final code = await cli.run(['widget'], stderr: err);
+
+        expect(code, equals(ExitCode.conflict));
+        expect(err.output, contains('middleware-construction-blew-up'));
+        expect(
+          err.output,
+          contains('the middleware failed while building its handler'),
+        );
+      });
+
+      test('writes the structured envelope under --json', () async {
+        final cli = ModularCli(suggestionDistance: 2);
+        cli.query<_WidgetInput, _WidgetOutput>(
+          'widget',
+          (req) => _WidgetQuery(_WidgetInput()),
+          globals: true,
+          description: 'A route to dispatch middleware through',
+          contract: CliContract.none,
+        );
+        cli.use(
+          (next) {
+            throw CommandException(
+              id: 'middleware-construction-blew-up',
+              message: 'the middleware failed while building its handler',
+              exitCode: ExitCode.conflict,
+            );
+          },
+        );
+
+        final err = MemorySink();
+        final code = await cli.run(['widget', '--json'], stderr: err);
+
+        expect(code, equals(ExitCode.conflict));
+        final envelope = jsonDecode(err.output) as Map<String, dynamic>;
+        final error = envelope['error'] as Map<String, dynamic>;
+        expect(error['id'], equals('middleware-construction-blew-up'));
+        expect(error['exitCode'], equals(ExitCode.conflict));
+      });
+    },
+  );
 }
 
 // ── Test harness shared by every group ─────────────────────────────────────
