@@ -604,7 +604,7 @@ Each row is what actually happens in `installation_plugin.dart`, not an aspirati
 | id | reported when |
 | --- | --- |
 | `release-lookup-failed` | the release source could not be queried, a release's tag does not parse as semver once the tag prefix is stripped, no release with the configured tag prefix exists, or the latest release has no asset for the current platform |
-| `executable-check-failed` | resolving `config.executable` or `config.alias` on PATH itself threw, before it could even be determined whether either is present |
+| `executable-check-failed` | resolving `config.executable` or `config.alias` on PATH itself threw, before it could even be determined whether either is present; or, after writing the downloaded executable, checking whether it actually ended up executable could not be answered at all (the checker itself failed to start, or exited with a code other than the one that means "not executable") |
 | `file-access-denied` | `config.executable` is not on PATH, a resolved PATH entry could not be canonicalized to an install target, or moving the running executable aside for `uninstall` failed |
 | `alias-hard-link-unsupported` | `config.alias` resolves to a hard link to the executable rather than a symlink, a shape this plugin will not create or rewrite |
 | `download-failed` | the release asset could not be downloaded, or an `--apply` run failed at a point where no `CliInstallStepFailure` was thrown (the default id for an otherwise-untyped step failure) |

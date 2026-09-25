@@ -240,19 +240,36 @@ A third pass over #30, against the same install/uninstall code.
   within milliseconds before doing anything (confirmed with `Get-Process`
   never finding the reported pid), separately from the long-standing
   `detachedWithStdio` I/O bug (dart-lang/sdk#35809). The worker is now
-  launched as `cmd.exe /d /c start "" /min <powershell.exe> -File <script>`
-  under `ProcessStartMode.normal`, the standard Windows job-object
+  launched as `cmd.exe /d /c start "" /min <powershell.exe> -EncodedCommand
+  <script>` under `ProcessStartMode.normal`, the standard Windows job-object
   breakaway: `start` hands the new process off outside the calling
   `cmd.exe`'s own process tree, so it survives the launching process's exit
   instead of being killed by that process's Windows Job Object, while still
-  giving PowerShell a real console. The worker reads its payload (the
-  parent pid to watch, the paths to delete, the timeout) from a JSON file
-  and signals readiness by creating a marker file; both paths travel as
-  environment variables, never as command-line arguments, so no
-  caller-supplied path is ever re-parsed by `cmd.exe`'s own shell grammar.
-  If the worker cannot be started, the step still fails with
-  `cleanup-start-failed`, as before, naming the renamed file to delete by
-  hand
+  giving PowerShell a real console. If the worker cannot be started, the
+  step still fails with `cleanup-start-failed`, as before, naming the
+  renamed file to delete by hand
+- **The cleanup worker no longer gives `cmd.exe` a caller-supplied path to
+  re-parse, and no longer leaks temporary files.** `cmd.exe` re-parses its
+  own command line with its own shell grammar on top of ordinary argv
+  quoting, so a `TEMP` directory containing `&`, `%`, `^` or similar could
+  previously break, or inject into, the launch by way of the worker
+  script's own path (`-File <script>`, built from `TEMP`). The worker's
+  fixed bootstrap script is now passed whole through `-EncodedCommand`
+  (Base64 UTF-16LE), so no path is ever on that command line at all: the
+  only run-specific value still there is the resolved `powershell.exe`
+  path, and it is checked to contain none of `cmd.exe`'s metacharacters
+  before use. The payload (the parent pid, the paths to delete, the
+  timeout) now travels as JSON through an environment variable instead of a
+  file: Windows PowerShell 5.1's `Get-Content` decodes a file without a BOM
+  using the system ANSI code page, silently corrupting a non-ASCII path,
+  while an environment variable is inherited through Windows' own
+  Unicode-safe environment block. The ready-marker file the worker creates
+  to signal it is alive now lives inside a private, randomly named,
+  exclusively created temporary directory, never directly under the shared
+  system temp directory with a predictable pid/timestamp name; the launcher
+  removes that directory itself once it has seen the marker or given up
+  waiting for one, so nothing is left behind on success or on a startup
+  failure
 
 ### Notes
 
