@@ -395,15 +395,36 @@ class ModuleBuilder {
 
     final execution = await executor.perform(steps);
     final result = unit.describe(execution);
-
-    output.writeObject(result.toJson(), textOverride: result.toText());
+    final discrepancies = execution.discrepancies;
+    final succeeded = execution.failure == null;
 
     // What the run did that it had not said it would. Written whatever the
-    // command chose to report: it is the SDK's promise that was broken, not the
-    // command's, and a reader must not have to take the command's word for it.
-    for (final discrepancy in execution.discrepancies) {
-      req.stderr.writeln('! ${discrepancy.message}');
+    // command chose to report: it is the SDK's promise that was broken, not
+    // the command's, and a reader must not have to take the command's word
+    // for it.
+    //
+    // Under --json, a discrepancy is never written as raw "! ..." text:
+    // --json's promise is that every write is one decodable JSON document,
+    // and raw text ahead of a later JSON write (the result below, or the
+    // failure envelope further down) would break that. It travels inside
+    // the structured envelope instead: folded into the result object below
+    // when the run went on to succeed, or into the failure envelope further
+    // down when it did not.
+    final isJsonMode = req.flagBool('json');
+    if (isJsonMode && discrepancies.isNotEmpty && succeeded) {
+      output.writeObject({
+        ...result.toJson(),
+        'discrepancies': [for (final d in discrepancies) d.toJson()],
+      }, textOverride: result.toText());
+    } else {
+      output.writeObject(result.toJson(), textOverride: result.toText());
+      if (!isJsonMode) {
+        for (final discrepancy in discrepancies) {
+          req.stderr.writeln('! ${discrepancy.message}');
+        }
+      }
     }
+
     if (execution.failure != null) {
       final thrown = execution.failure!.error;
       // A step that threw its own CommandException keeps that error exactly:
@@ -411,7 +432,7 @@ class ModuleBuilder {
       // failure, and re-wrapping it would throw that away. Anything else is
       // wrapped in a fixed, kebab-case id, so a --json caller always gets the
       // same envelope shape regardless of what the step actually threw.
-      final exception = thrown is CommandException
+      final baseException = thrown is CommandException
           ? thrown
           : CommandException(
               id: 'step-failed',
@@ -420,6 +441,20 @@ class ModuleBuilder {
                   ? ExitCode.genericError
                   : result.exitCode,
             );
+      // In --json mode, a discrepancy that led up to this failure travels
+      // in the failure envelope itself, since it is the only JSON document
+      // stderr gets to carry it in.
+      final exception = (isJsonMode && discrepancies.isNotEmpty)
+          ? CommandException(
+              id: baseException.id,
+              message: baseException.message,
+              exitCode: baseException.exitCode,
+              details: {
+                ...?baseException.details,
+                'discrepancies': [for (final d in discrepancies) d.toJson()],
+              },
+            )
+          : baseException;
       output.writeError(exception);
       // Stopping halfway is a failure of the invocation even when the command
       // found something to report about the part that ran.
