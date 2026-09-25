@@ -9,20 +9,24 @@ class HelloInput extends Input {
 
   /// The command's contract, declared once: help renders it and the framework
   /// enforces it, so `--name` can never mean one thing in help and another here.
-  static final params = [
-    CliParam.string(
-      'name',
-      abbr: 'n',
-      defaultValue: 'World',
-      description: 'Who to greet',
-    ),
-  ];
+  static final contract = CliContract(
+    options: [
+      CliParam.string(
+        'name',
+        abbr: 'n',
+        required: false,
+        repeatable: false,
+        defaultValue: const DeclaredDefault(
+          'World',
+          reason: 'the name used when nobody gave one',
+        ),
+        description: 'Who to greet',
+      ),
+    ],
+  );
 
   factory HelloInput.fromCliRequest(CliRequest req) =>
       HelloInput(name: req.flagString('name')!);
-
-  @override
-  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {'name': name};

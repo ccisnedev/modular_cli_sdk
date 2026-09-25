@@ -28,18 +28,27 @@ class WriteNoteInput extends Input {
   /// `--plan`, `--apply` and `--autoapprove` are **not** here: the SDK adds
   /// them to every command, and adding them by hand is how twelve commands in
   /// one CLI ended up each declaring the same three flags.
-  static final List<CliParam> params = [
-    CliParam.positional('name', description: 'Name of the note'),
-    CliParam.string(
-      'dir',
-      defaultValue: 'notes',
-      description: 'Directory the note is written into',
-    ),
-    CliParam.string('body', description: 'What the note says'),
-  ];
-
-  @override
-  List<CliParam> get schemaFields => params;
+  static final contract = CliContract(
+    positionals: [CliPositional.string('name', description: 'Name of the note')],
+    options: [
+      CliParam.string(
+        'dir',
+        required: false,
+        repeatable: false,
+        defaultValue: const DeclaredDefault(
+          'notes',
+          reason: 'the directory used when nobody gave one',
+        ),
+        description: 'Directory the note is written into',
+      ),
+      CliParam.string(
+        'body',
+        required: false,
+        repeatable: false,
+        description: 'What the note says',
+      ),
+    ],
+  );
 
   @override
   Map<String, dynamic> toJson() => {'name': name, 'dir': directory};

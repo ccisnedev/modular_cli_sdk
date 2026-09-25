@@ -14,11 +14,14 @@
 ///   dart run example/example.dart math multiply --a 4 --b 5 --json
 ///
 /// Everything above reads. The one route that writes is told which of the two
-/// it is doing, and refuses to guess:
+/// it is doing, and refuses to guess. `notes write` takes a positional (the
+/// note's name), and `cli_router` requires every option to precede the first
+/// positional on the command line, so `--plan`/`--apply`/`--json` come before
+/// `today` here:
 ///
-///   dart run example/example.dart notes write today --plan
-///   dart run example/example.dart notes write today --apply --autoapprove
-///   dart run example/example.dart notes write today --plan --json
+///   dart run example/example.dart notes write --plan today
+///   dart run example/example.dart notes write --apply --autoapprove today
+///   dart run example/example.dart notes write --plan --json today
 library;
 
 import 'dart:io';

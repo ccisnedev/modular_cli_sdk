@@ -11,6 +11,6 @@ void buildNotesModule(ModuleBuilder m) {
     'write <name>',
     (req) => WriteNoteCommand(WriteNoteInput.fromCliRequest(req)),
     description: 'Write a note',
-    params: WriteNoteInput.params,
+    contract: WriteNoteInput.contract,
   );
 }

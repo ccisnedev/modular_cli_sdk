@@ -8,13 +8,13 @@ void buildMathModule(ModuleBuilder m) {
     'add',
     (req) => AddQuery(AddInput.fromCliRequest(req)),
     description: 'Add two numbers',
-    params: AddInput.params,
+    contract: AddInput.contract,
   );
 
   m.query<AddInput, AddOutput>(
     'multiply',
     (req) => MultiplyQuery(AddInput.fromCliRequest(req)),
     description: 'Multiply two numbers',
-    params: AddInput.params,
+    contract: AddInput.contract,
   );
 }
