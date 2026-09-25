@@ -809,7 +809,7 @@ void main() {
         ),
       );
 
-      expect(catalog.suggest('shwo'), equals('show'));
+      expect(catalog.suggest('shwo', maxDistance: 2), equals('show'));
     });
 
     test('returns null when nothing registered is close enough', () {
@@ -823,7 +823,7 @@ void main() {
         ),
       );
 
-      expect(catalog.suggest('zzzzzzzzzzzzzzzzzzzz'), isNull);
+      expect(catalog.suggest('zzzzzzzzzzzzzzzzzzzz', maxDistance: 2), isNull);
     });
 
     test('breaks a tie in distance by catalog registration order', () {
@@ -847,7 +847,7 @@ void main() {
 
       // Both 'a' and 'b' are one substitution away from 'c'; 'a' was
       // registered first.
-      expect(catalog.suggest('c'), equals('a'));
+      expect(catalog.suggest('c', maxDistance: 2), equals('a'));
     });
 
     test('a typo one segment into a route suggests the word it was closest to, '

@@ -145,6 +145,21 @@ ModularCli _buildMiddlewareCli(CliMiddleware middleware) {
   return cli;
 }
 
+// ── Finding 6 fixture: a route to suggest a typo against ──────────────────
+
+CommandCatalog _catalogWithShow() {
+  final catalog = CommandCatalog();
+  catalog.register(
+    CommandContract(
+      route: 'show',
+      module: '',
+      globals: true,
+      contract: CliContract.none,
+    ),
+  );
+  return catalog;
+}
+
 void main() {
   group('finding 2: an invalid supplied option value wins over --help', () {
     test(
@@ -271,6 +286,55 @@ void main() {
         expect(ran, isTrue);
         expect(result.exitCode, equals(ExitCode.ok));
       });
+    },
+  );
+
+  group(
+    'finding 6: CommandCatalog.suggest() must not silently default its '
+    'distance',
+    () {
+      test(
+        'omitting maxDistance is refused at the call shape, not silently '
+        'defaulted to some other distance',
+        () {
+          final catalog = _catalogWithShow();
+
+          // Reflectively calls suggest() with only the positional argument,
+          // exactly the shape a caller who forgot maxDistance would produce.
+          // While maxDistance carries a default this succeeds quietly and
+          // returns 'show'; once it is required this throws instead of
+          // guessing which distance the caller meant.
+          expect(
+            () => Function.apply(catalog.suggest, ['shwo']),
+            throwsNoSuchMethodError,
+          );
+        },
+      );
+
+      test(
+        'with suggestionDistance: 0, ModularCli.suggest() and a direct '
+        'catalog call given that same distance agree that nothing is '
+        'close enough',
+        () {
+          final cli = ModularCli(suggestionDistance: 0);
+          cli.module('nav', (m) {
+            m.query<_MarkerInput2, _MarkerOutput2>(
+              'show',
+              (req) => _MarkerQuery2(_MarkerInput2()),
+              globals: true,
+              description: 'Show something',
+              contract: CliContract.none,
+            );
+          });
+
+          // cli.suggest() honors the CLI's configured distance.
+          expect(cli.suggest('shwo'), isNull);
+
+          // A direct catalog call must be told the very same distance
+          // explicitly; there is no other default it could fall back to.
+          expect(cli.catalog.suggest('shwo', maxDistance: 0), isNull);
+        },
+      );
     },
   );
 }
