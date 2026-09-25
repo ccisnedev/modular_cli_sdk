@@ -4,13 +4,13 @@ import '../input.dart';
 import '../output.dart';
 import '../query.dart';
 
-/// `doctor` — runs every check contributed to the `doctor.checks` extension
+/// `doctor` runs every check contributed to the `doctor.checks` extension
 /// point and reports them together.
 ///
 /// `DoctorPlugin` owns the extension point but contributes nothing to it
 /// itself: on its own, `doctor` reports no checks at all and exits `0`. A
-/// plugin that wants to be checked — [InstallationPlugin] is the one this SDK
-/// ships — declares `modular_cli.doctor` in its own
+/// plugin that wants to be checked ([InstallationPlugin] is the one this SDK
+/// ships) declares `modular_cli.doctor` in its own
 /// [CliPluginManifest.requires] and contributes [CliDoctorCheck]s in its
 /// `setup`, which dependency ordering guarantees runs after this plugin's own.
 class DoctorPlugin implements CliPlugin {
@@ -43,14 +43,14 @@ class DoctorPlugin implements CliPlugin {
 
 /// One thing `doctor` can check. Named ([name]) because two contributed
 /// checks may report on the same topic from different plugins, and a reader
-/// — human or `--json` — needs to tell them apart without inspecting which
+/// (human or `--json`) needs to tell them apart without inspecting which
 /// plugin contributed which.
 class CliDoctorCheck {
   const CliDoctorCheck({required this.name, required this.run});
 
   final String name;
 
-  /// Perform the check. Never throws by contract — a check that cannot run
+  /// Perform the check. Never throws by contract: a check that cannot run
   /// reports that as a [CliCheckStatus.warning] or [CliCheckStatus.error]
   /// result, the same as any other finding, rather than aborting the whole
   /// `doctor` invocation over one check's own failure.
@@ -93,11 +93,11 @@ class DoctorOutput extends Output {
   String? toText() => results.isEmpty
       ? 'No doctor checks are registered.'
       : results.entries
-            .map((e) => '${e.value.status.name.padRight(7)} ${e.key} — ${e.value.message}')
+            .map((e) => '${e.value.status.name.padRight(7)} ${e.key}: ${e.value.message}')
             .join('\n');
 
   // A warning is reported, never punished with a non-zero exit: it names
-  // something worth a look — a newer release, a lookup that failed — that
+  // something worth a look (a newer release, a lookup that failed) that
   // the CLI still works despite. Only a check that found something actually
   // wrong moves `doctor` to ExitCode.configError.
   @override

@@ -5,7 +5,7 @@ import 'dart:io' as io;
 /// Injectable so a test can exercise every platform branch without actually
 /// running on each OS.
 abstract class CliPlatform {
-  /// `'linux'`, `'macos'` or `'windows'` — [io.Platform.operatingSystem]'s own
+  /// `'linux'`, `'macos'` or `'windows'`, [io.Platform.operatingSystem]'s own
   /// vocabulary, reused rather than invented, since it is already what a
   /// [CliInstallationConfig.assets] key is compared against.
   String get operatingSystem;

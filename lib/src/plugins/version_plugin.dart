@@ -4,7 +4,7 @@ import '../input.dart';
 import '../output.dart';
 import '../query.dart';
 
-/// `version` — prints the host CLI's own name and version.
+/// `version` prints the host CLI's own name and version.
 ///
 /// The simplest of the three standard plugins: it reads
 /// [CliPluginHost.metadata] and nothing else. A host that registers it must

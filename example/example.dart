@@ -1,5 +1,5 @@
 /// example/example.dart
-/// Minimal runnable example — mirrors example/example.dart from modular_api.
+/// Minimal runnable example, mirrors example/example.dart from modular_api.
 ///
 /// Run:
 ///   dart run example/example.dart                  # the root command
@@ -51,7 +51,7 @@ Future<int> runExample(
   // how an approval is taken, and whether a plan is kept on disk. Passing them
   // in is also what lets the suite exercise `--apply` without a terminal.
   //
-  // name/version identify this CLI to its own plugins — VersionPlugin reads
+  // name/version identify this CLI to its own plugins: VersionPlugin reads
   // them back, and any plugin declaring a hostApiVersion constraint is
   // checked against cliPluginHostApiVersion when the plugin set is built.
   final cli = ModularCli(
@@ -62,7 +62,7 @@ Future<int> runExample(
     version: '0.2.0',
   )..plugin(const VersionPlugin());
 
-  // The root command — what the bare invocation runs. Registering it means this
+  // The root command: what the bare invocation runs. Registering it means this
   // CLI, not the help, owns the empty invocation.
   cli.query<StatusInput, StatusOutput>(
     '',

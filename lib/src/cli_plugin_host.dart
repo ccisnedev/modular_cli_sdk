@@ -13,7 +13,7 @@ import 'query.dart';
 ///
 /// One instance is built per [ModularCli.buildPlugins] call and shared across
 /// every plugin in that build, so an extension point declared by one plugin
-/// is visible to every plugin set up after it — which dependency order
+/// is visible to every plugin set up after it, which dependency order
 /// guarantees is every plugin allowed to contribute to it.
 class RuntimeCliPluginHost implements CliPluginHost {
   RuntimeCliPluginHost(this._cli);
@@ -24,7 +24,7 @@ class RuntimeCliPluginHost implements CliPluginHost {
   final Map<String, Type> _extensionPointTypes = {};
   final Map<String, List<Object?>> _contributions = {};
 
-  /// The plugin currently being set up — set by [ModularCli.buildPlugins]
+  /// The plugin currently being set up, set by [ModularCli.buildPlugins]
   /// before each [CliPlugin.setup] call, so a failure inside this host can
   /// name the plugin responsible without that plugin having to repeat its own
   /// id on every call.
@@ -79,7 +79,7 @@ class RuntimeCliPluginHost implements CliPluginHost {
   }
 
   /// `cli_router`'s own trie rejects a route already registered at its
-  /// position with a [StateError] — caught here and re-thrown as the same
+  /// position with a [StateError], caught here and re-thrown as the same
   /// [CliPluginError] vocabulary every other build-time plugin failure uses,
   /// naming the plugin that collided rather than the trie internals that
   /// noticed.

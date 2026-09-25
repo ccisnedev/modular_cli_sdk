@@ -1,4 +1,4 @@
-/// `VersionPlugin` — prints the host's own name and version.
+/// `VersionPlugin` prints the host's own name and version.
 library;
 
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';

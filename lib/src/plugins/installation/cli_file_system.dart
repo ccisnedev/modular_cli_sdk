@@ -1,11 +1,11 @@
 import 'dart:io' as io;
 
 /// The filesystem and `PATH` access [InstallationPlugin] needs. Injectable so
-/// no test touches a real install path — a test supplies a fake that answers
+/// no test touches a real install path, a test supplies a fake that answers
 /// from an in-memory map instead.
 abstract class CliFileSystem {
   /// The full path [name] resolves to on `PATH`, the way a shell would find
-  /// it — or null when nothing on `PATH` is named [name].
+  /// it, or null when nothing on `PATH` is named [name].
   String? resolveOnPath(String name);
 
   /// Write [bytes] to [path] as an executable file, replacing whatever was
@@ -18,7 +18,7 @@ abstract class CliFileSystem {
 
 /// Resolves against the real `PATH` and writes to the real filesystem.
 ///
-/// Used only by production code — a plugin's own tests inject a fake
+/// Used only by production code: a plugin's own tests inject a fake
 /// instead, and this class has no test of its own for the same reason
 /// `dart:io`-backed code throughout this SDK does not: it has nothing to
 /// assert against but the real machine it runs on.

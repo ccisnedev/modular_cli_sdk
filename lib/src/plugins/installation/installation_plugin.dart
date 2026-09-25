@@ -14,15 +14,15 @@ import 'cli_file_system.dart';
 import 'cli_platform.dart';
 import 'cli_release_source.dart';
 
-/// `upgrade` / `uninstall` — installs a compiled release of this CLI over
+/// `upgrade` / `uninstall`: installs a compiled release of this CLI over
 /// itself, and removes it. Also contributes three checks to `doctor.checks`
 /// (binary on `PATH`, alias, release), which is why it [CliPluginManifest.requires]
 /// `modular_cli.doctor`: those checks have nowhere to be reported without it.
 ///
 /// `assets` maps a [CliPlatform.operatingSystem] key to the name of the
-/// release asset for that platform — itself the compiled, ready-to-run
+/// release asset for that platform (itself the compiled, ready-to-run
 /// executable this plugin writes over [CliInstallationConfig.executable]'s
-/// current location. Neither an archive to extract nor an installer to run
+/// current location). Neither an archive to extract nor an installer to run
 /// is part of this release: nothing in the issue or the consumer spec this
 /// was built against describes one, and inventing an extraction format would
 /// be exactly the kind of fallback the rest of this SDK avoids.
@@ -162,15 +162,15 @@ class CliInstallationConfig {
     required this.assets,
   });
 
-  /// `owner/repo` on GitHub — e.g. `'ccisnedev/calculatrix'`.
+  /// `owner/repo` on GitHub, e.g. `'ccisnedev/calculatrix'`.
   final String repository;
 
-  /// The prefix this CLI's own release tags carry — e.g. `'cli-v'` in a
+  /// The prefix this CLI's own release tags carry, e.g. `'cli-v'` in a
   /// repository whose application releases are tagged `v*`. Only tags
   /// starting with this prefix are considered.
   final String tagPrefix;
 
-  /// The name of the binary on `PATH` — e.g. `'cx'`.
+  /// The name of the binary on `PATH`, e.g. `'cx'`.
   final String executable;
 
   /// A second name this CLI is also expected to resolve under.
@@ -182,9 +182,9 @@ class CliInstallationConfig {
 }
 
 /// The newest release among [releases] whose tag starts with [tagPrefix] and
-/// parses as semver once the prefix is stripped. A tag that does not parse —
+/// parses as semver once the prefix is stripped. A tag that does not parse,
 /// or does not carry the prefix at all, such as an application's own `v*` tag
-/// living in the same repository as this CLI's `cli-v*` — is skipped rather
+/// living in the same repository as this CLI's `cli-v*`, is skipped rather
 /// than guessed at.
 CliRelease? latestTaggedRelease(List<CliRelease> releases, String tagPrefix) {
   CliRelease? best;
@@ -253,11 +253,11 @@ class UpgradeOutput extends Output {
   };
 }
 
-/// Thrown by an upgrade/uninstall [Step] when it fails — carries the
+/// Thrown by an upgrade/uninstall [Step] when it fails, carries the
 /// structured id (`download-failed`, `file-access-denied`) the consumer spec
 /// requires an `--apply` failure to report. [PreviewExecutor.perform] catches
 /// it, stops the run without performing any step after it, and keeps it as
-/// [Execution.failure] — `describe` reads it back from there.
+/// [Execution.failure]: `describe` reads it back from there.
 class CliInstallStepFailure implements Exception {
   const CliInstallStepFailure(this.id, this.message);
 
@@ -476,7 +476,7 @@ class UninstallCommand
     }
 
     // The alias is only ever removed here when it currently points at this
-    // same binary — an alias resolving elsewhere, or not at all, is left
+    // same binary: an alias resolving elsewhere, or not at all, is left
     // alone rather than guessed at.
     final aliasPath = fileSystem.resolveOnPath(config.alias);
     if (aliasPath != null && aliasPath == executablePath) {

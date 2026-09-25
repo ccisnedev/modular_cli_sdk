@@ -1,4 +1,4 @@
-/// `DoctorPlugin` — runs whatever checks were contributed to `doctor.checks`
+/// `DoctorPlugin` runs whatever checks were contributed to `doctor.checks`
 /// and reports them together, exiting non-zero only when one of them errors.
 library;
 
@@ -107,7 +107,7 @@ CliDoctorCheck _constantCheck({
 }) => CliDoctorCheck(name: name, run: () async => CliCheckResult(status: status, message: message));
 
 /// A plugin that declares no extension points of its own and contributes a
-/// fixed list of [CliDoctorCheck]s to `doctor.checks` — it must therefore
+/// fixed list of [CliDoctorCheck]s to `doctor.checks`: it must therefore
 /// [CliPluginManifest.requires] `modular_cli.doctor`, exactly as any real
 /// contributor (such as `InstallationPlugin`) does.
 class _CheckContributingPlugin implements CliPlugin {

@@ -9,7 +9,7 @@ import 'package:http/http.dart' as http;
 /// canned [CliRelease]s.
 abstract class CliReleaseSource {
   /// Every release of [repository], in whatever order the source returns
-  /// them — the caller sorts. Deliberately not "the latest release": a
+  /// them, the caller sorts. Deliberately not "the latest release": a
   /// repository can host more than one product's tags (an app's `v*` next to
   /// a CLI's `cli-v*`), and only a full list lets the caller filter by
   /// [CliInstallationConfig.tagPrefix] before picking one.
@@ -30,7 +30,7 @@ class CliReleaseAsset {
   final String downloadUrl;
 }
 
-/// Thrown by [CliReleaseSource.listReleases] when the lookup itself failed —
+/// Thrown by [CliReleaseSource.listReleases] when the lookup itself failed:
 /// no network, a non-2xx response, a body that does not parse. Distinct from
 /// "the repository has no release matching a prefix", which is not a failure
 /// of the lookup and is handled by the caller once the (successful, possibly
@@ -46,7 +46,7 @@ class CliReleaseLookupFailure implements Exception {
 
 /// Lists a GitHub repository's releases via the REST API.
 ///
-/// Always `GET /repos/{repository}/releases` — the full list — never
+/// Always `GET /repos/{repository}/releases` (the full list), never
 /// `/releases/latest`, which answers with whichever release GitHub marks
 /// latest and can belong to a different product tagged in the same
 /// repository.

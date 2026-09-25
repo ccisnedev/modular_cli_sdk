@@ -69,7 +69,7 @@ class ModularCli {
   /// should assume silently.
   ///
   /// [name] and [version] identify this CLI to a plugin that asks
-  /// [CliPluginHost.metadata] — a plugin that ships a `version` route or
+  /// [CliPluginHost.metadata]: a plugin that ships a `version` route or
   /// compares an installed version against a release has to be told both.
   /// Left null, [hostMetadata] is null and such a plugin's [setup] throws
   /// rather than reporting a name or version nobody gave it.
@@ -93,7 +93,7 @@ class ModularCli {
   final PlanSink? _planSink;
   final int _suggestionDistance;
 
-  /// This CLI's own name and version, as given to the constructor — the one
+  /// This CLI's own name and version, as given to the constructor: the one
   /// piece of information a plugin cannot declare about itself. Null unless
   /// both [name] and [version] were given.
   final CliHostMetadata? hostMetadata;
@@ -102,7 +102,7 @@ class ModularCli {
     if (value == null) {
       throw ArgumentError(
         'ModularCli was given ${other == null ? 'neither' : 'only'} name/'
-        'version — give both or neither; a $label with no counterpart is not '
+        'version: give both or neither; a $label with no counterpart is not '
         'a CLI identity a plugin can rely on.',
       );
     }
@@ -305,7 +305,7 @@ class ModularCli {
 
   /// Register a plugin. Chainable, like [module], [query] and [command].
   ///
-  /// Registering does not run [CliPlugin.setup] — that is deferred to
+  /// Registering does not run [CliPlugin.setup]: that is deferred to
   /// [buildPlugins], so every plugin can be added, in whatever order the host
   /// application finds natural, before any of them is validated or given a
   /// chance to register a route. [run] calls [buildPlugins] itself; call it
@@ -320,13 +320,13 @@ class ModularCli {
   ///
   /// Idempotent: a second call, including the one [run] makes, does nothing.
   /// Validation happens for every plugin before [CliPlugin.setup] runs for
-  /// any of them — a duplicate id, an incompatible [CliPluginManifest.hostApiVersion],
+  /// any of them: a duplicate id, an incompatible [CliPluginManifest.hostApiVersion],
   /// a missing dependency or a dependency cycle is a failure of the whole
   /// set, not of whichever plugin happened to be set up first, so none of the
   /// set is allowed to register a single route before every plugin in it has
   /// passed every check that does not require running [setup] itself.
   ///
-  /// Throws [CliPluginError] — there is no fallback that runs a plugin set
+  /// Throws [CliPluginError]: there is no fallback that runs a plugin set
   /// found to be broken.
   void buildPlugins() {
     if (_pluginsBuilt) return;

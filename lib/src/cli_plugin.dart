@@ -7,7 +7,7 @@ import 'input.dart';
 import 'output.dart';
 import 'query.dart';
 
-/// The plugin host API's own version — independent of the `modular_cli_sdk`
+/// The plugin host API's own version, independent of the `modular_cli_sdk`
 /// package version, and the number a plugin's
 /// [CliPluginManifest.hostApiVersion] constraint is checked against.
 ///
@@ -17,7 +17,7 @@ import 'query.dart';
 const String cliPluginHostApiVersion = '1.0.0';
 
 /// Builds a [Query] from a request, at whatever concrete `I`/`O` the plugin
-/// declared — accepted by [CliPluginHost.registerQuery] through the ordinary
+/// declared, accepted by [CliPluginHost.registerQuery] through the ordinary
 /// covariance of a function returning a subtype.
 typedef QueryFactory = Query<Input, Output> Function(CliRequest req);
 
@@ -28,7 +28,7 @@ typedef CommandFactory = Command<Input, Output> Function(CliRequest req);
 ///
 /// [id] is the identity other plugins reference in [requires], and the one a
 /// build-time failure names. [hostApiVersion] is a semver constraint (`^1.0.0`,
-/// `>=1.0.0 <2.0.0`, …) checked against [cliPluginHostApiVersion] — not a
+/// `>=1.0.0 <2.0.0`, …) checked against [cliPluginHostApiVersion]: not a
 /// literal version, because a plugin is written once against a range, not
 /// against whatever a single host build happens to be.
 class CliPluginManifest {
@@ -40,7 +40,7 @@ class CliPluginManifest {
     this.requires = const [],
   });
 
-  /// Stable, unique identifier — e.g. `modular_cli.doctor`.
+  /// Stable, unique identifier, e.g. `modular_cli.doctor`.
   final String id;
 
   /// Human-readable name, used in help and error text.
@@ -52,15 +52,15 @@ class CliPluginManifest {
   /// A semver constraint against [cliPluginHostApiVersion].
   final String hostApiVersion;
 
-  /// Ids of plugins that must be registered — and set up — before this one.
+  /// Ids of plugins that must be registered, and set up, before this one.
   final List<String> requires;
 }
 
 /// A unit of CLI functionality distributed independently of the host that
 /// runs it.
 ///
-/// A plugin declares what it is through [manifest], and registers itself —
-/// routes, extension points, contributions — through [setup], which the host
+/// A plugin declares what it is through [manifest], and registers itself
+/// (routes, extension points, contributions) through [setup], which the host
 /// calls exactly once per plugin, in dependency order.
 abstract class CliPlugin {
   CliPluginManifest get manifest;
@@ -69,12 +69,12 @@ abstract class CliPlugin {
 }
 
 /// What the host that is running this CLI is called, and which version of it
-/// this is — the one piece of runtime information a plugin cannot declare
+/// this is: the one piece of runtime information a plugin cannot declare
 /// about itself, because it is a fact about the host, not the plugin.
 ///
 /// Supplied via `ModularCli(name: ..., version: ...)`. A plugin that calls
-/// [CliPluginHost.metadata] without the host having set it gets a [StateError]
-/// — there is no silent placeholder name or version to fall back on.
+/// [CliPluginHost.metadata] without the host having set it gets a [StateError]:
+/// there is no silent placeholder name or version to fall back on.
 class CliHostMetadata {
   const CliHostMetadata({required this.name, required this.version});
 
@@ -94,7 +94,7 @@ abstract class CliPluginHost {
   /// The name and version of the CLI this plugin is running inside.
   CliHostMetadata metadata();
 
-  /// Register a root-level [Query] — see `ModularCli.query`.
+  /// Register a root-level [Query], see `ModularCli.query`.
   void registerQuery<I extends Input, O extends Output>(
     String route,
     Query<I, O> Function(CliRequest req) queryFactory, {
@@ -102,7 +102,7 @@ abstract class CliPluginHost {
     CliContract contract = CliContract.none,
   });
 
-  /// Register a root-level [Command] — see `ModularCli.command`.
+  /// Register a root-level [Command], see `ModularCli.command`.
   void registerCommand<I extends Input, O extends Output>(
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
@@ -112,7 +112,7 @@ abstract class CliPluginHost {
 
   /// Declare a point other plugins may contribute values of type [T] to.
   ///
-  /// Must be called before any [contribute] to the same [id] — which, since
+  /// Must be called before any [contribute] to the same [id], which, since
   /// plugins are set up in dependency order, means the plugin that owns the
   /// extension point must be a (possibly transitive) dependency of every
   /// plugin that contributes to it.
@@ -122,7 +122,7 @@ abstract class CliPluginHost {
   ///
   /// Throws [CliPluginError] (`PLUGIN_EXTENSION_POINT_UNDECLARED`) when [id]
   /// was never declared, and (`PLUGIN_EXTENSION_POINT_TYPE_MISMATCH`) when
-  /// [T] does not match the type [id] was declared with — a contribution is
+  /// [T] does not match the type [id] was declared with: a contribution is
   /// checked against the same declaration help would be, not against
   /// whatever the caller happened to pass.
   void contribute<T>(String extensionPointId, T value);
@@ -134,8 +134,8 @@ abstract class CliPluginHost {
 
 /// A build-time failure in assembling the plugin set.
 ///
-/// Always a broken declaration — a duplicate id, a missing dependency, a
-/// cycle, an incompatible host API, an undeclared extension point — never
+/// Always a broken declaration (a duplicate id, a missing dependency, a
+/// cycle, an incompatible host API, an undeclared extension point), never
 /// something a running CLI recovers from. There is deliberately no fallback
 /// for any of these: the offending plugin set does not run, partially or
 /// otherwise.
@@ -150,8 +150,8 @@ class CliPluginError implements Exception {
   /// The plugin whose declaration is at fault.
   final String? pluginId;
 
-  /// The id the declaration pointed at — a required plugin, an extension
-  /// point — when the failure is about that reference rather than the
+  /// The id the declaration pointed at (a required plugin, an extension
+  /// point) when the failure is about that reference rather than the
   /// plugin itself.
   final String? resourceId;
 
@@ -162,8 +162,8 @@ class CliPluginError implements Exception {
 enum _VisitState { visiting, visited }
 
 /// Orders [plugins] so each comes after every plugin named in its
-/// [CliPluginManifest.requires], directly or transitively — a dependency
-/// topological sort — while preserving the original registration order among
+/// [CliPluginManifest.requires], directly or transitively (a dependency
+/// topological sort), while preserving the original registration order among
 /// plugins with no dependency relationship to one another.
 ///
 /// A depth-first visit in registration order does both at once: each plugin
@@ -172,9 +172,9 @@ enum _VisitState { visiting, visited }
 /// order [plugins] presented it.
 ///
 /// Throws [CliPluginError]:
-///  * `PLUGIN_DUPLICATE_ID` — two plugins share an id.
-///  * `PLUGIN_DEPENDENCY_MISSING` — a required id is not among [plugins].
-///  * `PLUGIN_DEPENDENCY_CYCLE` — a plugin requires itself, directly or
+///  * `PLUGIN_DUPLICATE_ID`: two plugins share an id.
+///  * `PLUGIN_DEPENDENCY_MISSING`: a required id is not among [plugins].
+///  * `PLUGIN_DEPENDENCY_CYCLE`: a plugin requires itself, directly or
 ///    through others.
 List<CliPlugin> orderCliPlugins(Iterable<CliPlugin> plugins) {
   final pluginList = plugins.toList(growable: false);

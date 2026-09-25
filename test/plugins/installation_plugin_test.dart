@@ -1,4 +1,4 @@
-/// `InstallationPlugin` — `upgrade` / `uninstall`, and the doctor checks it
+/// `InstallationPlugin`: `upgrade` / `uninstall`, and the doctor checks it
 /// contributes. Every network, filesystem and platform access goes through a
 /// fake from `installation_doubles.dart`: nothing here downloads, writes or
 /// deletes anything real.
@@ -23,7 +23,7 @@ void main() {
 
     test('ignores tags for a different product in the same repository', () {
       // The application's own releases (`v*`) live in the same repository as
-      // the CLI's (`cli-v*`) — a tag-prefix filter, not "the newest tag",
+      // the CLI's (`cli-v*`): a tag-prefix filter, not "the newest tag",
       // is what tells them apart.
       final releases = [
         const CliRelease(tagName: 'v9.9.9', assets: []),
@@ -165,8 +165,8 @@ void main() {
 
       expect(code, ExitCode.genericError);
       expect(out.output, contains('file-access-denied'));
-      // Stops at the failed step and reports the step already done — the
-      // download — without retrying or rolling it back.
+      // Stops at the failed step and reports the step already done (the
+      // download) without retrying or rolling it back.
       expect(out.output, contains('stepsCompleted: [cx-linux]'));
     });
 

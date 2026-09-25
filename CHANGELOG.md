@@ -8,8 +8,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 A CLI built on this SDK had no way to let another package add commands to it.
 Issue [#28](https://github.com/macss-dev/modular_cli_sdk/issues/28) asked for
-a plugin system and three standard plugins — `version`, `doctor` and an
-installer (`upgrade` / `uninstall`) — built on it.
+a plugin system and three standard plugins (`version`, `doctor` and an
+installer, `upgrade` / `uninstall`) built on it.
 
 ### Added
 
@@ -18,51 +18,51 @@ installer (`upgrade` / `uninstall`) — built on it.
   `setup(CliPluginHost host)` that registers routes and reads or contributes
   to extension points. `ModularCli.plugin(...)` queues one; nothing runs until
   `run()` (or `buildPlugins()`, for a test that wants the routes without
-  running) is called — once, ever, per `ModularCli`
+  running) is called, once, ever, per `ModularCli`
 - **Dependency ordering, not registration order.** Plugins are topologically
   sorted by `requires` before any `setup()` runs, so a plugin that contributes
-  to another plugin's extension point does not have to be registered after it
-  — only declared as requiring it. A cycle, a missing dependency, two plugins
+  to another plugin's extension point does not have to be registered after it,
+  only declared as requiring it. A cycle, a missing dependency, two plugins
   sharing an `id`, or a `hostApiVersion` constraint this host's plugin API
   (`cliPluginHostApiVersion`, currently `1.0.0`) does not satisfy all fail the
-  whole build before any plugin's `setup()` runs — there is no partially built
+  whole build before any plugin's `setup()` runs: there is no partially built
   plugin set
 - **Extension points.** `host.declareExtensionPoint<T>(id)`,
   `host.contribute<T>(id, value)`, `host.contributions<T>(id)`. Contributing to
   an undeclared id, or contributing a value of the wrong `T`, is a build-time
-  `CliPluginError` — an extension point is typed, not a bag of `Object?`
-- **`CliPluginError`** — one exception for every build-time plugin failure
+  `CliPluginError`: an extension point is typed, not a bag of `Object?`
+- **`CliPluginError`**: one exception for every build-time plugin failure
   (`PLUGIN_DUPLICATE_ID`, `PLUGIN_DEPENDENCY_MISSING`,
   `PLUGIN_DEPENDENCY_CYCLE`, `PLUGIN_INCOMPATIBLE_HOST_API`,
   `PLUGIN_DUPLICATE_ROUTE`, `PLUGIN_EXTENSION_POINT_UNDECLARED`,
   `PLUGIN_EXTENSION_POINT_TYPE_MISMATCH`), carrying `code`, `message`,
   `pluginId` and, where relevant, `resourceId`
-- **`ModularCli(name:, version:)`** — a CLI's own identity, read back by
+- **`ModularCli(name:, version:)`**: a CLI's own identity, read back by
   plugins through `CliPluginHost.metadata()`. Both or neither: a `name`
   without a `version` (or vice versa) is an `ArgumentError`, not a half
   identity a plugin might rely on
-- **`VersionPlugin`** — registers `version`, printing the host's `name` and
+- **`VersionPlugin`**: registers `version`, printing the host's `name` and
   `version`. Reads `metadata()` at `setup()`, not inside the route handler, so
   a host missing its identity fails while the plugin set is built rather than
   on the first person who runs `version`
-- **`DoctorPlugin`** — registers `doctor`, running every `CliDoctorCheck`
+- **`DoctorPlugin`**: registers `doctor`, running every `CliDoctorCheck`
   contributed to `DoctorPlugin.extensionPoint` and reporting them together.
   A check answers `ok`, `warning` or `error`; `doctor`'s exit code is
-  `ExitCode.configError` (78) if any check errored, `ExitCode.ok` otherwise —
+  `ExitCode.configError` (78) if any check errored, `ExitCode.ok` otherwise,
   a warning is visible but never fails the run
-- **`InstallationPlugin`** — configured with a `CliInstallationConfig`
+- **`InstallationPlugin`**: configured with a `CliInstallationConfig`
   (`repository`, `tagPrefix`, `executable`, `alias`, `assets`), it registers
   `upgrade` and `uninstall` as `Command`s (so both are subject to
   `--plan`/`--apply`/`--autoapprove` like any other command in this SDK) and
   contributes three checks (`binary`, `alias`, `release`) to
-  `DoctorPlugin.extensionPoint` — it `requires: ['modular_cli.doctor']`.
+  `DoctorPlugin.extensionPoint`: it `requires: ['modular_cli.doctor']`.
   `upgrade` looks up this repository's GitHub releases, keeps only tags
   starting with `tagPrefix` (so an application's own `v*` tags and the CLI's
   `cli-v*` tags coexist in one repository), picks the newest one newer than
   the host's current version, downloads the asset named for the current
   platform and installs it over whatever `executable` currently resolves to
   on `PATH`. `uninstall` removes that binary, and the `alias` too but only
-  when it currently resolves to the same path — an alias pointing elsewhere,
+  when it currently resolves to the same path, an alias pointing elsewhere,
   or missing, is left alone. Every network, filesystem and platform access
   (`CliReleaseSource`, `CliDownloader`, `CliFileSystem`, `CliPlatform`) is
   behind an injectable interface with a `Http*`/`Io*` default, so the test
@@ -77,7 +77,7 @@ installer (`upgrade` / `uninstall`) — built on it.
   unpacks before this plugin writes the result
 - **A failed release lookup exits non-zero even under `--plan`.** `upgrade`
   and `uninstall` look the release up inside `steps()`, which runs before the
-  framework branches on `--plan` vs `--apply` — so `release-lookup-failed` is
+  framework branches on `--plan` vs `--apply`, so `release-lookup-failed` is
   reported and the run exits `ExitCode.genericError` (1) whichever flag was
   given, rather than `--plan` silently showing nothing
 - **A step failure stops the run at that step; nothing already done is rolled
