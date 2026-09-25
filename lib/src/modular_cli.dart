@@ -254,11 +254,17 @@ class ModularCli {
   /// failed command or a rejected invocation produces, honoring the
   /// resolved request's `--json` mode. Without this boundary the exception
   /// would escape [run] entirely instead of yielding an exit code.
+  ///
+  /// That boundary covers a throw from [middleware] itself while it builds
+  /// its handler (the outer `(next) { ... }` body), not just one from the
+  /// handler it returns: `middleware(next)` is called here on every
+  /// dispatch, inside the same per-request `try`, precisely so a
+  /// construction-time throw is caught the same way a handler-time one is.
   ModularCli use(CliMiddleware middleware) {
     _root.use((next) {
-      final wrapped = middleware(next);
       return (req) async {
         try {
+          final wrapped = middleware(next);
           return await wrapped(req);
         } on CommandException catch (e) {
           return _emitCommandException(
