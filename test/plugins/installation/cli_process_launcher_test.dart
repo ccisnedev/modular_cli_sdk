@@ -21,9 +21,18 @@ import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 // worker is launched, not part of the public API, so they are not exported
 // from the public barrel above. This test still needs them, to check the
 // command line and the encoded script directly, so it reaches them through
-// the src path instead.
+// the src path instead. Round 6 finding 1's protocol-state filenames and its
+// two pure claim-attempt helpers are the same kind of implementation detail,
+// reached the same way.
 import 'package:modular_cli_sdk/src/plugins/installation/cli_process_launcher.dart'
-    show cleanupWorkerCmdCommandLine, cleanupWorkerEncodedBootstrapScript;
+    show
+        cleanupWorkerAbandonedMarkerFileName,
+        cleanupWorkerAcceptedMarkerFileName,
+        cleanupWorkerCmdCommandLine,
+        cleanupWorkerEncodedBootstrapScript,
+        cleanupWorkerReadyMarkerFileName,
+        pollForClaim,
+        tryClaimReadyMarker;
 import 'package:test/test.dart';
 
 /// Every directory directly under the system temp directory whose name
@@ -80,18 +89,61 @@ void main() {
       },
     );
 
-    test('retains a handle on the parent process before signalling ready', () {
-      expect(cleanupWorkerBootstrapScript, contains('GetProcessById'));
-      expect(cleanupWorkerBootstrapScript, contains(r'$parent.Handle'));
-      final markerIndex = cleanupWorkerBootstrapScript.indexOf(
-        '[System.IO.FileMode]::CreateNew',
-      );
-      final handleIndex = cleanupWorkerBootstrapScript.indexOf(
-        r'$parent.Handle',
-      );
-      expect(handleIndex, greaterThanOrEqualTo(0));
-      expect(markerIndex, greaterThan(handleIndex));
-    });
+    // Round 6 finding 2: PowerShell 5.1's own $parent.Handle property-getter
+    // syntax has been observed to return $null instead of throwing for an
+    // access-denied process, even under $ErrorActionPreference = 'Stop'.
+    // get_Handle(), the explicit method-call form of the same accessor, is
+    // what the worker uses instead, precisely so a failure to retain the
+    // handle cannot be missed this way.
+    test(
+      'retains a handle on the parent process, via the explicit '
+      'get_Handle() accessor rather than the Handle property, before '
+      'signalling ready',
+      () {
+        expect(cleanupWorkerBootstrapScript, contains('GetProcessById'));
+        expect(cleanupWorkerBootstrapScript, contains(r'$parent.get_Handle()'));
+        expect(
+          cleanupWorkerBootstrapScript,
+          isNot(contains(r'$parent.Handle')),
+        );
+        final markerIndex = cleanupWorkerBootstrapScript.indexOf(
+          '[System.IO.FileMode]::CreateNew',
+        );
+        final handleIndex = cleanupWorkerBootstrapScript.indexOf(
+          r'$parent.get_Handle()',
+        );
+        expect(handleIndex, greaterThanOrEqualTo(0));
+        expect(markerIndex, greaterThan(handleIndex));
+      },
+    );
+
+    // Round 6 finding 2: get_Handle() alone is not enough, since it is the
+    // same underlying accessor that can silently return $null; the worker
+    // must also explicitly reject a null or zero handle itself, before the
+    // ready marker exists, rather than trust a value that a null handle
+    // would let through unnoticed.
+    test(
+      'explicitly rejects a null or zero handle, before the ready marker '
+      'is created, rather than trusting whatever get_Handle() returned',
+      () {
+        expect(
+          cleanupWorkerBootstrapScript,
+          contains('[IntPtr]::Zero'),
+        );
+        expect(
+          cleanupWorkerBootstrapScript,
+          contains(r'$null -eq $handle'),
+        );
+        final validationIndex = cleanupWorkerBootstrapScript.indexOf(
+          '[IntPtr]::Zero',
+        );
+        final markerIndex = cleanupWorkerBootstrapScript.indexOf(
+          '[System.IO.FileMode]::CreateNew',
+        );
+        expect(validationIndex, greaterThanOrEqualTo(0));
+        expect(markerIndex, greaterThan(validationIndex));
+      },
+    );
 
     // Round 5 finding 1: GetProcessById throwing System.ArgumentException
     // means no such process exists, which is genuinely "the parent already
@@ -115,7 +167,7 @@ void main() {
           'catch [System.ArgumentException]',
         );
         final handleIndex = cleanupWorkerBootstrapScript.indexOf(
-          r'$parent.Handle',
+          r'$parent.get_Handle()',
         );
         expect(catchIndex, greaterThanOrEqualTo(0));
         expect(handleIndex, greaterThanOrEqualTo(0));
@@ -151,6 +203,101 @@ void main() {
       },
     );
 
+    // Round 6 finding 1: an absolute deadline alone does not prevent the
+    // race where the CLI is suspended right up to its own deadline, wakes
+    // up after it, reports failure and deletes the private directory,
+    // while a worker that created its marker in time goes on to delete the
+    // real target regardless. The protocol below decides that question
+    // with a single atomic rename instead of either side's clock: exactly
+    // one of the CLI (to accepted) and the worker itself (to abandoned) can
+    // ever win, since a rename of a source path that no longer exists
+    // fails.
+    test(
+      'reads its own copy of the CLI\'s absolute claim deadline from the '
+      'payload, separately from the marker-creation deadline',
+      () {
+        expect(cleanupWorkerBootstrapScript, contains('claimDeadlineUnixMs'));
+        expect(
+          cleanupWorkerBootstrapScript,
+          contains('markerDeadlineUnixMs'),
+        );
+      },
+    );
+
+    test(
+      'computes the accepted and abandoned marker paths as siblings of the '
+      'ready marker, named by the protocol\'s own state constants',
+      () {
+        expect(
+          cleanupWorkerBootstrapScript,
+          contains("Join-Path \$PrivateDir '$cleanupWorkerAcceptedMarkerFileName'"),
+        );
+        expect(
+          cleanupWorkerBootstrapScript,
+          contains("Join-Path \$PrivateDir '$cleanupWorkerAbandonedMarkerFileName'"),
+        );
+      },
+    );
+
+    test(
+      'claims abandonment through an atomic File.Move, only after the '
+      'ready marker was created, not instead of waiting for the CLI to '
+      'claim it first',
+      () {
+        expect(
+          cleanupWorkerBootstrapScript,
+          contains('[System.IO.File]::Move('),
+        );
+        final moveIndex = cleanupWorkerBootstrapScript.indexOf(
+          '[System.IO.File]::Move(',
+        );
+        final markerIndex = cleanupWorkerBootstrapScript.indexOf(
+          '[System.IO.FileMode]::CreateNew',
+        );
+        expect(moveIndex, greaterThan(markerIndex));
+      },
+    );
+
+    test(
+      'arms deletion only after actually observing the accepted marker, '
+      'both while still polling for it and after its own abandon rename '
+      'failed, never merely because that rename failed',
+      () {
+        final observations = RegExp(
+          r'Test-Path -LiteralPath \$AcceptedMarkerPath',
+        ).allMatches(cleanupWorkerBootstrapScript).length;
+        expect(
+          observations,
+          greaterThanOrEqualTo(2),
+          reason:
+              'once in the poll loop that notices the CLI winning first, '
+              'and again after a failed abandon rename, before arming '
+              'deletion on that path',
+        );
+      },
+    );
+
+    test(
+      'deletes its own private directory only once armed, after deleting '
+      'the target paths, so that responsibility never depends on the CLI '
+      'having already removed it before the worker could observe the '
+      'claim it won',
+      () {
+        final armedIndex = cleanupWorkerBootstrapScript.indexOf(
+          r'if ($armed) {',
+        );
+        final removeTargetIndex = cleanupWorkerBootstrapScript.indexOf(
+          r'Remove-Item -LiteralPath $path',
+        );
+        final removePrivateDirIndex = cleanupWorkerBootstrapScript.indexOf(
+          r'Remove-Item -LiteralPath $PrivateDir -Recurse',
+        );
+        expect(armedIndex, greaterThanOrEqualTo(0));
+        expect(removeTargetIndex, greaterThan(armedIndex));
+        expect(removePrivateDirIndex, greaterThan(removeTargetIndex));
+      },
+    );
+
     test('waits for the parent to exit before deleting anything', () {
       expect(cleanupWorkerBootstrapScript, contains('WaitForExit'));
       final waitIndex = cleanupWorkerBootstrapScript.indexOf('WaitForExit');
@@ -171,6 +318,170 @@ void main() {
       );
     });
   });
+
+  // Round 6 finding 1: these are the same two pure, synchronous primitives
+  // IoCliProcessLauncher.startCleanupWorker itself calls to decide the
+  // accept/abandon claim, exercised here directly against real files in a
+  // real temporary directory (no real subprocess, no real clock) so the two
+  // scenarios the coordinator asked for, a worker winning the claim and a
+  // worker losing it, are deterministic rather than dependent on real
+  // process-start timing.
+  group('tryClaimReadyMarker', () {
+    late io.Directory tempDir;
+
+    setUp(() {
+      tempDir = io.Directory.systemTemp.createTempSync('claim_unit_test_');
+    });
+
+    tearDown(() {
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+
+    test(
+      'renames the ready marker to accepted and returns true when it '
+      'exists',
+      () {
+        final readyPath = '${tempDir.path}${io.Platform.pathSeparator}ready';
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}accepted';
+        io.File(readyPath).createSync();
+
+        expect(tryClaimReadyMarker(readyPath, acceptedPath), isTrue);
+        expect(io.File(acceptedPath).existsSync(), isTrue);
+        expect(io.File(readyPath).existsSync(), isFalse);
+      },
+    );
+
+    test(
+      'returns false, creating nothing, when the ready marker was never '
+      'created',
+      () {
+        final readyPath = '${tempDir.path}${io.Platform.pathSeparator}ready';
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}accepted';
+
+        expect(tryClaimReadyMarker(readyPath, acceptedPath), isFalse);
+        expect(io.File(acceptedPath).existsSync(), isFalse);
+      },
+    );
+
+    test(
+      'loses the claim when the worker already renamed the ready marker '
+      'to abandoned first',
+      () {
+        final readyPath = '${tempDir.path}${io.Platform.pathSeparator}ready';
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}accepted';
+        final abandonedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}abandoned';
+        io.File(readyPath).createSync();
+        // Simulates the worker's own winning claim of abandonment: the
+        // exact rename the bootstrap script performs at its own deadline.
+        io.File(readyPath).renameSync(abandonedPath);
+
+        expect(tryClaimReadyMarker(readyPath, acceptedPath), isFalse);
+        expect(io.File(acceptedPath).existsSync(), isFalse);
+        expect(io.File(abandonedPath).existsSync(), isTrue);
+      },
+    );
+  });
+
+  group('pollForClaim', () {
+    late io.Directory tempDir;
+
+    setUp(() {
+      tempDir = io.Directory.systemTemp.createTempSync('poll_claim_test_');
+    });
+
+    tearDown(() {
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+
+    // This is the exact interleaving Codex's round 6 finding 1 described:
+    // the CLI is suspended right up to (here, past) its own deadline, and
+    // only resumes afterwards. A deadline check alone would give up without
+    // ever trying again; pollForClaim instead always attempts the claim at
+    // least once, so a marker the worker created in time is still won.
+    test(
+      'wins on its very first attempt even when its own clock already '
+      'reads past the deadline, so a CLI that resumes suspended past its '
+      'deadline still claims a marker the worker created in time',
+      () async {
+        final readyPath = '${tempDir.path}${io.Platform.pathSeparator}ready';
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}accepted';
+        io.File(readyPath).createSync();
+        final pastDeadline = DateTime.now().subtract(
+          const Duration(seconds: 1),
+        );
+
+        final claimed = await pollForClaim(
+          readyMarkerPath: readyPath,
+          acceptedMarkerPath: acceptedPath,
+          deadline: pastDeadline,
+          pollInterval: const Duration(milliseconds: 5),
+          now: DateTime.now,
+        );
+
+        expect(claimed, isTrue);
+        expect(io.File(acceptedPath).existsSync(), isTrue);
+      },
+    );
+
+    test(
+      'gives up once the deadline passes when the ready marker never '
+      'appears',
+      () async {
+        final readyPath = '${tempDir.path}${io.Platform.pathSeparator}ready';
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}accepted';
+
+        final claimed = await pollForClaim(
+          readyMarkerPath: readyPath,
+          acceptedMarkerPath: acceptedPath,
+          deadline: DateTime.now().add(const Duration(milliseconds: 30)),
+          pollInterval: const Duration(milliseconds: 5),
+          now: DateTime.now,
+        );
+
+        expect(claimed, isFalse);
+        expect(io.File(acceptedPath).existsSync(), isFalse);
+      },
+    );
+
+    test(
+      'gives up when the worker wins the claim first, even though the '
+      'ready marker briefly existed',
+      () async {
+        final readyPath = '${tempDir.path}${io.Platform.pathSeparator}ready';
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}accepted';
+        final abandonedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}abandoned';
+        io.File(readyPath).createSync();
+        io.File(readyPath).renameSync(abandonedPath);
+
+        final claimed = await pollForClaim(
+          readyMarkerPath: readyPath,
+          acceptedMarkerPath: acceptedPath,
+          deadline: DateTime.now().add(const Duration(milliseconds: 30)),
+          pollInterval: const Duration(milliseconds: 5),
+          now: DateTime.now,
+        );
+
+        expect(claimed, isFalse);
+        expect(io.File(acceptedPath).existsSync(), isFalse);
+      },
+    );
+  });
+
+  test(
+    'cleanupWorkerReadyMarkerFileName is the fixed literal the CLI and the '
+    'worker both build the ready marker\'s path from',
+    () {
+      expect(cleanupWorkerReadyMarkerFileName, 'ready');
+    },
+  );
 
   group('cleanupWorkerEncodedBootstrapScript', () {
     test('is the fixed bootstrap script Base64-encoded as UTF-16LE', () {
@@ -533,9 +844,19 @@ Future<void> main(List<String> args) async {
       timeout: const Timeout(Duration(seconds: 40)),
     );
 
+    // Round 6 finding 1: once the CLI's claim rename succeeds, cleaning up
+    // the private directory immediately, the way startCleanupWorker used
+    // to, races the worker's own, still-pending, first look at the accepted
+    // marker; a private directory deleted out from under that look is
+    // indistinguishable, to the worker, from the CLI never having claimed
+    // it at all, and the worker would wrongly conclude it lost and never
+    // delete the real target. Ownership of the private directory therefore
+    // moves to the worker itself on this path: it removes it only once it
+    // has actually finished deleting the target paths it was given, never
+    // before.
     test(
-      'leaves no private directory behind once the worker has confirmed '
-      'ready',
+      'leaves no private directory behind once the worker has finished '
+      'deleting the target paths it was given',
       () async {
         final tempDir = io.Directory.systemTemp.createTempSync(
           'cleanup_worker_artifact_test_',
@@ -564,13 +885,28 @@ Future<void> main(List<String> args) async {
             'timeoutMs': 60000,
           });
 
+          // The worker has claimed the run, but the parent it is waiting on
+          // is still alive: neither the target nor the private directory
+          // has been touched yet.
+          await Future<void>.delayed(const Duration(seconds: 1));
+          expect(io.File(targetPath).existsSync(), isTrue);
+
+          parent.kill();
+          await parent.exitCode;
+
+          final deadline = DateTime.now().add(const Duration(seconds: 20));
+          while (io.File(targetPath).existsSync() &&
+              DateTime.now().isBefore(deadline)) {
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+          }
+          expect(io.File(targetPath).existsSync(), isFalse);
+
           expect(
             _existingCleanupPrivateDirs(),
             before,
             reason:
-                'the private directory created for the ready marker must be '
-                'removed once startCleanupWorker has seen the worker '
-                'confirm ready',
+                'the worker must remove its own private directory once it '
+                'has finished deleting the target paths it was given',
           );
         } finally {
           try {
@@ -586,7 +922,7 @@ Future<void> main(List<String> args) async {
       timeout: const Timeout(Duration(seconds: 40)),
     );
 
-    // Round 5 finding 1.
+    // Round 5 finding 1, corrected by round 6 finding 2.
     test(
       'a parent process the worker cannot get a handle on (as opposed to '
       'one that does not exist) stops the worker before it creates the '
@@ -596,22 +932,29 @@ Future<void> main(List<String> args) async {
         // pid 4 is the Windows kernel's own "System" process: a real,
         // always-running pid, so GetProcessById(4) itself succeeds and this
         // is not the "no such process" ArgumentException case finding 1
-        // also has to tell apart. Reading .Handle on the resulting Process
-        // object is what is expected to throw. If this environment's token
-        // can retain a handle on it after all, the premise this test needs
-        // does not hold here, and it skips with that reason rather than
-        // asserting a behaviour it cannot actually provoke.
+        // also has to tell apart. get_Handle() (round 6 finding 2's fix,
+        // not the bare .Handle property, which can return $null instead of
+        // throwing here) is expected to return null or a zero handle. If
+        // this environment's token can retain a non-zero handle on it after
+        // all, the premise this test needs does not hold here, and it skips
+        // with that reason rather than asserting a behaviour it cannot
+        // actually provoke.
         final probe = await io.Process.run('powershell', [
           '-NoProfile',
           '-NonInteractive',
           '-Command',
-          r'try { $null = ([System.Diagnostics.Process]::GetProcessById(4)).Handle; "handle-ok" } catch { "handle-denied" }',
+          r'try { '
+              r'$h = ([System.Diagnostics.Process]::GetProcessById(4)).get_Handle(); '
+              r'if ($null -eq $h -or $h -eq [IntPtr]::Zero) { "handle-denied" } '
+              r'else { "handle-ok" } '
+              r'} catch { "handle-denied" }',
         ]);
         if (probe.stdout.toString().trim() != 'handle-denied') {
           markTestSkipped(
-            'this environment\'s token can retain a Process.Handle on pid '
-            '4 (the System process), so it cannot reproduce the '
-            'access-denied case this test needs: ${probe.stdout}',
+            'this environment\'s token can retain a non-zero '
+            'Process.get_Handle() on pid 4 (the System process), so it '
+            'cannot reproduce the access-denied case this test needs: '
+            '${probe.stdout}',
           );
           return;
         }
@@ -660,6 +1003,20 @@ Future<void> main(List<String> args) async {
 
         final before = _existingCleanupPrivateDirs();
 
+        // A genuine, already-exited short-lived process, not this test
+        // runner's own pid (round 6 finding 1): the assertion below that
+        // the target still exists is only meaningful proof that deletion
+        // was never armed if the watched parent has definitely already
+        // exited by the time it runs, rather than merely being this still
+        // very much alive test process.
+        final shortLivedParent = await io.Process.start('cmd', [
+          '/c',
+          'exit',
+          '0',
+        ]);
+        final shortLivedParentPid = shortLivedParent.pid;
+        await shortLivedParent.exitCode;
+
         // A safety margin almost as large as the startup timeout itself
         // leaves the worker only a few milliseconds, from launch, to
         // create its marker: nowhere near enough for a real powershell.exe
@@ -675,7 +1032,7 @@ Future<void> main(List<String> args) async {
 
         await expectLater(
           launcher.startCleanupWorker({
-            'parentPid': io.pid,
+            'parentPid': shortLivedParentPid,
             'paths': [targetPath],
             'timeoutMs': 60000,
           }),
@@ -708,65 +1065,18 @@ Future<void> main(List<String> args) async {
       timeout: const Timeout(Duration(seconds: 40)),
     );
 
-    // Round 5 finding 4: the two tests below use _FailingCleanupDirectory
-    // Launcher's deletePrivateDirectory seam to provoke a real private
-    // directory cleanup failure deterministically, since nothing portable
-    // lets a test make a real deleteSync fail at exactly this point
-    // otherwise.
-    test(
-      'returns a warning naming the private directory and the error when '
-      'cleanup of it fails after the worker confirms ready',
-      () async {
-        final tempDir = io.Directory.systemTemp.createTempSync(
-          'cleanup_worker_dir_warning_test_',
-        );
-        addTearDown(() {
-          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-        });
-        final targetPath =
-            '${tempDir.path}${io.Platform.pathSeparator}victim.txt';
-        io.File(targetPath).writeAsStringSync('gone soon');
-
-        final parent = await io.Process.start('powershell', [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          'Start-Sleep -Seconds 60',
-        ]);
-
-        try {
-          final launcher = _FailingCleanupDirectoryLauncher(
-            Exception('directory busy'),
-          );
-          final warning = await launcher.startCleanupWorker({
-            'parentPid': parent.pid,
-            'paths': [targetPath],
-            'timeoutMs': 60000,
-          });
-
-          expect(warning, isNotNull);
-          expect(warning, contains('directory busy'));
-          expect(warning, contains('cli_cleanup_'));
-
-          // The primary outcome (the worker did confirm ready) is still
-          // what happened: the target still exists only because the
-          // parent process above is still alive, not because anything
-          // failed to schedule.
-          expect(io.File(targetPath).existsSync(), isTrue);
-        } finally {
-          try {
-            parent.kill();
-          } on Object {
-            // Already gone; nothing left to clean up.
-          }
-        }
-      },
-      skip: io.Platform.isWindows
-          ? false
-          : 'launches a real Windows PowerShell cleanup worker',
-      timeout: const Timeout(Duration(seconds: 40)),
-    );
-
+    // Round 5 finding 4 introduced a warning startCleanupWorker returned on
+    // success if its own attempt to remove the private directory failed.
+    // Round 6 finding 1 removed that attempt entirely: cleaning up the
+    // private directory immediately after a successful claim is exactly
+    // the race that let the CLI's report and the worker's own later
+    // decision disagree, so that responsibility now belongs to the worker
+    // alone on the success path (see "leaves no private directory behind
+    // once the worker has finished..." above), and startCleanupWorker
+    // itself never attempts, or reports on, that removal anymore. Only the
+    // failure path below, where deletePrivateDirectoryLauncher's seam is
+    // still the only portable way to provoke a real cleanup failure
+    // deterministically, remains.
     test(
       'a launch failure names a cleanup-directory failure in its own '
       'message when both fail',
@@ -848,10 +1158,9 @@ Future<void> main(List<String> args) async {
 /// A real [IoCliProcessLauncher] whose [deletePrivateDirectory] seam always
 /// throws [cleanupError] in place of actually removing the private
 /// directory. Overriding this one method, rather than the whole class,
-/// exercises startCleanupWorker's own handling of a real cleanup failure
-/// (a warning on success, folded into the thrown
-/// [CliCleanupWorkerStartFailure]'s message on failure) through the real
-/// adapter, since nothing portable lets a test provoke a real
+/// exercises startCleanupWorker's own handling of a real cleanup failure,
+/// folded into the thrown [CliCleanupWorkerStartFailure]'s message, through
+/// the real adapter, since nothing portable lets a test provoke a real
 /// directory-deletion failure at exactly this point otherwise. Production
 /// code never overrides this.
 class _FailingCleanupDirectoryLauncher extends IoCliProcessLauncher {
