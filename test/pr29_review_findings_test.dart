@@ -338,6 +338,131 @@ ModularCli _buildSuggestCli() {
   return cli;
 }
 
+// ── Finding 7 (second review) fixture: every router rejection kind, plus
+//    validation-failed, each triggered through the smallest possible
+//    invocation, under --json ───────────────────────────────────────────
+
+class _EchoInput extends Input {
+  _EchoInput({required this.a, required this.b});
+  final int a;
+  final int b;
+
+  static final contract = CliContract(
+    options: [
+      CliParam.integer(
+        'a',
+        abbr: null,
+        required: true,
+        repeatable: false,
+        defaultValue: null,
+        description: 'First operand',
+      ),
+      CliParam.integer(
+        'b',
+        abbr: null,
+        required: true,
+        repeatable: false,
+        defaultValue: null,
+        description: 'Second operand',
+      ),
+    ],
+  );
+
+  factory _EchoInput.fromCliRequest(CliRequest req) =>
+      _EchoInput(a: req.flagInt('a')!, b: req.flagInt('b')!);
+
+  @override
+  Map<String, dynamic> toJson() => {'a': a, 'b': b};
+}
+
+class _EchoOutput extends Output {
+  _EchoOutput(this.sum);
+  final int sum;
+
+  @override
+  Map<String, dynamic> toJson() => {'sum': sum};
+
+  @override
+  int get exitCode => ExitCode.ok;
+}
+
+class _EchoQuery implements Query<_EchoInput, _EchoOutput> {
+  _EchoQuery(this.input);
+
+  @override
+  final _EchoInput input;
+
+  @override
+  String? validate() => null;
+
+  @override
+  Future<_EchoOutput> execute() async => _EchoOutput(input.a + input.b);
+}
+
+class _RecordInput extends Input {
+  _RecordInput({required this.id, required this.verbose});
+  final int id;
+  final bool verbose;
+
+  static final contract = CliContract(
+    positionals: [CliPositional.integer('id', required: true)],
+    options: [CliParam.flag('verbose', abbr: null, repeatable: false)],
+  );
+
+  factory _RecordInput.fromCliRequest(CliRequest req) => _RecordInput(
+    id: req.positionalInt('id')!,
+    verbose: req.flagBool('verbose'),
+  );
+
+  @override
+  Map<String, dynamic> toJson() => {'id': id, 'verbose': verbose};
+}
+
+class _RecordOutput extends Output {
+  _RecordOutput(this.id);
+  final int id;
+
+  @override
+  Map<String, dynamic> toJson() => {'id': id};
+
+  @override
+  int get exitCode => ExitCode.ok;
+}
+
+class _RecordQuery implements Query<_RecordInput, _RecordOutput> {
+  _RecordQuery(this.input);
+
+  @override
+  final _RecordInput input;
+
+  @override
+  String? validate() => null;
+
+  @override
+  Future<_RecordOutput> execute() async => _RecordOutput(input.id);
+}
+
+ModularCli _buildRejectionMatrixCli() {
+  final cli = ModularCli(suggestionDistance: 2);
+  cli.module('math', (m) {
+    m.query<_EchoInput, _EchoOutput>(
+      'add',
+      (req) => _EchoQuery(_EchoInput.fromCliRequest(req)),
+      globals: true,
+      description: 'Add two integers',
+      contract: _EchoInput.contract,
+    );
+  });
+  cli.query<_RecordInput, _RecordOutput>(
+    'show <id>',
+    (req) => _RecordQuery(_RecordInput.fromCliRequest(req)),
+    globals: true,
+    description: 'Show one record',
+    contract: _RecordInput.contract,
+  );
+  return cli;
+}
+
 // ── Test harness shared by every group ────────────────────────────────────
 
 Future<({int exitCode, String stdout, String stderr})> _runWith(
@@ -410,6 +535,36 @@ void main() {
       expect(result.exitCode, equals(ExitCode.ok));
       expect(result.stdout, contains('source: program'));
     });
+
+    // The target's own contract (_RpnInput.constraintContract) declares
+    // --file and --stdin, plus ExactlyOne(['program', 'file', 'stdin']).
+    // The shortcut's contract (built from CliContract.none) declares
+    // neither: only the derived `program` positional. Supplying `--file`
+    // tells the two apart. Dispatched under the target's wider contract,
+    // --file would be a route-local option the router accepts outright;
+    // dispatched under the shortcut's own, narrower contract (the fixed
+    // behavior), the router itself refuses it as belonging to a
+    // different route (`eval rpn`, still visible to `cli_router` in the
+    // wider trie) rather than to this one, `CliRejectionKind
+    // .misplacedOption`. A bare positional alone satisfies either
+    // contract, which is exactly why the test above cannot tell them
+    // apart; this one can, because only one of the two contracts
+    // declares --file at all.
+    test(
+      "an option the target declares but the shortcut's own contract "
+      "does not is refused as belonging to a different route, proving "
+      "the shortcut's own contract ran, not the wider target one",
+      () async {
+        final result = await _runWith(_buildShortcutCli(), [
+          '--file',
+          '1 2 +',
+        ]);
+
+        expect(result.exitCode, equals(ExitCode.validationFailed));
+        expect(result.stderr, contains("belongs to 'eval rpn'"));
+        expect(result.stderr, isNot(contains('Choose one of')));
+      },
+    );
 
     test(
       'globals: false rejects a global option the target itself accepts',
@@ -861,6 +1016,116 @@ void main() {
       expect(result.stderr, contains("Did you mean 'show'?"));
     });
   });
+
+  // ── Finding 7 (second review): every router rejection id, plus
+  //    validation-failed, asserted as an exact --json envelope ────────────
+  //
+  // Placement of --json in each case's args matters: `cli_router` only
+  // accepts a global option at a position where the very next token does
+  // not itself continue a still-reachable literal route (spec 8.2 rule a).
+  // Put plainly, --json cannot precede a route word it has not resolved
+  // yet, or it is rejected as misplacedOption itself, before the case's
+  // own intended rejection is ever reached. `--json bogus` is the one
+  // exception: 'bogus' matches no literal child of the root at all, so it
+  // never counts as "continuing a route", and --json there is read
+  // immediately. Every other case places --json right after the full
+  // route-word sequence (`math add`, `show`) once resolution has already
+  // committed to that route, which is always a safe position.
+  group(
+    'finding 7 (second review): every rejection id under --json',
+    () {
+      final cases = <String, ({List<String> args, String id, int exitCode})>{
+        'unknown-command': (
+          args: ['--json', 'bogus'],
+          id: 'unknown-command',
+          exitCode: ExitCode.invalidUsage,
+        ),
+        'incomplete-command': (
+          args: ['math', '--json'],
+          id: 'incomplete-command',
+          exitCode: ExitCode.invalidUsage,
+        ),
+        'missing-argument': (
+          args: ['show', '--json'],
+          id: 'missing-argument',
+          exitCode: ExitCode.invalidUsage,
+        ),
+        'extra-argument': (
+          args: ['show', '--json', '1', '2'],
+          id: 'extra-argument',
+          exitCode: ExitCode.invalidUsage,
+        ),
+        'unknown-option': (
+          args: ['math', 'add', '--json', '--nope'],
+          id: 'unknown-option',
+          exitCode: ExitCode.validationFailed,
+        ),
+        'misplaced-option': (
+          args: ['show', '--json', '1', '--verbose'],
+          id: 'misplaced-option',
+          exitCode: ExitCode.validationFailed,
+        ),
+        'missing-required-option': (
+          args: ['math', 'add', '--json', '--b', '3'],
+          id: 'missing-required-option',
+          exitCode: ExitCode.validationFailed,
+        ),
+        'repeated-option': (
+          args: [
+            'math',
+            'add',
+            '--json',
+            '--a',
+            '1',
+            '--a',
+            '2',
+            '--b',
+            '3',
+          ],
+          id: 'repeated-option',
+          exitCode: ExitCode.validationFailed,
+        ),
+        'invalid-short-option': (
+          args: ['math', 'add', '--json', '-xy'],
+          id: 'invalid-short-option',
+          exitCode: ExitCode.validationFailed,
+        ),
+        'missing-value': (
+          args: ['math', 'add', '--json', '--a'],
+          id: 'missing-value',
+          exitCode: ExitCode.validationFailed,
+        ),
+        'unexpected-value': (
+          args: ['show', '--json', '--verbose=yes', '1'],
+          id: 'unexpected-value',
+          exitCode: ExitCode.validationFailed,
+        ),
+        'validation-failed': (
+          args: ['math', 'add', '--json', '--a', 'nope', '--b', '3'],
+          id: 'validation-failed',
+          exitCode: ExitCode.validationFailed,
+        ),
+      };
+
+      for (final entry in cases.entries) {
+        test(entry.key, () async {
+          final expected = entry.value;
+          final result = await _runWith(
+            _buildRejectionMatrixCli(),
+            expected.args,
+          );
+
+          expect(result.exitCode, equals(expected.exitCode));
+          final envelope = jsonDecode(result.stderr) as Map<String, dynamic>;
+          final error = envelope['error'] as Map<String, dynamic>;
+          expect(error['id'], equals(expected.id));
+          expect(error['exitCode'], equals(expected.exitCode));
+          expect(error['message'], isA<String>());
+          expect((error['message'] as String).isNotEmpty, isTrue);
+        });
+      }
+    },
+  );
 }
 
 class _TestSink implements IOSink {
