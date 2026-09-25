@@ -286,14 +286,25 @@ class IoCliFileSystem implements CliFileSystem {
     if (canonicalize(a) == canonicalize(b)) return true;
     // canonicalize only resolves symlinks; two hard-linked paths have no
     // symlink between them to resolve and so canonicalize to two different
-    // strings despite sharing the same inode. identicalSync checks that
-    // directly.
-    try {
-      return io.FileSystemEntity.identicalSync(a, b);
-    } on io.FileSystemException {
-      return false;
-    }
+    // strings despite sharing the same inode. identicalFiles checks that
+    // directly. A failure there (identicalSync can throw, e.g. on a
+    // permission error) is let through rather than folded into false: a
+    // caller that cannot tell whether the paths are the same file must be
+    // told that, not handed a false "different files" that turns a
+    // hard-linked alias, or one that could not be checked at all, into
+    // "no issue".
+    return identicalFiles(a, b);
   }
+
+  /// Whether [a] and [b] name the same inode, per [io.FileSystemEntity]'s
+  /// own [io.FileSystemEntity.identicalSync]. Exposed as its own overridable
+  /// method purely as a test seam: a subclass in a test can override this to
+  /// throw on demand, which is the only way to exercise [sameFile]'s
+  /// propagation of an identity-check failure, since nothing in `dart:io`
+  /// lets a test provoke an identicalSync failure at this exact point
+  /// otherwise. Production code never overrides this.
+  bool identicalFiles(String a, String b) =>
+      io.FileSystemEntity.identicalSync(a, b);
 
   @override
   bool isRegularFile(String path) =>
