@@ -325,9 +325,47 @@ actual command line — an option can never follow an operand. `notes write
 --plan today` parses; `notes write today --plan` is rejected. The `Usage:`
 line the SDK renders is written in that same order.
 
-`shortcut()` and `suggest()` — a route responding to an abbreviated or
-misspelled invocation — are **not** part of this release. `cli_router` 0.2.0
-has no such API either; there is nothing for the SDK to call yet.
+**A `CliPositional`'s declaration must match its route pattern.** `show <id>`
+requires a `CliPositional` named `id`; `[<name>]` — a trailing optional
+segment — requires one declared `required: false`. A missing, extra,
+misnamed or wrongly-required/optional positional is an `ArgumentError` at
+registration, before the route can ever be dispatched to.
+
+**`shortcut()`** declares a route that runs *another* route's handler under a
+narrower contract:
+
+```dart
+cli.shortcut(
+  '<program>',
+  target: 'eval rpn',
+  globals: false,
+  contract: CliContract(
+    positionals: [CliPositional.string('program', required: true)],
+  ),
+  description: 'Shorthand for `eval rpn <program>`',
+);
+```
+
+`mycli '1 2 +'` then runs the same handler as `mycli eval rpn '1 2 +'`, but
+through its own, narrower contract — here, with `globals: false`, none of the
+SDK's global options (`--plan`, `--apply`, `--json`, …) are accepted on the
+shortcut itself. `target` must already be registered; registering a shortcut
+to a route that does not exist is an `ArgumentError`. Like every other
+registration call, `globals` is required — there is no default that would
+silently decide it for you.
+
+**`suggest()`** answers "did you mean?" over the command catalog:
+
+```dart
+final closest = cli.suggest('shwo'); // → 'show'
+```
+
+It compares `word` against the catalog's route vocabulary by restricted edit
+distance (Levenshtein plus one adjacent-transposition operation), returns the
+closest match within `maxDistance` (default `2`, ties broken by catalog
+registration order), or `null` if nothing is close enough. The SDK calls it
+itself on an `unknownCommand`/`incomplete` rejection, so `mycli commands shwo
+power` suggests `show` on stderr.
 
 Help is a **success**, not an error:
 

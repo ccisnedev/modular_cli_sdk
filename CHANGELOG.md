@@ -8,15 +8,38 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 Built against `cli_router: { path: ../cli_router-0.2.0 }` — the constraint
 must become `cli_router: ^0.2.0` once that release is published to pub.dev.
-This entry is written against the API `cli_router` 0.2.0 carries as of this
-release; no bug or missing API was found in it while building this one.
+This entry is written against the API `cli_router` 0.2.0 carries as of commit
+`0f28e32`: `abbr` is required on every `OptionSpec`, `mount()` requires equal
+`globalOptions` on both routers, and a bare `--` after an operand is
+rejected. No bug or missing API was found in it while building this one.
 
 ### Added
 
 - **`CliPositional`** — a declared positional argument (`.string`, `.integer`,
   `.number`), distinct from `CliParam` because it has no `--name`, no
   abbreviation and no repeatability. Renders in help and is enforced exactly
-  like an option
+  like an option. `required` is a mandatory, no-default `bool`: a route
+  pattern's trailing `[<name>]` segment is declared with `required: false`,
+  and registration cross-checks the contract's positionals against the
+  pattern's — a missing, extra, misnamed, duplicated, or wrongly-required/
+  optional positional declaration is an `ArgumentError` at registration time,
+  not a silent pass-through at dispatch
+- **`ModularCli.shortcut(pattern, {target, globals, contract, description})`**
+  — a declared route that runs another route's handler under a narrower
+  contract (issue #27 section 4). `target` names the route it dispatches to
+  by its router pattern (e.g. `'eval rpn'`); registration fails with an
+  `ArgumentError` if `target` is not already registered. Like every other
+  registration call, `globals` has no default — a shortcut states explicitly
+  whether the SDK's global options (`--plan`, `--apply`, `--json`, …) are
+  accepted on it
+- **`CommandCatalog.suggest(word, {maxDistance = 2})`** (issue #27 section 6)
+  — the closest word in the catalog's route vocabulary to `word`, by
+  restricted edit distance (Levenshtein plus one adjacent-transposition
+  operation, i.e. Damerau-Levenshtein limited to non-overlapping
+  transpositions), `<= maxDistance`; ties are broken by catalog registration
+  order; returns `null` when nothing is within range. Wired into
+  `unknownCommand` and `incomplete` rejections, so `commands shwo power`
+  suggests `show`
 - **`CliContract`** — the full declared shape of a route's arguments:
   `options` (`CliParam`), `positionals` (`CliPositional`) and `constraints`
   (`CliConstraint`), replacing the bare `List<CliParam>? params`.
@@ -58,10 +81,11 @@ release; no bug or missing API was found in it while building this one.
   reserved surface that predated `CliContract`; a route's `Input` now exposes
   its contract as a `static final contract`, read by the registration call,
   not by an interface member every `Input`/`Output` had to carry
-- **A positional always renders a `required` facet in help text.** There is
-  no way to declare an optional positional — the route pattern's
-  `<placeholder>` either exists or it does not — so unlike an option, a
-  positional's help entry does not distinguish required from optional
+- **A positional can be optional.** A route pattern's trailing `[<name>]`
+  segment is declared with a `CliPositional(required: false)`; help renders
+  `Usage: eval rpn [options] [<program>]`, with the bracket and the
+  "required"/"optional" facet both taken from the pattern and the
+  declaration, not hand-rolled
 - **The JSON error envelope's `error` field is now a machine-readable code,
   never a raw message.** A router-level rejection (unknown command, missing
   required option, …) previously surfaced under `--json` as `{"error":
@@ -84,11 +108,42 @@ release; no bug or missing API was found in it while building this one.
   positional on the actual command line (an option can never follow an
   operand); the old order documented an invocation the router would reject
 
-### Deferred
+### Fixed
 
-- **`shortcut()` and `suggest()`** — a route responding to an abbreviated or
-  misspelled invocation, from the plugin-system discussion in issue #28 — are
-  **not** part of this release. `cli_router` 0.2.0 has no such API either
+- **A constraint (`ExactlyOne`, `MutuallyExclusive`) now counts a bound
+  positional by name, the same as an option.** Previously only option
+  presence was checked, so `eval rpn '1 2 +'` (the positional alone) ran
+  unconstrained while `eval rpn --stdin '1 2 +'` was correctly rejected by
+  `ExactlyOne(['program', 'file', 'stdin'])`; both are rejected now, and
+  supplying both a flag and the positional is caught as the two-members-
+  present violation it always was
+- **Every occurrence of a repeatable option is validated**, not just the
+  first — `repeat --count 1 --count bad` is now a validation failure instead
+  of silently accepting the first value and ignoring the rest
+- **A `DeclaredDefault` is checked against its own declaration.** An
+  enumeration's default that is not one of its `values` is an
+  `ArgumentError` at registration time; a `mustExist`-constrained path's
+  default is validated before dispatch exactly like a value the caller
+  supplied, instead of bypassing the filesystem check because nothing was
+  typed
+- **A route is identified consistently by the router's `CliRoute`** (its
+  pattern and literal words) everywhere the SDK looks one up. Previously the
+  catalog derived a route's identity from its own contract-formatted string
+  (`eval rpn [<program>]` → name `eval rpn []`), which diverged from what the
+  router reports (`eval rpn`) and broke `help eval rpn`, the module-help
+  fallback shown for `eval rpn --help` alongside a missing required option,
+  and the `contract`/`details` fields of a JSON error for any route with a
+  positional segment
+- **The "is not a complete command" rewrite only applies to an actual
+  `incomplete` rejection.** `eval --json --bogus` previously kept the kind
+  `unknownOption` but relabelled the message as "'eval' is not a complete
+  command"; every rejection kind other than `incomplete` now keeps the
+  router's own message, even when it occurs under a prefix that is itself
+  incomplete
+- **`cli.module('', (m) { ... })` no longer throws.** Mounting a prefix
+  requires exactly one literal word in `cli_router`'s grammar, so an
+  empty-name module's routes are registered directly on the root router
+  instead of being mounted
 
 ### Notes
 
