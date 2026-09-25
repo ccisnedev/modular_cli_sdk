@@ -34,20 +34,29 @@ rejected. No bug or missing API was found in it while building this one.
   shortcut never declares its own positionals: they are derived from
   `target`'s own declaration, by name, and rebound to whichever cardinality
   `pattern` itself gives them: declaring one directly in `contract` is an
-  `ArgumentError`. `contract` is optional and defaults to `CliContract.none`,
-  so issue #27's own example, `shortcut('<program>', target: 'eval rpn',
-  globals: false)`, works with no `contract:` argument at all. Like every
-  other registration call, `globals` has no default: a shortcut states
-  explicitly whether the SDK's global options (`--plan`, `--apply`, `--json`,
-  and so on) are accepted on it
-- **`CommandCatalog.suggest(word, {maxDistance = 2})`** (issue #27 section 6):
+  `ArgumentError`. `contract` is required, with no default, like every other
+  registration call on this SDK (`CliContract.none` for a shortcut that
+  declares nothing itself; issue #27's own example now reads
+  `shortcut('<program>', target: 'eval rpn', globals: false, contract:
+  CliContract.none)`). When `target` is a `Command`, `contract` gains
+  `ChangeFlags.params` regardless, the same way `command()` itself always
+  gains them, so a shortcut to a command still demands `--plan` or `--apply`
+  exactly as the target does, instead of `cli_router` rejecting either as an
+  undeclared option. Like every other registration call, `globals` has no
+  default: a shortcut states explicitly whether the SDK's global options
+  (`--plan`, `--apply`, `--json`, and so on) are accepted on it
+- **`CommandCatalog.suggest(word, {required maxDistance})`** (issue #27
+  section 6):
   the closest word in the catalog's route vocabulary to `word`, by
   restricted edit distance (Levenshtein plus one adjacent-transposition
   operation, i.e. Damerau-Levenshtein limited to non-overlapping
   transpositions), `<= maxDistance`; ties are broken by catalog registration
   order; returns `null` when nothing is within range. Wired into
   `unknownCommand` and `incomplete` rejections, so `commands shwo power`
-  suggests `show`
+  suggests `show`. `maxDistance` is required, with no default: the catalog
+  has no distance of its own to fall back to, and `ModularCli` (the usual
+  caller) always threads its own configured `suggestionDistance` through
+  explicitly
 - **`CliContract`**: the full declared shape of a route's arguments:
   `options` (`CliParam`), `positionals` (`CliPositional`) and `constraints`
   (`CliConstraint`), replacing the bare `List<CliParam>? params`.
@@ -148,6 +157,23 @@ rejected. No bug or missing API was found in it while building this one.
 
 ### Fixed
 
+- **A `--apply`'s approval refusal and a step failure are now structured
+  errors, under `--json` too.** `_carryOut()` previously wrote a refused
+  approval as a plain success-shaped object via `writeObject` and a step
+  failure as a raw `! <message>` line on stderr, bypassing the structured
+  error envelope entirely. Both now go through `CliOutput.writeError`: a
+  refusal is `id: 'approval-refused'` with the refusal reason carried as a
+  `details.reason`; a step failure reuses the thrown `CommandException`'s
+  own `id` and `exitCode` when the step threw one directly, or is wrapped
+  under a fixed `id: 'step-failed'` otherwise. The exit code `_carryOut`
+  returns is now always the written exception's own `exitCode`, not a
+  separate computation that could drift from it
+- **A middleware registered through `ModularCli.use()` that throws a
+  `CommandException` no longer escapes `run()`.** Each middleware now runs
+  inside its own error boundary: a thrown `CommandException` is caught and
+  turned into the same structured error envelope a failed command or a
+  rejected invocation produces, honoring the resolved request's `--json`
+  mode, instead of propagating out of `run()` as an uncaught exception
 - **A constraint (`ExactlyOne`, `MutuallyExclusive`) now counts a bound
   positional by name, the same as an option.** Previously only option
   presence was checked, so `eval rpn '1 2 +'` (the positional alone) ran

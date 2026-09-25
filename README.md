@@ -151,6 +151,13 @@ A command that builds no steps has nothing to approve, so nobody is asked:
 change at all is noise on a terminal, and on a run without one it failed an
 invocation that had nothing to fail at.
 
+A refused approval and a step failure are both reported the same way every
+other error is (see [Error handling](#error-handling)): a refusal is written
+with `id: 'approval-refused'` and the refusal reason as `details.reason`; a
+step failure reuses the thrown `CommandException`'s own `id` and `exitCode`
+when the step threw one directly, or is wrapped under `id: 'step-failed'`
+otherwise. Neither bypasses the structured envelope, under `--json` or not.
+
 Note what `describe` does **not** carry: no `planPath`, no `blocked`, no
 `message`. Those describe the gate, and the gate is the SDK's.
 
@@ -371,10 +378,15 @@ final closest = cli.suggest('shwo'); // → 'show'
 
 It compares `word` against the catalog's route vocabulary by restricted edit
 distance (Levenshtein plus one adjacent-transposition operation), returns the
-closest match within `maxDistance` (default `2`, ties broken by catalog
-registration order), or `null` if nothing is close enough. The SDK calls it
-itself on an `unknownCommand`/`incomplete` rejection, so `mycli commands shwo
-power` suggests `show` on stderr.
+closest match within `maxDistance` (ties broken by catalog registration
+order), or `null` if nothing is close enough. `cli.suggest()` uses the CLI's
+own `suggestionDistance` (required on `ModularCli(...)`, no default) unless a
+call passes `maxDistance` to override it for that one call.
+`CommandCatalog.suggest(word, {required maxDistance})`, the lower-level call
+a `CommandCatalog` is read through directly, requires `maxDistance`
+explicitly every time: the catalog has no distance of its own to fall back
+to. The SDK calls `cli.suggest()` itself on an `unknownCommand`/`incomplete`
+rejection, so `mycli commands shwo power` suggests `show` on stderr.
 
 Help is a **success**, not an error:
 
@@ -496,7 +508,16 @@ router-level rejection's `id` comes from a fixed table, one entry per
 A contract violation the SDK itself enforces (a required option missing, a
 value of the wrong type, an allow-list mismatch, a failed `CliConstraint`)
 raises a `CommandException` with `id: 'validation-failed'` (the one `id`
-this table does not list, because it is not a router rejection).
+this table does not list, because it is not a router rejection). A refused
+`--apply` approval and a step failure with nothing more specific of its own
+to report are two more such SDK-raised ids not in the table, above:
+`approval-refused` and `step-failed` (see [Commands that say what they would
+do](#commands-that-say-what-they-would-do)).
+
+A middleware registered through `ModularCli.use()` runs inside its own error
+boundary: a `CommandException` it throws is caught there and turned into this
+same envelope, honoring the resolved request's `--json` mode, instead of
+escaping `run()` as an uncaught exception.
 
 ---
 
