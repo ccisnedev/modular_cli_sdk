@@ -78,6 +78,45 @@ ModularCli _buildShortcutValidationCli() {
   return cli;
 }
 
+// ── Finding 3 fixture: a step that misreports, followed by one that throws ─
+
+/// Two steps: the first claims one thing and reports another (a
+/// [Discrepancy]), the second throws outright (a [StepFailure]). Exercises
+/// both channels PreviewExecutor.perform() can report trouble through, in
+/// the same run.
+class _DiscrepancyThenFailureCommand
+    implements Command<TouchInput, TouchOutput> {
+  _DiscrepancyThenFailureCommand(this.input);
+
+  @override
+  final TouchInput input;
+
+  @override
+  String? validate() => null;
+
+  @override
+  Future<List<Step>> steps() async => [
+    FakeStep(verb: 'create', target: 'a.txt', reportedVerb: 'replace'),
+    FakeStep(verb: 'create', target: 'b.txt', throws: Exception('boom')),
+  ];
+
+  @override
+  TouchOutput describe(Execution execution) =>
+      TouchOutput(execution.outcomes.map((o) => o.target).toList());
+}
+
+ModularCli _buildDiscrepancyFailureCli() {
+  final cli = ModularCli(suggestionDistance: 2, approver: (_) async => true);
+  cli.command<TouchInput, TouchOutput>(
+    'thing',
+    (req) => _DiscrepancyThenFailureCommand(TouchInput()),
+    globals: true,
+    description: 'A command whose steps misreport and then fail',
+    contract: CliContract.none,
+  );
+  return cli;
+}
+
 void main() {
   group(
     'finding 1: an invalid shortcut option value must not lose to --help',
@@ -181,6 +220,43 @@ void main() {
         expect(error['id'], equals('middleware-construction-blew-up'));
         expect(error['exitCode'], equals(ExitCode.conflict));
       });
+    },
+  );
+
+  group(
+    'finding 3: a discrepancy followed by a step failure must not corrupt '
+    'JSON stderr',
+    () {
+      test(
+        'stderr under --json decodes as a single JSON document, with the '
+        "discrepancy folded into the failure's own envelope",
+        () async {
+          final result = await _runWith(_buildDiscrepancyFailureCli(), [
+            'thing',
+            '--apply',
+            '--autoapprove',
+            '--json',
+          ]);
+
+          expect(result.exitCode, equals(ExitCode.genericError));
+
+          // Decoding the whole of stderr as one JSON document is only
+          // possible when no raw, non-JSON text (the "! ..." discrepancy
+          // line) was written ahead of the error envelope.
+          final envelope = jsonDecode(result.stderr) as Map<String, dynamic>;
+          final error = envelope['error'] as Map<String, dynamic>;
+          expect(error['id'], equals('step-failed'));
+
+          final details = error['details'] as Map<String, dynamic>;
+          final discrepancies = details['discrepancies'] as List;
+          expect(discrepancies, hasLength(1));
+          final discrepancy = discrepancies.single as Map<String, dynamic>;
+          expect(discrepancy['index'], equals(0));
+
+          // stdout is unaffected: still a single decodable JSON document.
+          jsonDecode(result.stdout);
+        },
+      );
     },
   );
 }
