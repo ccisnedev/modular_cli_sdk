@@ -5,6 +5,7 @@ import 'package:cli_router/cli_router.dart';
 
 import 'approver.dart';
 import 'cli_contract.dart';
+import 'cli_request_values.dart';
 import 'command.dart';
 import 'command_catalog.dart';
 import 'command_exception.dart';
@@ -232,8 +233,27 @@ class ModularCli {
   ///
   /// Middlewares are applied in registration order and wrap all routes across
   /// all modules.
+  ///
+  /// A middleware that throws a [CommandException] is caught inside its own
+  /// error boundary and turned into the same structured error envelope a
+  /// failed command or a rejected invocation produces, honoring the
+  /// resolved request's `--json` mode. Without this boundary the exception
+  /// would escape [run] entirely instead of yielding an exit code.
   ModularCli use(CliMiddleware middleware) {
-    _root.use(middleware);
+    _root.use((next) {
+      final wrapped = middleware(next);
+      return (req) async {
+        try {
+          return await wrapped(req);
+        } on CommandException catch (e) {
+          return _emitCommandException(
+            e,
+            req.stderr,
+            jsonMode: req.flagBool('json'),
+          );
+        }
+      };
+    });
     return this;
   }
 
