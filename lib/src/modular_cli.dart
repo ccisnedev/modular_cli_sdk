@@ -5,6 +5,8 @@ import 'package:cli_router/cli_router.dart';
 
 import 'approver.dart';
 import 'cli_contract.dart';
+import 'cli_plugin.dart';
+import 'cli_plugin_host.dart';
 import 'cli_request_values.dart';
 import 'command.dart';
 import 'command_catalog.dart';
@@ -65,20 +67,52 @@ class ModularCli {
   /// vocabulary (a CLI with many short, similar command words wants a
   /// tighter distance than one with few, long ones), not a number this SDK
   /// should assume silently.
+  ///
+  /// [name] and [version] identify this CLI to a plugin that asks
+  /// [CliPluginHost.metadata] — a plugin that ships a `version` route or
+  /// compares an installed version against a release has to be told both.
+  /// Left null, [hostMetadata] is null and such a plugin's [setup] throws
+  /// rather than reporting a name or version nobody gave it.
   ModularCli({
     Approver? approver,
     PlanSink? planSink,
     required int suggestionDistance,
+    String? name,
+    String? version,
   }) : _approver = approver,
        _planSink = planSink,
-       _suggestionDistance = suggestionDistance;
+       _suggestionDistance = suggestionDistance,
+       hostMetadata = name == null && version == null
+           ? null
+           : CliHostMetadata(
+               name: _requireBoth(name, version, 'name'),
+               version: _requireBoth(version, name, 'version'),
+             );
 
   final Approver? _approver;
   final PlanSink? _planSink;
   final int _suggestionDistance;
 
+  /// This CLI's own name and version, as given to the constructor — the one
+  /// piece of information a plugin cannot declare about itself. Null unless
+  /// both [name] and [version] were given.
+  final CliHostMetadata? hostMetadata;
+
+  static String _requireBoth(String? value, String? other, String label) {
+    if (value == null) {
+      throw ArgumentError(
+        'ModularCli was given ${other == null ? 'neither' : 'only'} name/'
+        'version — give both or neither; a $label with no counterpart is not '
+        'a CLI identity a plugin can rely on.',
+      );
+    }
+    return value;
+  }
+
   late final CliRouter _root = CliRouter(globalOptions: globalOptionSpecs);
   final CommandCatalog _catalog = CommandCatalog();
+  final List<CliPlugin> _plugins = [];
+  bool _pluginsBuilt = false;
 
   /// Every registered route's business logic, keyed by
   /// [CommandContract.route]. Shared by every [ModuleBuilder] this instance
@@ -268,6 +302,48 @@ class ModularCli {
   /// unless [maxDistance] overrides it for this one call.
   String? suggest(String word, {int? maxDistance}) =>
       _catalog.suggest(word, maxDistance: maxDistance ?? _suggestionDistance);
+
+  /// Register a plugin. Chainable, like [module], [query] and [command].
+  ///
+  /// Registering does not run [CliPlugin.setup] — that is deferred to
+  /// [buildPlugins], so every plugin can be added, in whatever order the host
+  /// application finds natural, before any of them is validated or given a
+  /// chance to register a route. [run] calls [buildPlugins] itself; call it
+  /// directly only where you need the plugin set built without also
+  /// dispatching an invocation, such as a test that asserts on [catalog].
+  ModularCli plugin(CliPlugin plugin) {
+    _plugins.add(plugin);
+    return this;
+  }
+
+  /// Validate and set up every plugin registered with [plugin].
+  ///
+  /// Idempotent: a second call, including the one [run] makes, does nothing.
+  /// Validation happens for every plugin before [CliPlugin.setup] runs for
+  /// any of them — a duplicate id, an incompatible [CliPluginManifest.hostApiVersion],
+  /// a missing dependency or a dependency cycle is a failure of the whole
+  /// set, not of whichever plugin happened to be set up first, so none of the
+  /// set is allowed to register a single route before every plugin in it has
+  /// passed every check that does not require running [setup] itself.
+  ///
+  /// Throws [CliPluginError] — there is no fallback that runs a plugin set
+  /// found to be broken.
+  void buildPlugins() {
+    if (_pluginsBuilt) return;
+    _pluginsBuilt = true;
+    if (_plugins.isEmpty) return;
+
+    final ordered = orderCliPlugins(_plugins);
+    for (final plugin in ordered) {
+      checkHostApiCompatibility(plugin.manifest);
+    }
+
+    final host = RuntimeCliPluginHost(this);
+    for (final plugin in ordered) {
+      host.currentPluginId = plugin.manifest.id;
+      plugin.setup(host);
+    }
+  }
 
   ModuleBuilder _builderFor(String name, CliRouter router) => ModuleBuilder(
     moduleName: name,
@@ -488,13 +564,14 @@ class ModularCli {
   /// text) the request that recorded it was running under.
   Future<int> run(List<String> args, {io.IOSink? stdout, io.IOSink? stderr}) {
     return runWithInvocationOutcome(() async {
+      buildPlugins();
       // Read before [_registerHelpCommand] runs, deliberately: that call
       // always ensures *some* `help` command exists by the time dispatch
-      // happens below (a developer's own, or the SDK's own auto-registered
-      // default when none exists), so this is the only point left where a
-      // CLI that registered its own `help` can still be told apart from
-      // one relying purely on the SDK's default (round-12 review
-      // finding 2).
+      // happens below (a developer's own, a plugin's own (built just
+      // above), or the SDK's own auto-registered default when none
+      // exists), so this is the only point left where a CLI that
+      // registered its own `help` can still be told apart from one
+      // relying purely on the SDK's default (round-12 review finding 2).
       final hasCustomHelp = _catalog.forName('help') != null;
       _registerHelpCommand();
       final out = stdout ?? io.stdout;

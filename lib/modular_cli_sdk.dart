@@ -46,6 +46,59 @@ export 'src/approver.dart' show Approver, ConsoleApprover, NoApproverAvailable;
 export 'src/change_flags.dart' show ChangeFlags, ChangeMode;
 export 'src/change_outputs.dart'
     show DeclinedOutput, NothingToDoOutput, PlanOutput;
+export 'src/cli_plugin.dart'
+    show
+        CliHostMetadata,
+        CliPlugin,
+        CliPluginError,
+        CliPluginHost,
+        CliPluginManifest,
+        CommandFactory,
+        QueryFactory,
+        checkHostApiCompatibility,
+        cliPluginHostApiVersion,
+        orderCliPlugins;
+export 'src/cli_plugin_host.dart' show RuntimeCliPluginHost;
+export 'src/plugins/doctor_plugin.dart'
+    show
+        CliCheckResult,
+        CliCheckStatus,
+        CliDoctorCheck,
+        DoctorInput,
+        DoctorOutput,
+        DoctorPlugin,
+        DoctorQuery;
+export 'src/plugins/installation/cli_downloader.dart'
+    show CliDownloadFailure, CliDownloader, HttpCliDownloader;
+export 'src/plugins/installation/cli_file_system.dart'
+    show CliFileSystem, IoCliFileSystem;
+export 'src/plugins/installation/cli_platform.dart'
+    show CliPlatform, IoCliPlatform;
+export 'src/plugins/installation/cli_release_source.dart'
+    show
+        CliRelease,
+        CliReleaseAsset,
+        CliReleaseLookupFailure,
+        CliReleaseSource,
+        HttpCliReleaseSource;
+export 'src/plugins/installation/installation_plugin.dart'
+    show
+        CliInstallStepFailure,
+        CliInstallationConfig,
+        DownloadAssetStep,
+        InstallExecutableStep,
+        InstallationPlugin,
+        RemoveFileStep,
+        UninstallCommand,
+        UninstallInput,
+        UninstallOutput,
+        UpgradeCommand,
+        UpgradeInput,
+        UpgradeOutput,
+        assetForPlatform,
+        latestTaggedRelease;
+export 'src/plugins/version_plugin.dart'
+    show VersionInput, VersionOutput, VersionPlugin, VersionQuery;
 export 'src/cli_output.dart' show CliOutput;
 export 'src/cli_output_json.dart' show JsonCliOutput;
 export 'src/cli_output_text.dart' show TextCliOutput;
