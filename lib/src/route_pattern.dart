@@ -158,6 +158,21 @@ class RoutePattern {
     return _toPatternString(publicSegs);
   }
 
+  /// The route's leading literal words alone, every parameter and wildcard
+  /// segment dropped, not just a trailing optional one.
+  ///
+  /// This is the identity `cli_router` reports back on a rejection that
+  /// never resolved a specific route at all (`CliRejection.route == null`):
+  /// `CliRejection.consumed` only ever accumulates literal words matched
+  /// while walking the trie (grammar G puts every literal before every
+  /// parameter, so there is exactly one literal run, at the front), never a
+  /// parameter's bound value. For a route with no required positional this
+  /// is the same string as [routerPattern]; for one with a required
+  /// positional (`s <id>`) it is shorter, dropping `<id>` too.
+  String get literalPrefix => _toPatternString(
+    segments.takeWhile((s) => s.kind == RouteSegKind.literal).toList(),
+  );
+
   static String _toPatternString(List<RouteSeg> segs) => segs
       .map((s) {
         switch (s.kind) {

@@ -298,11 +298,36 @@ class ModuleBuilder {
 
     // Not registered with [_catalog] (see this method's own doc comment,
     // "deliberately not given its own CommandCatalog entry"), but kept
-    // here, keyed exactly as [_mount] below registers it with
-    // `cli_router`, so [ModularCli] can still validate a badly typed
-    // supplied value against a shortcut's own contract before letting
-    // `--help` win a rejection (round-4 review finding 1).
-    _shortcutContractsByRoute[pattern] = entry;
+    // here so [ModularCli] can still validate a badly typed supplied value
+    // against a shortcut's own contract before letting `--help` win a
+    // rejection (round-4 review finding 1).
+    //
+    // Keyed by [pattern] itself, this map missed every shape but a bare
+    // literal at the root (round-5 review finding 1): a `CliRejection`
+    // reports either `route.pattern`, `cli_router`'s own identity for the
+    // route, mount prefix included, a trailing optional positional or
+    // wildcard stripped, a required one kept, or, when no specific route
+    // resolved at all, `consumed`, the literal words alone (a parameter's
+    // bound value, required or optional, is never in there; grammar G puts
+    // every literal before every parameter, so there is exactly one
+    // literal run, at the front). Both identities are mount-prefixed, so a
+    // shortcut declared inside `module(moduleName, ...)` is registered
+    // under `moduleName`'s own prefix here too, exactly as [_register]
+    // prefixes a query's or command's own [CommandContract.route].
+    // [RoutePattern.routerPattern] and [RoutePattern.literalPrefix] agree
+    // for a shortcut with no required positional (a bare literal, or one
+    // ending in `[<name>]`); only a required positional (`s <id>`) makes
+    // them differ, so the second key is registered only then.
+    final mountedRouterPattern = moduleName.isEmpty
+        ? routePattern.routerPattern
+        : '$moduleName ${routePattern.routerPattern}';
+    final mountedLiteralPrefix = moduleName.isEmpty
+        ? routePattern.literalPrefix
+        : '$moduleName ${routePattern.literalPrefix}';
+    _shortcutContractsByRoute[mountedRouterPattern] = entry;
+    if (mountedLiteralPrefix != mountedRouterPattern) {
+      _shortcutContractsByRoute[mountedLiteralPrefix] = entry;
+    }
 
     _mount(
       pattern,
