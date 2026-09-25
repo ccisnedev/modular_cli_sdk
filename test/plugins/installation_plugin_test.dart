@@ -817,6 +817,95 @@ void main() {
         expect(fileSystem.written, isEmpty);
       },
     );
+
+    // Round 5 finding 3: the two tests above exercise the propagation
+    // through FakeFileSystem's own sameFileError seam, which already
+    // worked correctly. The bug was in IoCliFileSystem itself: its
+    // sameFile caught identicalSync's failure and returned false, so
+    // hardLinkedAliasIssue reported "no issue" instead of propagating.
+    // These two run the same plan-time and replace-step scenarios
+    // through the real adapter, with only its identicalFiles seam
+    // overridden, to prove the real implementation propagates too.
+    test(
+      'upgrade refuses to plan with a typed error when the real filesystem '
+      'adapter cannot determine whether the alias is a hard link',
+      () async {
+        final tempDir = io.Directory.systemTemp.createTempSync(
+          'upgrade_real_fs_plan_test_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final executablePath = _writeRealExecutableFixture(tempDir, 'cx');
+        _writeRealExecutableFixture(tempDir, 'calculatrix');
+
+        final fileSystem = _RealFileSystemWithIdenticalFilesSeam(
+          pathDirectories: [tempDir.path],
+        )..identicalFilesError = Exception(
+          'permission denied comparing identity',
+        );
+
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+          ),
+        );
+
+        final err = MemorySink();
+        final code = await cli.run(['upgrade', '--plan'], stderr: err);
+
+        expect(code, ExitCode.genericError);
+        expect(err.output, contains('executable-check-failed'));
+        expect(err.output, isNot(contains('alias-hard-link-unsupported')));
+        expect(io.File(executablePath).existsSync(), isTrue);
+      },
+    );
+
+    test(
+      'apply fails with a typed error when the real filesystem adapter '
+      'cannot determine whether the alias became a hard link at the '
+      'replace step',
+      () async {
+        final tempDir = io.Directory.systemTemp.createTempSync(
+          'upgrade_real_fs_replace_test_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        _writeRealExecutableFixture(tempDir, 'cx');
+        _writeRealExecutableFixture(tempDir, 'calculatrix');
+
+        final fileSystem = _RealFileSystemWithIdenticalFilesSeam(
+          pathDirectories: [tempDir.path],
+        );
+        final downloader = FakeDownloader(
+          bytes: const [9, 9, 9],
+          onDownload: () => fileSystem.identicalFilesError = Exception(
+            'permission denied comparing identity',
+          ),
+        );
+
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+            downloader: downloader,
+          ),
+        );
+
+        final out = MemorySink();
+        final code = await cli.run([
+          'upgrade',
+          '--apply',
+          '--autoapprove',
+        ], stdout: out);
+
+        expect(code, ExitCode.genericError);
+        expect(out.output, contains('executable-check-failed'));
+        expect(out.output, isNot(contains('alias-hard-link-unsupported')));
+      },
+    );
   });
 
   group('uninstall', () {
@@ -1459,3 +1548,40 @@ ModularCli _cliWith(InstallationPlugin plugin) =>
       ..plugin(plugin);
 
 ModularCli _cliWithDoctor(InstallationPlugin plugin) => _cliWith(plugin);
+
+/// Writes an executable fixture named [name] into [dir], naming and
+/// permissioning it the way [IoCliFileSystem.resolveOnPath] requires it to
+/// be found: a `.exe` extension on Windows (matched by the default
+/// `PATHEXT` candidate list), an execute bit on POSIX (checked by the real
+/// `/bin/test` or `/usr/bin/test` through [IoCliExecutableChecker]).
+/// Returns the full path written.
+String _writeRealExecutableFixture(io.Directory dir, String name) {
+  final path =
+      '${dir.path}${io.Platform.pathSeparator}'
+      '${io.Platform.isWindows ? '$name.exe' : name}';
+  io.File(path).writeAsBytesSync([1, 2, 3]);
+  if (!io.Platform.isWindows) {
+    io.Process.runSync('chmod', ['+x', path]);
+  }
+  return path;
+}
+
+/// A real [IoCliFileSystem], limited to [pathDirectories] for PATH
+/// resolution, whose [identicalFiles] seam can be told to throw on demand.
+/// Used to prove that the real adapter itself, not just FakeFileSystem's
+/// own sameFileError seam, propagates an identicalFiles failure through
+/// sameFile instead of reporting "no issue".
+class _RealFileSystemWithIdenticalFilesSeam extends IoCliFileSystem {
+  _RealFileSystemWithIdenticalFilesSeam({
+    required List<String> pathDirectories,
+  }) : super(pathDirectories: pathDirectories);
+
+  Object? identicalFilesError;
+
+  @override
+  bool identicalFiles(String a, String b) {
+    final error = identicalFilesError;
+    if (error != null) throw error;
+    return super.identicalFiles(a, b);
+  }
+}

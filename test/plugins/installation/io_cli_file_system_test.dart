@@ -597,6 +597,33 @@ void main() {
       expect(fs.canonicalize(hardLinkPath), isNot(fs.canonicalize(target)));
       expect(fs.sameFile(hardLinkPath, target), isTrue);
     }, skip: io.Platform.isWindows ? 'POSIX hard link semantics only' : false);
+
+    // Round 5 finding 3: identicalFiles is the one seam sameFile has for
+    // exactly this call (the same shape as renameIntoPlace's own seam
+    // above), because there is no portable way to make a real
+    // identicalSync call fail on command. A caller (hardLinkedAliasIssue,
+    // UninstallCommand.steps) that cannot tell whether two paths are the
+    // same file must be told that, not handed a false "different files"
+    // that reports a hard-linked alias, or an alias that could not be
+    // checked at all, as no issue.
+    test(
+      'propagates an identicalFiles failure instead of reporting no issue',
+      () {
+        final a = pathIn(tempDir, 'a');
+        final b = pathIn(tempDir, 'b');
+        io.File(a).writeAsBytesSync([1]);
+        io.File(b).writeAsBytesSync([1]);
+
+        final fs = _ThrowingIdenticalFilesFileSystem(
+          io.FileSystemException('permission denied comparing identity'),
+        );
+
+        expect(
+          () => fs.sameFile(a, b),
+          throwsA(isA<io.FileSystemException>()),
+        );
+      },
+    );
   });
 
   group('canonicalize', () {
@@ -723,4 +750,18 @@ class _FixedExecutableChecker implements CliExecutableChecker {
     }
     return code;
   }
+}
+
+/// A real [IoCliFileSystem] whose [identicalFiles] seam always throws
+/// [error] in place of running the real identicalSync check. Overriding
+/// this one method, rather than [sameFile] itself, exercises sameFile's
+/// own propagation of that failure through the real adapter, not a
+/// reimplementation of sameFile's logic in a fake.
+class _ThrowingIdenticalFilesFileSystem extends IoCliFileSystem {
+  _ThrowingIdenticalFilesFileSystem(this.error);
+
+  final Object error;
+
+  @override
+  bool identicalFiles(String a, String b) => throw error;
 }
