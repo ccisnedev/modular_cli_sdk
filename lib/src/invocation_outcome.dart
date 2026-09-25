@@ -134,3 +134,27 @@ void recordInvocationExtraText(String text) {
 void recordInvocationExtraJson(Map<String, dynamic> fields) {
   currentInvocationOutcome().extraJson = fields;
 }
+
+/// Clears the current invocation's recorded outcome: called at the start of
+/// every dispatch attempt that can itself be retried, so a fresh attempt
+/// never inherits an error a superseded attempt left behind.
+///
+/// Round-7 review finding 1: a middleware that retries by calling `next`
+/// more than once decides to retry from a plain, already-converted exit
+/// code, never from a caught exception (ModuleBuilder._mount()'s own
+/// boundary never lets a CommandException propagate past it). If the first
+/// attempt threw, its error is recorded by that boundary; if the retried,
+/// final attempt then succeeds outright, nothing overwrites that recorded
+/// error, and ModularCli.run() would render it even though the exit code it
+/// returns is the final attempt's own, unrelated one. Calling this at the
+/// start of each dispatch attempt, both in ModuleBuilder._mount()'s
+/// handler and in ModularCli.use()'s own wrapper, means a superseded
+/// attempt's error cannot outlive that attempt: only what the final
+/// attempt itself records, if anything, is left for run() to read back.
+void beginInvocationAttempt() {
+  final outcome = currentInvocationOutcome();
+  outcome.error = null;
+  outcome.jsonMode = false;
+  outcome.extraText = null;
+  outcome.extraJson = null;
+}

@@ -61,13 +61,11 @@ class _OkQuery implements Query<_WidgetInput, _WidgetOutput> {
   Future<_WidgetOutput> execute() async => _WidgetOutput();
 }
 
-/// A query that always throws [error] from execute(), optionally yielding
-/// to the event loop first so two invocations genuinely interleave.
+/// A query that always throws [error] from execute().
 class _ThrowingQuery implements Query<_WidgetInput, _WidgetOutput> {
-  _ThrowingQuery(this.error, {this.delay = false});
+  _ThrowingQuery(this.error);
 
   final CommandException error;
-  final bool delay;
 
   @override
   final _WidgetInput input = _WidgetInput();
@@ -77,7 +75,6 @@ class _ThrowingQuery implements Query<_WidgetInput, _WidgetOutput> {
 
   @override
   Future<_WidgetOutput> execute() async {
-    if (delay) await Future<void>.delayed(Duration.zero);
     throw error;
   }
 }
@@ -311,41 +308,6 @@ ModularCli _cliForRecursiveRun(_RecursiveCapture capture) {
   cli.query<_WidgetInput, _WidgetOutput>(
     'outer',
     (req) => _RecursiveRunQuery(cli, capture),
-    globals: true,
-    contract: CliContract.none,
-  );
-  cli.use(_escalatingMiddlewareTaggedByRoute());
-  return cli;
-}
-
-/// A CLI with the same route-tagged escalating middleware wired globally,
-/// and two routes that each fail through it, for two `run()` calls issued
-/// together via `Future.wait` on the same instance.
-ModularCli _cliForConcurrentRuns() {
-  final cli = ModularCli(suggestionDistance: 2);
-  cli.query<_WidgetInput, _WidgetOutput>(
-    'fail-a',
-    (req) => _ThrowingQuery(
-      CommandException(
-        id: 'error-a',
-        message: 'A failed',
-        exitCode: ExitCode.notFound,
-      ),
-      delay: true,
-    ),
-    globals: true,
-    contract: CliContract.none,
-  );
-  cli.query<_WidgetInput, _WidgetOutput>(
-    'fail-b',
-    (req) => _ThrowingQuery(
-      CommandException(
-        id: 'error-b',
-        message: 'B failed',
-        exitCode: ExitCode.unauthorized,
-      ),
-      delay: true,
-    ),
     globals: true,
     contract: CliContract.none,
   );

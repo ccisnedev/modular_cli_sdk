@@ -319,9 +319,16 @@ class ModularCli {
   /// terminates the invocation, an outer boundary's own throw if it has
   /// one, an inner one otherwise, so "last recorded wins" is exactly
   /// "the outermost thrown wins".
+  ///
+  /// Round-7 review finding 1: [beginInvocationAttempt] runs first, before
+  /// [middleware] itself is even built, so a retrying middleware's second
+  /// call to `next` starts this boundary's own recorded-error slot clean;
+  /// whatever a superseded first attempt recorded here cannot survive into
+  /// the attempt that actually determines the exit code [run] renders.
   ModularCli use(CliMiddleware middleware) {
     _root.use((next) {
       return (req) async {
+        beginInvocationAttempt();
         try {
           final wrapped = middleware(next);
           return await wrapped(req);
@@ -382,6 +389,23 @@ class ModularCli {
       if (exitCode != ExitCode.ok) {
         final outcome = currentInvocationOutcome();
         if (outcome.error != null) {
+          // Round-7 review finding 1's own invariant: what is about to be
+          // rendered must correspond to the process exit code this call is
+          // about to return. beginInvocationAttempt() clearing a superseded
+          // attempt's recorded error at every retry boundary is what makes
+          // this hold in practice; if it were ever violated, rendering a
+          // mismatched exit code silently would be exactly the kind of
+          // silent pick this SDK's error rendering must not do, so this
+          // fails loudly instead of ever rendering it.
+          if (outcome.error!.exitCode != exitCode) {
+            throw StateError(
+              'Invocation outcome mismatch: run() is about to return exit '
+              'code $exitCode but the recorded error carries exit code '
+              '${outcome.error!.exitCode} (id: ${outcome.error!.id}). '
+              'What is rendered must always correspond to the final '
+              'dispatch attempt.',
+            );
+          }
           _renderRecordedError(outcome, err);
         }
       }
@@ -527,11 +551,11 @@ class ModularCli {
       // the plain rejection error, exactly as if --help had not been
       // passed, reports the router's own rejection instead of pretending
       // one candidate is the answer.
-      final shortcutLookup = _shortcutContractFor(rejection);
-      if (shortcutLookup.ambiguous) {
+      final resolved = _applicableContractFor(rejection);
+      if (resolved.ambiguous) {
         return _emitRejectionError(rejection, jsonMode: jsonMode);
       }
-      final contract = _contractFor(rejection) ?? shortcutLookup.contract;
+      final contract = resolved.contract;
       if (contract != null) {
         try {
           validateSuppliedOptionValues(rejection.options, contract.contract);
@@ -800,6 +824,64 @@ class ModularCli {
       return (contract: candidates.single, ambiguous: false);
     }
     return (contract: null, ambiguous: true);
+  }
+
+  /// The contract a rejection's own literal-words prefix should actually be
+  /// validated and consulted against, when both an ordinary catalog route
+  /// and a shortcut can answer to that same prefix at different positional
+  /// depths (round-7 review finding 2).
+  ///
+  /// [_contractFor] and [_shortcutContractFor]'s own literal-words fallback
+  /// each match [CliRejection.consumed] on name alone, with no notion of how
+  /// much further the invocation itself is still trying to go: an ordinary
+  /// route `s`, no positionals, and a shortcut `s <id> <sub>` both answer to
+  /// the very same consumed prefix `['s']`. Before this method existed,
+  /// `_contractFor(rejection) ?? shortcutLookup.contract` picked the
+  /// catalog's own match unconditionally whenever one existed, so the
+  /// shallower, unrelated route's contract silently overrode the deeper
+  /// shortcut the invocation was actually reaching for.
+  ///
+  /// The fix is to compare how many positionals each candidate declares:
+  /// `cli_router` only reports [CliRejectionKind.incomplete] or
+  /// [CliRejectionKind.missingArgument] this far down its own trie when some
+  /// route continues past what was consumed, so whichever candidate goes
+  /// deeper is the one still viable, and the shallower one cannot be what
+  /// the invocation is reaching for. A tie, both candidates declaring the
+  /// same number of positionals, is genuinely ambiguous: nothing here can
+  /// decide which one the caller meant, so this reports that the same way
+  /// [_shortcutContractFor]'s own ambiguous case already does (round-6
+  /// review finding 6), the router's own rejection, rather than guessing.
+  ///
+  /// [CliRejection.route] being non-null names one exact route `cli_router`
+  /// itself resolved to: unambiguous by construction (a second registration
+  /// under the same exact pattern is a build-time error, round-6 review
+  /// finding 4), so no depth comparison applies there.
+  ({CommandContract? contract, bool ambiguous}) _applicableContractFor(
+    CliRejection rejection,
+  ) {
+    final shortcutLookup = _shortcutContractFor(rejection);
+    if (shortcutLookup.ambiguous) return (contract: null, ambiguous: true);
+
+    final catalogContract = _contractFor(rejection);
+    final shortcutContract = shortcutLookup.contract;
+
+    if (rejection.route != null) {
+      return (contract: catalogContract ?? shortcutContract, ambiguous: false);
+    }
+    if (catalogContract == null || shortcutContract == null) {
+      return (contract: catalogContract ?? shortcutContract, ambiguous: false);
+    }
+
+    final catalogDepth = catalogContract.positionals.length;
+    final shortcutDepth = shortcutContract.positionals.length;
+    if (catalogDepth == shortcutDepth) {
+      return (contract: null, ambiguous: true);
+    }
+    return (
+      contract:
+          shortcutDepth > catalogDepth ? shortcutContract : catalogContract,
+      ambiguous: false,
+    );
   }
 
   /// Every registered route that continues [attempted].

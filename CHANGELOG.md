@@ -259,6 +259,32 @@ rejected. No bug or missing API was found in it while building this one.
   generated `Usage:` line previously dropped the trailing `*`, documenting
   an invocation (`batch`, no arguments) that the route does not actually
   accept
+- **What `run()` renders now always corresponds to the final dispatch
+  attempt, never a superseded one.** A middleware that retries by calling
+  `next` more than once (`ModuleBuilder._mount()`'s own handler never lets a
+  thrown `CommandException` propagate past its boundary, so a retry decides
+  from the plain, already-converted exit code) could leave an earlier
+  attempt's recorded error behind: attempt one throws, attempt two then
+  either succeeds outright with its own nonzero `Output.exitCode` or throws
+  a different error of its own, and nothing overwrote what attempt one had
+  already recorded. Both boundaries a retry can call more than once,
+  `ModularCli.use()`'s own wrapper and `ModuleBuilder._mount()`'s handler,
+  now clear the recorded outcome at the start of every dispatch attempt, so
+  a superseded attempt's error cannot outlive it; `run()` also now asserts
+  that a rendered error's own `exitCode` matches the process exit code it is
+  about to return, failing loudly instead of ever rendering a mismatched one
+- **A name-only catalog route match no longer silently overrides a deeper
+  shortcut the invocation positionally matches further.** An ordinary route
+  (`s`, no positionals) and a shortcut (`s <id> <sub>`) can share the same
+  literal prefix; a rejection that never resolved a specific route looked
+  the prefix up against the catalog first, so the shallower, unrelated
+  route's contract won even when the invocation was actually reaching for
+  the deeper shortcut, letting a badly typed value on the shortcut's own
+  option pass validation under the catalog route's more permissive one. The
+  applicable contract is now chosen by comparing how many positionals each
+  candidate declares: the deeper one wins, and a tie between a catalog route
+  and a shortcut at the same depth is reported as the router's own
+  rejection, the same as any other ambiguous case, rather than guessed
 
 ### Notes
 
