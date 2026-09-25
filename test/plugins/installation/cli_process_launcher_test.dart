@@ -849,8 +849,8 @@ Future<void> main(List<String> args) async {
 class _FailingCleanupDirectoryLauncher extends IoCliProcessLauncher {
   _FailingCleanupDirectoryLauncher(
     this.cleanupError, {
-    Duration startupTimeout = cleanupWorkerStartupTimeout,
-  }) : super(startupTimeout: startupTimeout);
+    super.startupTimeout = cleanupWorkerStartupTimeout,
+  });
 
   final Object cleanupError;
 

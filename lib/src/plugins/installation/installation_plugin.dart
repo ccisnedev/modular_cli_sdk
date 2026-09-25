@@ -1098,8 +1098,9 @@ class SelfDeleteExecutableStep implements Step {
       );
     }
 
+    final String? cleanupWarning;
     try {
-      await processLauncher.startCleanupWorker({
+      cleanupWarning = await processLauncher.startCleanupWorker({
         'parentPid': pid,
         'paths': [renamedPath],
         'timeoutMs': cleanupWorkerParentExitTimeoutMs,
@@ -1113,11 +1114,17 @@ class SelfDeleteExecutableStep implements Step {
       );
     }
 
-    return Outcome(
-      verb: 'schedule',
-      target: path,
-      detail: '$path will be removed when this process exits',
-    );
+    // A non-null cleanupWarning does not change the outcome, the worker did
+    // confirm ready and will still remove renamedPath, but it is not
+    // discarded either: it is folded into this step's own Outcome.detail so
+    // it reaches both the JSON result and the text output, the same path
+    // every other note this step could report already takes.
+    final detail = cleanupWarning == null
+        ? '$path will be removed when this process exits'
+        : '$path will be removed when this process exits. Warning: '
+              '$cleanupWarning';
+
+    return Outcome(verb: 'schedule', target: path, detail: detail);
   }
 }
 

@@ -31,6 +31,31 @@ const Duration cleanupWorkerStartupTimeout = Duration(seconds: 10);
 /// worker running forever either.
 const int cleanupWorkerParentExitTimeoutMs = 5 * 60 * 1000;
 
+/// How much earlier than [IoCliProcessLauncher]'s own startup timeout the
+/// cleanup worker's own deadline for creating its ready marker falls. The
+/// worker computes an absolute deadline (Unix epoch milliseconds, UTC) from
+/// this margin and the same startup timeout the CLI itself is bounded by,
+/// carried in the payload as `markerDeadlineUnixMs`, and refuses to create
+/// the marker (deleting nothing) once that deadline has passed.
+///
+/// This is what closes the race a bare timeout leaves open: without an
+/// absolute deadline the worker itself agrees to, a worker that starts
+/// slowly could still create the marker (recreating the private directory
+/// [IoCliProcessLauncher] already deleted after giving up waiting) after
+/// the CLI has already reported [CliCleanupWorkerStartFailure]. With the
+/// margin, a marker created before the worker's own deadline always has at
+/// least this much time left before the CLI's deadline, and
+/// [cleanupWorkerReadyPollInterval] is well under it, so the CLI is
+/// guaranteed to observe such a marker before giving up.
+const Duration cleanupWorkerMarkerDeadlineSafetyMargin = Duration(seconds: 2);
+
+/// How often [IoCliProcessLauncher.startCleanupWorker] polls for the
+/// worker's ready-marker file. Well under
+/// [cleanupWorkerMarkerDeadlineSafetyMargin], so a marker the worker
+/// created before its own deadline is always observed before the CLI's own,
+/// later, [cleanupWorkerStartupTimeout] deadline runs out.
+const Duration cleanupWorkerReadyPollInterval = Duration(milliseconds: 50);
+
 /// The environment variable the cleanup worker reads its JSON payload from,
 /// directly, as its value: not a path to a file. An environment variable
 /// value is inherited by the child through Windows' own, Unicode-safe
@@ -63,9 +88,14 @@ const String cleanupWorkerReadyMarkerPathEnvVar = 'CLI_CLEANUP_READY_PATH';
 ///
 /// Sequence: parse the payload, retain a handle on the parent process (if it
 /// is still running; a parent that has already exited by the time the
-/// worker starts is treated as already gone rather than an error), create
-/// the ready-marker file, wait up to the given timeout for the parent to
-/// exit, and only on a confirmed exit delete each given path with
+/// worker starts is treated as already gone rather than an error, but any
+/// other failure retaining the handle, such as access denied on a
+/// protected process, is not, and stops the worker before the ready marker
+/// is created), refuse to go on if the payload's own marker-creation
+/// deadline has already passed, create the ready-marker file (failing,
+/// rather than recreating anything, if the private directory is gone or
+/// the marker already exists), wait up to the given timeout for the parent
+/// to exit, and only on a confirmed exit delete each given path with
 /// `Remove-Item -LiteralPath` under `$ErrorActionPreference = 'Stop'`. A
 /// timed-out wait deletes nothing. The worker owns no temporary file of its
 /// own to clean up on the way out: the ready-marker file lives inside the
@@ -78,17 +108,49 @@ $data = $env:CLI_CLEANUP_PAYLOAD | ConvertFrom-Json
 $parentPid = [int]$data.parentPid
 $paths = @($data.paths)
 $timeoutMs = [int]$data.timeoutMs
+$markerDeadlineUnixMs = [int64]$data.markerDeadlineUnixMs
 $ReadyMarkerPath = $env:CLI_CLEANUP_READY_PATH
 
 $parent = $null
 try {
     $parent = [System.Diagnostics.Process]::GetProcessById($parentPid)
-    $null = $parent.Handle
-} catch {
+} catch [System.ArgumentException] {
+    # No process with that id exists: the parent already exited before the
+    # worker got a chance to look. Not an error to stop the worker for.
     $parent = $null
 }
 
-New-Item -ItemType File -Path $ReadyMarkerPath -Force | Out-Null
+# Deliberately outside the catch above: any other failure retaining a
+# handle on a process that does exist (for example, access denied on a
+# protected process) must stop the worker before the ready marker is
+# created, so the CLI sees no marker in time and reports
+# cleanup-start-failed instead of a worker that silently is not actually
+# holding what it needs.
+if ($null -ne $parent) {
+    $null = $parent.Handle
+}
+
+# Closes the race where startCleanupWorker has already given up waiting for
+# a marker and deleted the private directory it created. Past this
+# deadline the worker refuses to create the marker (or, since File.Open
+# with CreateNew never creates a missing parent directory, the directory
+# either) and exits, deleting nothing. The CLI polls often enough, well
+# under the safety margin baked into this deadline, that a marker created
+# before it is always seen before the CLI's own, later deadline runs out.
+$nowUnixMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+if ($nowUnixMs -gt $markerDeadlineUnixMs) {
+    exit 1
+}
+
+# CreateNew fails, rather than silently recreating anything, when the
+# private directory is already gone (the CLI gave up waiting and deleted
+# it) or when the marker somehow already exists: it never creates a
+# missing parent directory the way a forced item creation would.
+$markerStream = [System.IO.File]::Open(
+    $ReadyMarkerPath,
+    [System.IO.FileMode]::CreateNew
+)
+$markerStream.Close()
 
 $exited = $true
 if ($null -ne $parent) {
@@ -239,12 +301,17 @@ abstract class CliProcessLauncher {
   /// of it is interpolated into a script or a command line, so nothing in
   /// it needs shell escaping.
   ///
+  /// Returns null on a clean success, or a warning naming a problem that
+  /// does not change the outcome (currently: the implementation's own
+  /// private temporary directory could not be removed once the worker
+  /// confirmed ready) but that a caller must not discard either.
+  ///
   /// Throws [CliCleanupWorkerStartFailure] when the worker cannot be started
   /// at all, or does not confirm readiness in time. A worker that starts,
   /// confirms readiness, and then fails on its own later (after this process
   /// has already exited, with nobody left to observe it) is not this
   /// method's concern.
-  Future<void> startCleanupWorker(Map<String, Object?> payload);
+  Future<String?> startCleanupWorker(Map<String, Object?> payload);
 }
 
 /// Launches a real, detached PowerShell cleanup worker.
@@ -300,13 +367,28 @@ abstract class CliProcessLauncher {
 /// itself once it has seen the marker, or once it gives up waiting for one,
 /// so nothing is left behind either way.
 class IoCliProcessLauncher implements CliProcessLauncher {
-  const IoCliProcessLauncher();
+  /// [startupTimeout] and [markerDeadlineSafetyMargin] override
+  /// [cleanupWorkerStartupTimeout] and
+  /// [cleanupWorkerMarkerDeadlineSafetyMargin] respectively. A test uses
+  /// this to make the deadline the worker itself refuses to create the
+  /// marker past fall a handful of milliseconds after launch, deterministic
+  /// ally provoking the case a real, slow worker start could otherwise only
+  /// hit by chance.
+  const IoCliProcessLauncher({
+    Duration startupTimeout = cleanupWorkerStartupTimeout,
+    Duration markerDeadlineSafetyMargin =
+        cleanupWorkerMarkerDeadlineSafetyMargin,
+  }) : _startupTimeout = startupTimeout,
+       _markerDeadlineSafetyMargin = markerDeadlineSafetyMargin;
+
+  final Duration _startupTimeout;
+  final Duration _markerDeadlineSafetyMargin;
 
   @override
   int get currentPid => io.pid;
 
   @override
-  Future<void> startCleanupWorker(Map<String, Object?> payload) async {
+  Future<String?> startCleanupWorker(Map<String, Object?> payload) async {
     final environment = io.Platform.environment;
     final powershellPath = powershellExecutablePath(environment);
     final cmdPath = cmdExecutablePath(environment);
@@ -321,12 +403,26 @@ class IoCliProcessLauncher implements CliProcessLauncher {
       );
     }
 
+    CliCleanupWorkerStartFailure? startFailure;
     try {
       final readyMarkerPath =
           '${privateDir.path}${io.Platform.pathSeparator}ready';
 
+      final startedAt = DateTime.now();
+      // A single origin for both deadlines below: the worker's own,
+      // carried through the payload as Unix epoch milliseconds (UTC, so
+      // both processes compare it against the same origin regardless of
+      // local time zone), and the CLI's own further down, kept a fixed
+      // safety margin apart so the CLI's poll interval always has time to
+      // observe a marker the worker created in time.
+      final markerDeadlineUnixMs =
+          startedAt.toUtc().millisecondsSinceEpoch +
+          (_startupTimeout - _markerDeadlineSafetyMargin).inMilliseconds;
+      final effectivePayload = Map<String, Object?>.from(payload)
+        ..['markerDeadlineUnixMs'] = markerDeadlineUnixMs;
+
       final workerEnvironment = Map<String, String>.from(environment)
-        ..[cleanupWorkerPayloadEnvVar] = jsonEncode(payload)
+        ..[cleanupWorkerPayloadEnvVar] = jsonEncode(effectivePayload)
         ..[cleanupWorkerReadyMarkerPathEnvVar] = readyMarkerPath;
 
       // Deliberately Process.start, awaiting only exitCode, never
@@ -358,31 +454,61 @@ class IoCliProcessLauncher implements CliProcessLauncher {
         );
       }
 
-      final deadline = DateTime.now().add(cleanupWorkerStartupTimeout);
+      final cliDeadline = startedAt.add(_startupTimeout);
       while (!io.File(readyMarkerPath).existsSync()) {
-        if (DateTime.now().isAfter(deadline)) {
+        if (DateTime.now().isAfter(cliDeadline)) {
           throw CliCleanupWorkerStartFailure(
             'The cleanup worker did not confirm it was ready within '
-            '${cleanupWorkerStartupTimeout.inSeconds}s.',
+            '${_startupTimeout.inSeconds}s.',
           );
         }
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await Future<void>.delayed(cleanupWorkerReadyPollInterval);
       }
-    } finally {
-      // Best effort, on every outcome: whether the worker confirmed ready
-      // or this timed out waiting for it, nothing after this point needs
-      // the private directory, and leaving it behind on every run of a
-      // long-lived CLI is exactly the leak this replaces. The result
-      // already determined above (return, or a thrown
-      // CliCleanupWorkerStartFailure) is what the caller needs to see; a
-      // failure to delete this directory is not evidence that failed too.
-      try {
-        if (privateDir.existsSync()) {
-          privateDir.deleteSync(recursive: true);
-        }
-      } on Object {
-        // Best effort, as above.
-      }
+    } on CliCleanupWorkerStartFailure catch (e) {
+      startFailure = e;
+    }
+
+    // Whether the worker confirmed ready or startCleanupWorker gave up
+    // waiting for it, nothing after this point needs the private
+    // directory, and leaving it behind on every run of a long-lived CLI is
+    // exactly the leak this removes. Unlike a bare "best effort" catch,
+    // though, a failure to remove it here is not discarded: it is folded
+    // into the CliCleanupWorkerStartFailure above when there is one, or
+    // returned as a warning on the success path, because a leftover
+    // private directory is exactly the kind of thing a caller (and,
+    // through it, an operator reading uninstall's own output) needs to be
+    // told about rather than have hidden from them.
+    String? cleanupFailureDetail;
+    try {
+      deletePrivateDirectory(privateDir);
+    } on Object catch (e) {
+      cleanupFailureDetail =
+          'could not remove its private temporary directory '
+          '${privateDir.path}: $e';
+    }
+
+    if (startFailure != null) {
+      if (cleanupFailureDetail == null) throw startFailure;
+      throw CliCleanupWorkerStartFailure(
+        '${startFailure.message} Additionally, $cleanupFailureDetail.',
+      );
+    }
+
+    if (cleanupFailureDetail == null) return null;
+    return 'The cleanup worker started successfully, but '
+        '$cleanupFailureDetail.';
+  }
+
+  /// Removes [privateDir], if it still exists, once
+  /// [startCleanupWorker] no longer needs it. Exposed as its own
+  /// overridable method purely as a test seam: a subclass in a test can
+  /// override this to throw on demand, which is the only way to exercise
+  /// startCleanupWorker's own handling of a cleanup failure, since nothing
+  /// portable lets a test provoke a real directory-deletion failure at
+  /// exactly this point otherwise. Production code never overrides this.
+  void deletePrivateDirectory(io.Directory privateDir) {
+    if (privateDir.existsSync()) {
+      privateDir.deleteSync(recursive: true);
     }
   }
 }
