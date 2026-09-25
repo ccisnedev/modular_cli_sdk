@@ -176,23 +176,40 @@ class FakePlatform implements CliPlatform {
   final String operatingSystem;
 }
 
-/// Records what would have been launched instead of starting a real
-/// detached process, so a test of the Windows self-delete step can assert
-/// what it launches without a real `cmd.exe` and a real second PID.
+/// Records what would have been launched instead of starting a real cleanup
+/// worker, so a test of the Windows self-delete step can assert what it
+/// launches without a real PowerShell process and a real second PID.
 class FakeProcessLauncher implements CliProcessLauncher {
-  FakeProcessLauncher({int pid = 4242, this.startError}) : currentPid = pid;
+  FakeProcessLauncher({
+    int pid = 4242,
+    this.startError,
+    this.readyLine = 'READY',
+  }) : currentPid = pid;
 
   @override
   final int currentPid;
 
   final Object? startError;
 
-  /// Every call to [start], as `(executable, arguments)` pairs, in order.
-  final List<(String, List<String>)> started = [];
+  /// The first line the fake worker's stdout would have produced. Left at
+  /// the default `'READY'`, [startCleanupWorker] succeeds; set to anything
+  /// else (including null, simulating no output at all before the startup
+  /// timeout) to exercise the handshake-failure path without a real process
+  /// or a real timeout.
+  final String? readyLine;
+
+  /// Every payload passed to [startCleanupWorker], in order.
+  final List<Map<String, Object?>> startedCleanupWorkers = [];
 
   @override
-  Future<void> start(String executable, List<String> arguments) async {
+  Future<void> startCleanupWorker(Map<String, Object?> payload) async {
     if (startError != null) throw startError!;
-    started.add((executable, arguments));
+    if (readyLine != 'READY') {
+      throw CliCleanupWorkerStartFailure(
+        'The cleanup worker\'s first line of output was "$readyLine", not '
+        'READY.',
+      );
+    }
+    startedCleanupWorkers.add(payload);
   }
 }

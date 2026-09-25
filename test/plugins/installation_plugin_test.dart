@@ -806,8 +806,8 @@ void main() {
       },
     );
 
-    test('on Windows, the running executable is moved aside and a detached '
-        'process is started to remove it once this process exits', () async {
+    test('on Windows, the running executable is moved aside and a cleanup '
+        'worker is started to remove it once this process exits', () async {
       final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
       final processLauncher = FakeProcessLauncher(pid: 4242);
       final cli = _cliWith(
@@ -832,25 +832,57 @@ void main() {
       expect(fileSystem.renamed, [
         ('/usr/local/bin/cx', '/usr/local/bin/cx.uninstall-4242.old'),
       ]);
-      expect(processLauncher.started, hasLength(1));
-      final (executable, arguments) = processLauncher.started.single;
-      expect(executable, 'cmd');
-      expect(arguments.first, '/c');
-      expect(arguments.join(' '), contains('4242'));
-      expect(
-        arguments.join(' '),
-        contains('/usr/local/bin/cx.uninstall-4242.old'),
-      );
+      expect(processLauncher.startedCleanupWorkers, hasLength(1));
+      final payload = processLauncher.startedCleanupWorkers.single;
+      // No part of the payload is interpolated into a script; it travels as
+      // plain JSON values on the worker's stdin instead, so there is nothing
+      // here for a path to escape or break out of.
+      expect(payload['parentPid'], 4242);
+      expect(payload['paths'], ['/usr/local/bin/cx.uninstall-4242.old']);
+      expect(payload['timeoutMs'], cleanupWorkerParentExitTimeoutMs);
       // No silent success: the plan says explicitly that removal is
       // deferred, rather than implying the file is already gone.
       expect(
         out.output,
         contains('/usr/local/bin/cx will be removed when this process exits'),
       );
+      // Honest reporting: the path is scheduled, not removed. Nothing on
+      // disk has actually been deleted yet at the point this output is
+      // printed.
+      expect(out.output, contains('scheduled: [/usr/local/bin/cx]'));
+      expect(out.output, isNot(contains('removed: [/usr/local/bin/cx]')));
     });
 
-    test('on Windows, if the detached process cannot be started, uninstall '
-        'fails with file-access-denied instead of a silent success', () async {
+    test(
+      'the cleanup worker payload is not shell-escaped: paths with spaces, '
+      'apostrophes, %, &, ! and parentheses travel through unchanged',
+      () async {
+        const trickyPath =
+            "/usr/local/bin/cx that's (weird) 100% & loud!.exe";
+        final fileSystem = FakeFileSystem(onPath: {'cx': trickyPath});
+        final processLauncher = FakeProcessLauncher(pid: 4242);
+        final cli = _cliWith(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            platform: const FakePlatform('windows'),
+            processLauncher: processLauncher,
+          ),
+        );
+
+        final code = await cli.run([
+          'uninstall',
+          '--apply',
+          '--autoapprove',
+        ], stdout: MemorySink());
+
+        expect(code, ExitCode.ok);
+        final payload = processLauncher.startedCleanupWorkers.single;
+        expect(payload['paths'], ['$trickyPath.uninstall-4242.old']);
+      },
+    );
+
+    test('on Windows, if the cleanup worker cannot be started, uninstall '
+        'fails with cleanup-start-failed instead of a silent success', () async {
       final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
       final processLauncher = FakeProcessLauncher(
         startError: Exception('no shell available'),
@@ -871,10 +903,33 @@ void main() {
       ], stdout: out);
 
       expect(code, ExitCode.genericError);
-      expect(out.output, contains('file-access-denied'));
+      expect(out.output, contains('cleanup-start-failed'));
       // The rename already happened; the failure message says where the
       // file ended up rather than leaving it unaccounted for.
       expect(out.output, contains('/usr/local/bin/cx.uninstall-4242.old'));
+    });
+
+    test('on Windows, if the cleanup worker starts but never confirms it is '
+        'ready, uninstall fails with cleanup-start-failed', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+      final processLauncher = FakeProcessLauncher(readyLine: 'not ready yet');
+      final cli = _cliWith(
+        _upgradePlugin(
+          fileSystem: fileSystem,
+          platform: const FakePlatform('windows'),
+          processLauncher: processLauncher,
+        ),
+      );
+
+      final out = MemorySink();
+      final code = await cli.run([
+        'uninstall',
+        '--apply',
+        '--autoapprove',
+      ], stdout: out);
+
+      expect(code, ExitCode.genericError);
+      expect(out.output, contains('cleanup-start-failed'));
     });
 
     test(
