@@ -773,12 +773,21 @@ class UninstallOutput extends Output {
   UninstallOutput({
     required this.removed,
     required this.exitCode,
+    this.scheduled = const [],
     this.errorId,
     this.errorMessage,
     this.notes = const [],
   });
 
   final List<String> removed;
+
+  /// Paths a step scheduled for removal rather than removing outright, e.g.
+  /// [SelfDeleteExecutableStep] on Windows: the running executable is moved
+  /// aside and a cleanup worker is told to delete it once this process
+  /// exits, so at the point this output is printed it has not actually been
+  /// removed yet. Reported separately from [removed] so this never claims a
+  /// deletion that has not happened.
+  final List<String> scheduled;
 
   /// Explanatory notes a step attached to its outcome, e.g.
   /// [SelfDeleteExecutableStep]'s "will be removed when this process exits":
@@ -797,6 +806,7 @@ class UninstallOutput extends Output {
     if (errorId != null) 'error': errorId,
     if (errorMessage != null) 'message': errorMessage,
     'removed': removed,
+    'scheduled': scheduled,
     if (notes.isNotEmpty) 'notes': notes,
   };
 }
@@ -915,7 +925,19 @@ class UninstallCommand
 
   @override
   UninstallOutput describe(Execution execution) {
-    final removed = execution.outcomes.map((o) => o.target).toList();
+    // 'remove' outcomes are actually gone; 'schedule' outcomes (only ever
+    // from SelfDeleteExecutableStep, on Windows) are only moved aside so
+    // far, with the real deletion left to a cleanup worker that runs after
+    // this process exits. Reporting the two under the same list would claim
+    // a deletion that has not happened yet.
+    final removed = execution.outcomes
+        .where((o) => o.verb == 'remove')
+        .map((o) => o.target)
+        .toList();
+    final scheduled = execution.outcomes
+        .where((o) => o.verb == 'schedule')
+        .map((o) => o.target)
+        .toList();
     final notes = execution.outcomes
         .map((o) => o.detail)
         .whereType<String>()
@@ -932,6 +954,7 @@ class UninstallCommand
           : failure.message;
       return UninstallOutput(
         removed: removed,
+        scheduled: scheduled,
         exitCode: ExitCode.genericError,
         errorId: id,
         errorMessage: message,
@@ -941,6 +964,7 @@ class UninstallCommand
 
     return UninstallOutput(
       removed: removed,
+      scheduled: scheduled,
       exitCode: ExitCode.ok,
       notes: notes,
     );
@@ -953,17 +977,20 @@ class UninstallCommand
 /// renamed) while it is running.
 ///
 /// [path] is moved aside to `<path>.uninstall-<pid>.old`, then a detached
-/// `cmd /c` process is started that waits for this process (identified by
-/// [CliProcessLauncher.currentPid]) to exit before deleting the renamed
-/// file. This step's own [Outcome] reports [path] as removed once the move
-/// succeeds, since from the caller's perspective it is gone (nothing on
-/// `PATH` resolves to it any more); [preview] says explicitly that the
-/// actual deletion happens later, so `--plan`/`--apply` output does not
-/// imply the file disappears the instant this step runs.
+/// PowerShell cleanup worker is started
+/// ([CliProcessLauncher.startCleanupWorker]) that waits for this process
+/// (identified by [CliProcessLauncher.currentPid]) to exit before deleting
+/// the renamed file. This step's own [Outcome] uses the verb `schedule`,
+/// not `remove`: from the caller's perspective the path is gone from `PATH`
+/// once the move succeeds, but the file itself has not actually been
+/// deleted yet, and [UninstallCommand.describe] relies on that verb to keep
+/// the two apart. [preview] says explicitly that the actual deletion
+/// happens later, so `--plan`/`--apply` output does not imply the file
+/// disappears the instant this step runs.
 ///
-/// Starting the detached process is not allowed to fail silently: if
-/// [CliProcessLauncher.start] itself throws, this step fails with
-/// `file-access-denied` naming the renamed file, rather than reporting a
+/// Starting the cleanup worker is not allowed to fail silently: if
+/// [CliProcessLauncher.startCleanupWorker] throws, this step fails with
+/// `cleanup-start-failed` naming the renamed file, rather than reporting a
 /// success that leaves a `.old` file behind forever.
 class SelfDeleteExecutableStep implements Step {
   SelfDeleteExecutableStep({
@@ -978,7 +1005,7 @@ class SelfDeleteExecutableStep implements Step {
 
   @override
   Preview preview() => Preview(
-    verb: 'remove',
+    verb: 'schedule',
     target: path,
     detail: '$path will be removed when this process exits',
   );
@@ -997,30 +1024,23 @@ class SelfDeleteExecutableStep implements Step {
       );
     }
 
-    // Polls, from the detached process, for the PID this process is running
-    // under to stop appearing in `tasklist`, then deletes the renamed file.
-    // Bounded at 300 one-second checks (5 minutes) rather than looping
-    // forever: a process that never exits should not leave a runaway
-    // `cmd.exe` behind it either.
-    final script =
-        'for /l %n in (1,1,300) do ('
-        'tasklist /fi "PID eq $pid" 2>nul | find "$pid" >nul '
-        '|| (del /f /q "$renamedPath" & exit /b 0) & '
-        'timeout /t 1 /nobreak >nul'
-        ')';
-
     try {
-      await processLauncher.start('cmd', ['/c', script]);
+      await processLauncher.startCleanupWorker({
+        'parentPid': pid,
+        'paths': [renamedPath],
+        'timeoutMs': cleanupWorkerParentExitTimeoutMs,
+      });
     } on Object catch (e) {
       throw CliInstallStepFailure(
-        'file-access-denied',
-        '$path was moved to $renamedPath but the process that removes it '
-            'could not be started: $e. Delete $renamedPath manually.',
+        'cleanup-start-failed',
+        '$path was moved to $renamedPath but the cleanup worker that '
+            'removes it could not be started: $e. Delete $renamedPath '
+            'manually.',
       );
     }
 
     return Outcome(
-      verb: 'remove',
+      verb: 'schedule',
       target: path,
       detail: '$path will be removed when this process exits',
     );

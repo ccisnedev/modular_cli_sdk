@@ -81,7 +81,17 @@ export 'src/plugins/installation/cli_file_system.dart'
 export 'src/plugins/installation/cli_platform.dart'
     show CliPlatform, IoCliPlatform;
 export 'src/plugins/installation/cli_process_launcher.dart'
-    show CliProcessLauncher, IoCliProcessLauncher;
+    show
+        CliCleanupWorkerStartFailure,
+        CliProcessLauncher,
+        IoCliProcessLauncher,
+        cleanupWorkerBootstrapScript,
+        cleanupWorkerParentExitTimeoutMs,
+        cleanupWorkerPayloadPathEnvVar,
+        cleanupWorkerReadyMarkerPathEnvVar,
+        cleanupWorkerStartupTimeout,
+        cmdExecutablePath,
+        powershellExecutablePath;
 export 'src/plugins/installation/cli_release_source.dart'
     show
         CliRelease,
