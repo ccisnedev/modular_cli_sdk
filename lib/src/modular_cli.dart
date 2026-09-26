@@ -404,11 +404,7 @@ class ModularCli {
   /// recorded last (see [use]'s own doc comment for why "last recorded" is
   /// exactly "outermost thrown"), exactly once, in the mode ([--json] or
   /// text) the request that recorded it was running under.
-  Future<int> run(
-    List<String> args, {
-    io.IOSink? stdout,
-    io.IOSink? stderr,
-  }) {
+  Future<int> run(List<String> args, {io.IOSink? stdout, io.IOSink? stderr}) {
     return runWithInvocationOutcome(() async {
       _registerHelpCommand();
       final out = stdout ?? io.stdout;
@@ -712,7 +708,7 @@ class ModularCli {
     final routerMessage = rejection.message ?? rejection.kind.name;
     final message = _withSuggestion(
       rejection.kind,
-      routerMessage,
+      rejection.token,
       rejection.kind == CliRejectionKind.incomplete &&
               contract == null &&
               completions.isNotEmpty
@@ -787,33 +783,33 @@ class ModularCli {
   }
 
   /// Appends a "did you mean" suggestion to [finalMessage] when [kind] is
-  /// one naming an offending word ([CliRejectionKind.unknownCommand]
-  /// (`"unknown command 'shwo'"`) or [CliRejectionKind.incomplete]
-  /// (`"'shwo' does not continue this command"`)) and [CommandCatalog.suggest]
-  /// finds a close enough registered word for it.
+  /// one naming an offending word ([CliRejectionKind.unknownCommand] or
+  /// [CliRejectionKind.incomplete]) and [CommandCatalog.suggest] finds a
+  /// close enough registered word for it.
   ///
-  /// The word is read from [routerMessage], the router's own, original
-  /// message, always quoted the same way for these two kinds, never from
-  /// [finalMessage], which may already have been rewritten (the "is not a
-  /// complete command" case above) into text that no longer quotes a
-  /// single word. Gated on [kind] alone, exactly like the rewrite above: it
-  /// is an addition, not a substitution, so it cannot change what the
-  /// router itself reported, only add a suggestion after it.
+  /// The word is read from [token] ([CliRejection.token]), typed instead of
+  /// parsed out of the router's message: the router's message is prose for
+  /// logging, its wording can change, and an offending token containing a
+  /// quote character would make a regex over the message extract a
+  /// truncated, wrong word. [token] is never read from [finalMessage]
+  /// either, since that may already have been rewritten (the "is not a
+  /// complete command" case above) into text that does not name the
+  /// offending word at all. Gated on [kind] alone, exactly like the
+  /// rewrite above: it is an addition, not a substitution, so it cannot
+  /// change what the router itself reported, only add a suggestion after
+  /// it.
   String _withSuggestion(
     CliRejectionKind kind,
-    String routerMessage,
+    String? token,
     String finalMessage,
   ) {
     if (kind != CliRejectionKind.unknownCommand &&
         kind != CliRejectionKind.incomplete) {
       return finalMessage;
     }
-    final match = RegExp("'([^']*)'").firstMatch(routerMessage);
-    if (match == null) return finalMessage;
-    final offending = match.group(1)!;
-    if (offending.isEmpty) return finalMessage;
+    if (token == null || token.isEmpty) return finalMessage;
     final suggestion = _catalog.suggest(
-      offending,
+      token,
       maxDistance: _suggestionDistance,
     );
     if (suggestion == null) return finalMessage;
@@ -900,9 +896,10 @@ class ModularCli {
   /// very same first positional). `cli_router`'s own trie enforces one name
   /// per shared positional slot: two routes continuing the same slot under
   /// different names is a build-time [ArgumentError] (see `_Trie.register`
-  /// in `cli_router`), so [CliRejectionKind.missingArgument]'s message,
-  /// `'missing a value for <name>'`, names the exact slot the invocation is
-  /// still stuck on. A candidate that does not declare a positional under
+  /// in `cli_router`), so [CliRejectionKind.missingArgument]'s
+  /// [CliRejection.argument] names the exact slot the invocation is still
+  /// stuck on, typed, straight from the router. A candidate that does not
+  /// declare a positional under
   /// that name has already fallen out of the running by definition; a
   /// candidate that does is still viable. Exactly one still-viable
   /// candidate resolves unambiguously; zero or more than one (including
@@ -911,10 +908,11 @@ class ModularCli {
   /// own ambiguous case already does (round-6 review finding 6): the
   /// router's own rejection, rather than guessing.
   ///
-  /// [CliRejectionKind.incomplete] carries no such positional name (the
-  /// router itself has nothing pending at that node), so there is no
-  /// routing-progress signal to resolve from; this is treated the same as
-  /// an unparseable message, ambiguous.
+  /// [CliRejectionKind.incomplete] carries no such positional name
+  /// ([CliRejection.argument] is always null for it: the router itself has
+  /// nothing pending at that node), so there is no routing-progress signal
+  /// to resolve from; this is treated the same as any other null
+  /// [CliRejection.argument], ambiguous.
   ///
   /// [CliRejection.route] being non-null names one exact route `cli_router`
   /// itself resolved to: unambiguous by construction (a second registration
@@ -936,7 +934,7 @@ class ModularCli {
       return (contract: catalogContract ?? shortcutContract, ambiguous: false);
     }
 
-    final missingName = _missingPositionalName(rejection);
+    final missingName = rejection.argument;
     if (missingName == null) return (contract: null, ambiguous: true);
 
     final catalogStillViable = _declaresPositional(
@@ -954,21 +952,6 @@ class ModularCli {
       contract: catalogStillViable ? catalogContract : shortcutContract,
       ambiguous: false,
     );
-  }
-
-  static final RegExp _missingPositionalPattern = RegExp(
-    r'^missing a value for <(.+)>$',
-  );
-
-  /// The positional name `cli_router` reports as missing in
-  /// [CliRejection.message], for [CliRejectionKind.missingArgument] only;
-  /// see `finishHere()` in `cli_router`'s own resolver for the exact string
-  /// this parses back out.
-  String? _missingPositionalName(CliRejection rejection) {
-    if (rejection.kind != CliRejectionKind.missingArgument) return null;
-    final message = rejection.message;
-    if (message == null) return null;
-    return _missingPositionalPattern.firstMatch(message)?.group(1);
   }
 
   bool _declaresPositional(CommandContract contract, String name) =>

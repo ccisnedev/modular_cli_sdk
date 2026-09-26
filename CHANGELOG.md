@@ -157,6 +157,20 @@ rejected. No bug or missing API was found in it while building this one.
 
 ### Fixed
 
+- **The SDK no longer parses `CliRejection.message` with regexes to recover
+  typed data; it reads `cli_router` 0.2.0's own typed fields instead.**
+  `_withSuggestion` used an unanchored `RegExp("'([^']*)'")` over the
+  router's message to find the offending argv token for "Did you mean"
+  suggestions, and `_missingPositionalName` parsed the message again to
+  recover the missing positional's name for `_applicableContractFor`. Both
+  broke silently if the router's wording ever changed, and the suggestion
+  regex additionally truncated its match at the first closing quote, so an
+  offending token containing an apostrophe (e.g. `s'how`) was extracted as
+  only its prefix, too short to suggest anything close. `_withSuggestion`
+  now takes `CliRejection.token` directly, and `_applicableContractFor`
+  reads `CliRejection.argument` directly; `_missingPositionalPattern` and
+  `_missingPositionalName` are deleted. `rejection.message` is still read
+  once, for display, never parsed
 - **A `--apply`'s approval refusal and a step failure are now structured
   errors, under `--json` too.** `_carryOut()` previously wrote a refused
   approval as a plain success-shaped object via `writeObject` and a step
