@@ -454,9 +454,64 @@ so that winning phase 1 is never mistaken for a completed cleanup.
   renames the same failure handling
 - Every phase 2 state and timing is a named constant:
   `cleanupWorkerArmedMarkerFileName`, `cleanupWorkerRevokedMarkerFileName`,
-  `cleanupWorkerFailedMarkerFileName`, and `cleanupWorkerAckTimeout` for
-  how long `IoCliProcessLauncher` waits to observe `armed` before it
+  `cleanupWorkerFailedMarkerFileName` (removed in the seventh review round
+  below, along with the `failed` state itself), and `cleanupWorkerAckTimeout`
+  for how long `IoCliProcessLauncher` waits to observe `armed` before it
   revokes
+
+### Fixed (seventh review round)
+
+A seventh pass over #30, closing the one window phase 2 still left open:
+a single failed revoke rename used to be reported as an ordinary
+`cleanup-start-failed`, removing the worker's private directory in the
+process, even though the worker could still win the arming race the
+moment that failure cleared.
+
+- **`IoCliProcessLauncher` no longer reports failure while the worker can
+  still arm.** A failed revoke rename (an unexpected error such as a real
+  sharing violation, not an ordinary lost race) used to be surfaced,
+  after a single attempt, as `cleanup-start-failed`, and the private
+  directory removed along with it. It is now retried on the same poll
+  interval as every other rename in this protocol, through the new
+  `pollForRevokeOrArm`, checking the `armed` marker again before each
+  retry so a worker that wins mid-retry is noticed rather than revoked
+  out from under it. If the failure still has not resolved either way by
+  a new, separate `cleanupWorkerRevokeTimeout` deadline, `uninstall` now
+  reports the new `cleanup-outcome-unknown` id instead of
+  `cleanup-start-failed`, naming the renamed file and the accepted marker
+  path and stating that the worker may still be alive and may still
+  delete the file later. The private directory is deliberately left in
+  place in that one case, since removing it while the worker might still
+  be using it would only trade one race for another. Directory cleanup
+  is never treated as revocation
+- **The worker itself never gives up while a claimable marker still
+  exists.** It used to exit with `ready` or `accepted` still present
+  after a persistent rename failure, once its own ack deadline passed.
+  Its only exits now are the terminal states reached by its own
+  successful rename, or by observing that the CLI already claimed the
+  outcome first (a `revoked` marker on the abandon side, or nothing left
+  to arm on the arm side): while a claimable marker exists and its rename
+  keeps failing, it keeps retrying on the poll interval with no cap of
+  its own, exactly like the CLI's own unbounded wait on it
+- **The `failed` marker, and the state it recorded, are removed
+  entirely**, not merely left unread. With the worker never giving up on
+  its own any more, nothing was ever going to write it past the point a
+  CLI still watching it could read it, and its own write was a nested,
+  swallowed catch this project does not add another instance of. Once
+  armed, the worker has no process left to report a later failure to at
+  all; see the README's `InstallationPlugin error ids` section for what
+  that means and why this is accepted rather than closed with a new
+  diagnostic channel
+- **The worker's parent wait has a real test seam proving there is no
+  cap on it**, not only a test whose own delay happened to be short. The
+  existing "no cap" test never actually drove the script through a
+  bounded wait; it only ever ran the real, always-unbounded script. A new
+  contrast exercises a deliberately bounded stand-in, built by
+  substituting the real script's own unbounded `$parent.WaitForExit()`
+  for a short, self-marking bounded one, showing that stand-in does give
+  up on a still-alive parent, before showing the real, unmodified script
+  does not give up on the same kind of still-alive parent well past the
+  same mark
 
 ### Notes
 
