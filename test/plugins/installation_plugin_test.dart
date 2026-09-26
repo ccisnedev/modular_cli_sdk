@@ -4,6 +4,7 @@
 /// deletes anything real.
 library;
 
+import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
@@ -329,7 +330,10 @@ void main() {
         );
 
         expect(code, ExitCode.genericError);
-        expect(out.output, contains('download-failed'));
+        // The single JSON/text error envelope belongs on stderr; stdout in
+        // a failed --apply carries none of the error's own vocabulary.
+        expect(out.output, isNot(contains('download-failed')));
+        expect(err.output, contains('download-failed'));
         expect(
           fileSystem.written,
           isEmpty,
@@ -351,17 +355,58 @@ void main() {
         );
 
         final out = MemorySink();
+        final err = MemorySink();
         final code = await cli.run([
           'upgrade',
           '--apply',
           '--autoapprove',
-        ], stdout: out);
+        ], stdout: out, stderr: err);
 
         expect(code, ExitCode.genericError);
-        expect(out.output, contains('file-access-denied'));
+        expect(out.output, isNot(contains('file-access-denied')));
+        expect(err.output, contains('file-access-denied'));
         // Stops at the failed step and reports the step already done (the
-        // download) without retrying or rolling it back.
-        expect(out.output, contains('stepsCompleted: [cx-linux]'));
+        // download) without retrying or rolling it back: preserved in the
+        // error envelope's details, not lost when the failure moved to
+        // stderr.
+        expect(err.output, contains('stepsCompleted: [cx-linux]'));
+      },
+    );
+
+    // Finding 1 (round 9): the same failure, under --json. Stdout in a
+    // failed --apply carries only whatever legitimate success shape the
+    // command chose (none, here); the error and its partial results live
+    // in the one JSON envelope on stderr.
+    test(
+      '--json renders a file-access failure as a single error envelope on '
+      'stderr, with the completed download step preserved in details',
+      () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+          ..writeError = Exception('permission denied');
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+          ),
+        );
+
+        final out = MemorySink();
+        final err = MemorySink();
+        final code = await cli.run([
+          'upgrade',
+          '--apply',
+          '--autoapprove',
+          '--json',
+        ], stdout: out, stderr: err);
+
+        expect(code, ExitCode.genericError);
+        expect(out.output, isEmpty);
+
+        final decoded = jsonDecode(err.output) as Map<String, dynamic>;
+        expect(decoded['error'], 'file-access-denied');
+        expect(decoded['exitCode'], ExitCode.genericError);
+        final details = decoded['details'] as Map<String, dynamic>;
+        expect(details['stepsCompleted'], ['cx-linux']);
       },
     );
 
@@ -383,15 +428,17 @@ void main() {
         );
 
         final out = MemorySink();
+        final err = MemorySink();
         final code = await cli.run([
           'upgrade',
           '--apply',
           '--autoapprove',
-        ], stdout: out);
+        ], stdout: out, stderr: err);
 
         expect(code, ExitCode.genericError);
-        expect(out.output, contains('executable-check-failed'));
-        expect(out.output, isNot(contains('file-access-denied')));
+        expect(out.output, isNot(contains('executable-check-failed')));
+        expect(err.output, contains('executable-check-failed'));
+        expect(err.output, isNot(contains('file-access-denied')));
       },
     );
 
@@ -585,14 +632,16 @@ void main() {
         );
 
         final out = MemorySink();
+        final err = MemorySink();
         final code = await cli.run([
           'upgrade',
           '--apply',
           '--autoapprove',
-        ], stdout: out);
+        ], stdout: out, stderr: err);
 
         expect(code, ExitCode.genericError);
-        expect(out.output, contains('install-target-changed'));
+        expect(out.output, isNot(contains('install-target-changed')));
+        expect(err.output, contains('install-target-changed'));
         expect(fileSystem.written, isEmpty);
       },
     );
@@ -619,14 +668,16 @@ void main() {
         );
 
         final out = MemorySink();
+        final err = MemorySink();
         final code = await cli.run([
           'upgrade',
           '--apply',
           '--autoapprove',
-        ], stdout: out);
+        ], stdout: out, stderr: err);
 
         expect(code, ExitCode.genericError);
-        expect(out.output, contains('install-target-changed'));
+        expect(out.output, isNot(contains('install-target-changed')));
+        expect(err.output, contains('install-target-changed'));
         expect(fileSystem.written, isEmpty);
       },
     );
@@ -651,14 +702,16 @@ void main() {
         );
 
         final out = MemorySink();
+        final err = MemorySink();
         final code = await cli.run([
           'upgrade',
           '--apply',
           '--autoapprove',
-        ], stdout: out);
+        ], stdout: out, stderr: err);
 
         expect(code, ExitCode.genericError);
-        expect(out.output, contains('install-target-changed'));
+        expect(out.output, isNot(contains('install-target-changed')));
+        expect(err.output, contains('install-target-changed'));
         expect(fileSystem.written, isEmpty);
       },
     );
@@ -739,14 +792,16 @@ void main() {
         );
 
         final out = MemorySink();
+        final err = MemorySink();
         final code = await cli.run([
           'upgrade',
           '--apply',
           '--autoapprove',
-        ], stdout: out);
+        ], stdout: out, stderr: err);
 
         expect(code, ExitCode.genericError);
-        expect(out.output, contains('alias-hard-link-unsupported'));
+        expect(out.output, isNot(contains('alias-hard-link-unsupported')));
+        expect(err.output, contains('alias-hard-link-unsupported'));
         expect(fileSystem.written, isEmpty);
       },
     );
@@ -805,15 +860,17 @@ void main() {
         );
 
         final out = MemorySink();
+        final err = MemorySink();
         final code = await cli.run([
           'upgrade',
           '--apply',
           '--autoapprove',
-        ], stdout: out);
+        ], stdout: out, stderr: err);
 
         expect(code, ExitCode.genericError);
-        expect(out.output, contains('executable-check-failed'));
-        expect(out.output, isNot(contains('alias-hard-link-unsupported')));
+        expect(out.output, isNot(contains('executable-check-failed')));
+        expect(err.output, contains('executable-check-failed'));
+        expect(err.output, isNot(contains('alias-hard-link-unsupported')));
         expect(fileSystem.written, isEmpty);
       },
     );
@@ -895,15 +952,17 @@ void main() {
         );
 
         final out = MemorySink();
+        final err = MemorySink();
         final code = await cli.run([
           'upgrade',
           '--apply',
           '--autoapprove',
-        ], stdout: out);
+        ], stdout: out, stderr: err);
 
         expect(code, ExitCode.genericError);
-        expect(out.output, contains('executable-check-failed'));
-        expect(out.output, isNot(contains('alias-hard-link-unsupported')));
+        expect(out.output, isNot(contains('executable-check-failed')));
+        expect(err.output, contains('executable-check-failed'));
+        expect(err.output, isNot(contains('alias-hard-link-unsupported')));
       },
     );
   });
@@ -1064,14 +1123,16 @@ void main() {
         final cli = _cliWith(_upgradePlugin(fileSystem: fileSystem));
 
         final out = MemorySink();
+        final err = MemorySink();
         final code = await cli.run([
           'uninstall',
           '--apply',
           '--autoapprove',
-        ], stdout: out);
+        ], stdout: out, stderr: err);
 
         expect(code, ExitCode.genericError);
-        expect(out.output, contains('file-access-denied'));
+        expect(out.output, isNot(contains('file-access-denied')));
+        expect(err.output, contains('file-access-denied'));
       },
     );
 
@@ -1177,17 +1238,19 @@ void main() {
       );
 
       final out = MemorySink();
+      final err = MemorySink();
       final code = await cli.run([
         'uninstall',
         '--apply',
         '--autoapprove',
-      ], stdout: out);
+      ], stdout: out, stderr: err);
 
       expect(code, ExitCode.genericError);
-      expect(out.output, contains('cleanup-start-failed'));
+      expect(out.output, isNot(contains('cleanup-start-failed')));
+      expect(err.output, contains('cleanup-start-failed'));
       // The rename already happened; the failure message says where the
       // file ended up rather than leaving it unaccounted for.
-      expect(out.output, contains('/usr/local/bin/cx.uninstall-4242.old'));
+      expect(err.output, contains('/usr/local/bin/cx.uninstall-4242.old'));
     });
 
     test('on Windows, if the cleanup worker starts but never confirms it is '
@@ -1203,14 +1266,16 @@ void main() {
       );
 
       final out = MemorySink();
+      final err = MemorySink();
       final code = await cli.run([
         'uninstall',
         '--apply',
         '--autoapprove',
-      ], stdout: out);
+      ], stdout: out, stderr: err);
 
       expect(code, ExitCode.genericError);
-      expect(out.output, contains('cleanup-start-failed'));
+      expect(out.output, isNot(contains('cleanup-start-failed')));
+      expect(err.output, contains('cleanup-start-failed'));
     });
 
     // Round 8 finding 1: a startCleanupWorker failure that leaves it unknown
@@ -1240,17 +1305,72 @@ void main() {
       );
 
       final out = MemorySink();
+      final err = MemorySink();
       final code = await cli.run([
         'uninstall',
         '--apply',
         '--autoapprove',
-      ], stdout: out);
+      ], stdout: out, stderr: err);
 
       expect(code, ExitCode.genericError);
-      expect(out.output, contains('cleanup-outcome-unknown'));
-      expect(out.output, isNot(contains('cleanup-start-failed')));
-      expect(out.output, contains('/usr/local/bin/cx.uninstall-4242.old'));
-      expect(out.output, contains('may still'));
+      expect(out.output, isNot(contains('cleanup-outcome-unknown')));
+      expect(err.output, contains('cleanup-outcome-unknown'));
+      expect(err.output, isNot(contains('cleanup-start-failed')));
+      expect(err.output, contains('/usr/local/bin/cx.uninstall-4242.old'));
+      expect(err.output, contains('may still'));
+    });
+
+    // Finding 1 (round 9): a CliCleanupOutcomeUnknown failure reaching
+    // describe() must render as the single JSON error envelope on stderr,
+    // not as a data-shaped success object on stdout, when the caller asked
+    // for --json. Partial results (what was scheduled so far) survive in
+    // the envelope's own details rather than being dropped along with the
+    // old data-shaped Output.
+    test('on Windows, --json renders a cleanup-outcome-unknown failure as a '
+        'single error envelope on stderr, not as data on stdout', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+      final processLauncher = FakeProcessLauncher(
+        startError: CliCleanupOutcomeUnknown(
+          'renaming the accepted marker kept failing unexpectedly without '
+          'resolving either way',
+        ),
+      );
+      final cli = _cliWith(
+        _upgradePlugin(
+          fileSystem: fileSystem,
+          platform: const FakePlatform('windows'),
+          processLauncher: processLauncher,
+        ),
+      );
+
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run([
+        'uninstall',
+        '--apply',
+        '--autoapprove',
+        '--json',
+      ], stdout: out, stderr: err);
+
+      expect(code, ExitCode.genericError);
+      // Nothing shaped like the error, or the old data envelope carrying
+      // it, reaches stdout: --json's stdout is reserved for success data.
+      expect(out.output, isEmpty);
+
+      final decoded = jsonDecode(err.output) as Map<String, dynamic>;
+      expect(decoded['error'], 'cleanup-outcome-unknown');
+      expect(decoded['message'], contains('may still'));
+      expect(
+        decoded['message'],
+        contains('/usr/local/bin/cx.uninstall-4242.old'),
+      );
+      expect(decoded['exitCode'], ExitCode.genericError);
+      // This step fails before returning its own outcome, so there is no
+      // completed step to preserve here: the partial-results shape is
+      // still present in details, honestly empty rather than omitted.
+      final details = decoded['details'] as Map<String, dynamic>;
+      expect(details['removed'], isEmpty);
+      expect(details['scheduled'], isEmpty);
     });
 
     test(
