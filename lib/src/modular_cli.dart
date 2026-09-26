@@ -424,7 +424,7 @@ class ModularCli {
           inFlight = true;
           everCalledNext = true;
           try {
-            return await outcome.runAttempt<int>(
+            return await outcome.runAttempt(
               () async => await next(guardedReq),
               onSettled: (recorded) => latestAttempt = recorded,
             );
@@ -616,6 +616,23 @@ class ModularCli {
   /// registration can influence a later check, keeps every call's answer
   /// identical.
   ///
+  /// Round-14 review finding 2: checking [_shortcutContractsByExactRoute]
+  /// by the exact key `help` (round-13's own fix) only ever caught a
+  /// shortcut whose trailing positional is optional or a wildcard, both of
+  /// which [ModuleBuilder.shortcut] strips from that map's own key; a
+  /// shortcut with a *required* positional (`shortcut('help <topic>', ...)`)
+  /// keeps it in the key (`help <topic>`), so the exact-key lookup missed
+  /// it just as the pre-round-13 catalog-only check once did, registering
+  /// the built-in default over it and throwing on the very first [run]
+  /// call exactly as before. [_isNamedHelp] is the same predicate
+  /// [CommandContract.name] already gives [CommandCatalog.forName] for an
+  /// ordinary route (every positional placeholder stripped, required or
+  /// not, wherever it falls), applied here to both [_catalog]'s own
+  /// entries and every shortcut's [CommandContract], so a route and a
+  /// shortcut named `help` are told apart from the built-in default by the
+  /// exact same rule regardless of whether either declares a positional,
+  /// and regardless of that positional's cardinality.
+  ///
   /// It is a query: it reads the catalog and answers. Registered with a
   /// trailing wildcard so a focus (`help math add`) is collected as [rest]
   /// rather than having to be a declared positional.
@@ -624,9 +641,9 @@ class ModularCli {
     if (cached != null) return cached;
 
     final _HelpProvenance resolved;
-    if (_catalog.forName('help') != null) {
+    if (_catalog.commands.any(_isNamedHelp)) {
       resolved = _HelpProvenance.developerRoute;
-    } else if (_shortcutContractsByExactRoute.containsKey('help')) {
+    } else if (_shortcutContractsByExactRoute.values.any(_isNamedHelp)) {
       resolved = _HelpProvenance.developerShortcut;
     } else {
       resolved = _HelpProvenance.builtin;
@@ -1284,3 +1301,14 @@ enum _HelpProvenance {
   /// instead, the one time this resolved.
   builtin,
 }
+
+/// Whether [contract] is named `help`: the exact same rule
+/// [CommandContract.name] already applies for [CommandCatalog.forName]
+/// (every positional placeholder stripped, required, optional or a
+/// wildcard, wherever it falls), applied here to a shortcut's own
+/// [CommandContract] too (round-14 review finding 2), so
+/// [ModularCli._resolveHelpProvenance] tells a route or a shortcut named
+/// `help` apart from the built-in default by one shared predicate,
+/// regardless of which of the two registered it or what cardinality its
+/// own positional declares.
+bool _isNamedHelp(CommandContract contract) => contract.name == 'help';

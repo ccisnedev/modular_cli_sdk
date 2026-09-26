@@ -277,7 +277,7 @@ void main() {
 
       final outerResult = await runWithInvocationOutcome(() async {
         final outerOutcome = currentInvocationOutcome();
-        return await outerOutcome.runAttempt<int>(() async {
+        return await outerOutcome.runAttempt(() async {
           final nestedError = CommandException(
             id: 'nested-frame-leak',
             message: 'recorded by a nested invocation',
