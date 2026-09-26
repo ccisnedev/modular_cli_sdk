@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'command_exception.dart';
+import 'exit_codes.dart';
 
 /// One dispatch level's own recorded outcome. Round-10 review finding 1
 /// replaces the round-8 fix's shared, mutable frame stack (one push per
@@ -159,21 +160,52 @@ class InvocationOutcome {
   /// that frame, addressed through the [Zone] [body] runs in, never in
   /// whatever frame happens to be current outside it. [onSettled] is called
   /// exactly once, whether [body] returns or throws, with a snapshot of
-  /// that frame (`null` when nothing was recorded into it) so the caller
-  /// can decide what to do with it; nothing is folded anywhere
+  /// that frame (`null` when nothing was recorded into it, or when [body]
+  /// answered [ExitCode.ok], see round-14 review finding 1 below) so the
+  /// caller can decide what to do with it; nothing is folded anywhere
   /// automatically, unlike the round-8 through round-9 [popFrame] this
   /// replaces.
-  Future<T> runAttempt<T>(
-    Future<T> Function() body, {
+  ///
+  /// Round-14 review finding 1: an attempt whose [body] ultimately answers
+  /// [ExitCode.ok] used to hand [onSettled] whatever landed in its frame
+  /// regardless, so a nested level's own recovery (a middleware further
+  /// down that itself called `next()`, saw a failure, and chose to answer
+  /// success anyway) could still surface here as if this attempt had
+  /// failed. That happened because a nested [ModularCli.use] middleware's
+  /// own `reconcile` (see its own doc comment) compares recordings by
+  /// [RecordedOutcome.recordedAt] alone, the only signal it has once a
+  /// nested attempt's error already sits in the enclosing frame: it cannot
+  /// tell "the nested middleware answered failure, so this is the error to
+  /// keep" apart from "the nested middleware answered success, so whatever
+  /// its own downstream call recorded was already recovered from and must
+  /// not surface here instead of this level's own, earlier recording".
+  /// Only [body]'s own return value carries that distinction, and only the
+  /// attempt itself, here, ever sees it: a body that answers [ExitCode.ok]
+  /// discards its own frame's recording before [onSettled] is ever called
+  /// with it, so an enclosing frame's own, earlier recording (the
+  /// "enclosing middleware's own recording" the finding names) is never
+  /// overwritten by a recovery nested two or more levels down. A body that
+  /// answers anything else, or throws before answering at all, still hands
+  /// its frame's recording upward exactly as before: only success at this
+  /// exact level discards anything, a failure two levels down that this
+  /// level's own middleware does not itself recover from still propagates.
+  Future<int> runAttempt(
+    Future<int> Function() body, {
     required void Function(RecordedOutcome? recorded) onSettled,
   }) async {
     final frame = _OutcomeFrame();
+    var succeeded = false;
     try {
-      return await runZoned(body, zoneValues: {_currentFrameKey: frame});
+      final result = await runZoned(
+        body,
+        zoneValues: {_currentFrameKey: frame},
+      );
+      succeeded = result == ExitCode.ok;
+      return result;
     } finally {
       final recordedError = frame.error;
       onSettled(
-        recordedError == null
+        recordedError == null || succeeded
             ? null
             : (
                 error: recordedError,
