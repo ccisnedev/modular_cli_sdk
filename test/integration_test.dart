@@ -11,6 +11,19 @@ class _GreetInput extends Input {
   final String name;
   _GreetInput({required this.name});
 
+  static final contract = CliContract(
+    options: [
+      CliParam.string(
+        'name',
+        abbr: null,
+        required: false,
+        repeatable: false,
+        defaultValue: null,
+        description: 'Who to greet',
+      ),
+    ],
+  );
+
   factory _GreetInput.fromCliRequest(CliRequest req) =>
       _GreetInput(name: req.flagString('name') ?? 'World');
 
@@ -45,6 +58,19 @@ class _GreetCommand implements Query<_GreetInput, _GreetOutput> {
 class _RequiredInput extends Input {
   final String value;
   _RequiredInput({required this.value});
+
+  static final contract = CliContract(
+    options: [
+      CliParam.string(
+        'value',
+        abbr: null,
+        required: false,
+        repeatable: false,
+        defaultValue: null,
+        description: 'The value to echo',
+      ),
+    ],
+  );
 
   factory _RequiredInput.fromCliRequest(CliRequest req) =>
       _RequiredInput(value: req.flagString('value') ?? '');
@@ -87,7 +113,7 @@ class _FailingCommand implements Query<_GreetInput, _GreetOutput> {
   @override
   Future<_GreetOutput> execute() async {
     throw CommandException(
-      code: 'BROKEN',
+      id: 'broken',
       message: 'Intentional failure',
       exitCode: ExitCode.genericError,
     );
@@ -138,18 +164,22 @@ class _MemorySink implements IOSink {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 ModularCli _buildTestCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
 
   cli.module('greetings', (m) {
     m.query<_GreetInput, _GreetOutput>(
       'hello',
       (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
+      globals: true,
       description: 'Say hello',
+      contract: _GreetInput.contract,
     );
     m.query<_GreetInput, _GreetOutput>(
       'fail',
       (req) => _FailingCommand(_GreetInput.fromCliRequest(req)),
+      globals: true,
       description: 'Always fails',
+      contract: _GreetInput.contract,
     );
   });
 
@@ -157,7 +187,9 @@ ModularCli _buildTestCli() {
     m.query<_RequiredInput, _EchoOutput>(
       'echo',
       (req) => _ValidatingCommand(_RequiredInput.fromCliRequest(req)),
+      globals: true,
       description: 'Echo a value',
+      contract: _RequiredInput.contract,
     );
   });
 
@@ -214,7 +246,7 @@ void main() {
 
       expect(code, ExitCode.genericError);
       final parsed = jsonDecode(stderrSink.output);
-      expect(parsed['error'], 'BROKEN');
+      expect(parsed['error']['id'], 'broken');
     });
 
     test(
@@ -285,7 +317,7 @@ void main() {
     test('should apply middleware in registration order', () async {
       final log = <String>[];
 
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
       cli.use(
         (next) => (req) async {
           log.add('A-before');
@@ -307,6 +339,8 @@ void main() {
         m.query<_GreetInput, _GreetOutput>(
           'cmd',
           (req) => _GreetCommand(_GreetInput(name: 'MW')),
+          globals: true,
+          contract: CliContract.none,
           description: 'Test middleware order',
         );
       });
@@ -321,25 +355,31 @@ void main() {
     /// Builds a CLI with both root commands and mounted modules,
     /// exercising the full coexistence scenario.
     ModularCli buildRootTestCli() {
-      final cli = ModularCli();
+      final cli = ModularCli(suggestionDistance: 2);
 
       cli.query<_GreetInput, _GreetOutput>(
         'ping',
         (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
+        globals: true,
         description: 'Root-level ping',
+        contract: _GreetInput.contract,
       );
 
       cli.query<_RequiredInput, _EchoOutput>(
         'validate-me',
         (req) => _ValidatingCommand(_RequiredInput.fromCliRequest(req)),
+        globals: true,
         description: 'Root command with validation',
+        contract: _RequiredInput.contract,
       );
 
       cli.module('greetings', (m) {
         m.query<_GreetInput, _GreetOutput>(
           'hello',
           (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
+          globals: true,
           description: 'Say hello (module)',
+          contract: _GreetInput.contract,
         );
       });
 

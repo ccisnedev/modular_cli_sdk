@@ -3,8 +3,7 @@
 /// Symmetric with `Output` in modular_api — but carries an [exitCode]
 /// instead of an HTTP `statusCode`.
 ///
-/// Subclasses must implement [toJson] and [exitCode].  [schemaFields] is
-/// optional and reserved for future schema export (v0.2.0+).
+/// Subclasses must implement [toJson] and [exitCode].
 ///
 /// ```dart
 /// class GreetOutput implements Output {
@@ -19,8 +18,6 @@
 /// }
 /// ```
 abstract class Output {
-  /// Generative constructor — enables `extends Output` so subclasses
-  /// inherit the default [schemaFields].
   Output();
 
   /// Serialize the output payload to a JSON-encodable map.
@@ -28,9 +25,6 @@ abstract class Output {
 
   /// CLI exit code to return (0 = success).
   int get exitCode;
-
-  /// Field metadata for future schema export.  Returns `null` by default.
-  List<dynamic>? get schemaFields => null;
 
   /// Override for custom text formatting.
   ///

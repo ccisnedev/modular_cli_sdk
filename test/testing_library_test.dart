@@ -93,11 +93,14 @@ void main() {
       );
 
       final out = MemorySink();
-      await (ModularCli()..command<TouchInput, TouchOutput>(
-            'touch',
-            (req) =>
-                TouchCommand(TouchInput(), targets: const ['a.txt', 'b.txt']),
-          ))
+      await (ModularCli(suggestionDistance: 2)
+            ..command<TouchInput, TouchOutput>(
+              'touch',
+              (req) =>
+                  TouchCommand(TouchInput(), targets: const ['a.txt', 'b.txt']),
+              globals: true,
+              contract: CliContract.none,
+            ))
           .run(['touch', '--apply', '--autoapprove', '--json'], stdout: out);
 
       expect(jsonDecode(out.output), throughHelper.toJson());
@@ -109,11 +112,14 @@ void main() {
       );
 
       final out = MemorySink();
-      await (ModularCli()..command<TouchInput, TouchOutput>(
-            'touch',
-            (req) =>
-                TouchCommand(TouchInput(), targets: const ['a.txt', 'b.txt']),
-          ))
+      await (ModularCli(suggestionDistance: 2)
+            ..command<TouchInput, TouchOutput>(
+              'touch',
+              (req) =>
+                  TouchCommand(TouchInput(), targets: const ['a.txt', 'b.txt']),
+              globals: true,
+              contract: CliContract.none,
+            ))
           .run(['touch', '--plan', '--json'], stdout: out);
 
       final steps =

@@ -13,6 +13,8 @@
 ///  6  State conflict (FSM transition rejected)
 ///  7  Validation failed (bad input)
 /// 64  Invalid usage / command not found (EX_USAGE)
+/// 65  Data error (malformed input data) (EX_DATAERR)
+/// 78  Configuration error (EX_CONFIG)
 /// ```
 class ExitCode {
   ExitCode._();
@@ -25,6 +27,8 @@ class ExitCode {
   static const conflict = 6;
   static const validationFailed = 7;
   static const invalidUsage = 64;
+  static const dataError = 65;
+  static const configError = 78;
 
   /// All defined exit codes as a set — useful for testing completeness.
   static const all = {
@@ -36,5 +40,7 @@ class ExitCode {
     conflict,
     validationFailed,
     invalidUsage,
+    dataError,
+    configError,
   };
 }

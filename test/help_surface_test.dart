@@ -10,26 +10,29 @@ class _AddInput extends Input {
   final int b;
   _AddInput({required this.a, required this.b});
 
-  static final params = [
-    CliParam.integer(
-      'a',
-      abbr: 'a',
-      required: true,
-      description: 'First operand',
-    ),
-    CliParam.integer(
-      'b',
-      abbr: 'b',
-      required: true,
-      description: 'Second operand',
-    ),
-  ];
+  static final contract = CliContract(
+    options: [
+      CliParam.integer(
+        'a',
+        abbr: 'a',
+        required: true,
+        repeatable: false,
+        defaultValue: null,
+        description: 'First operand',
+      ),
+      CliParam.integer(
+        'b',
+        abbr: 'b',
+        required: true,
+        repeatable: false,
+        defaultValue: null,
+        description: 'Second operand',
+      ),
+    ],
+  );
 
   factory _AddInput.fromCliRequest(CliRequest req) =>
       _AddInput(a: req.flagInt('a')!, b: req.flagInt('b')!);
-
-  @override
-  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {'a': a, 'b': b};
@@ -84,11 +87,13 @@ class _VersionCommand implements Query<_VersionInput, _VersionOutput> {
 }
 
 ModularCli _buildCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
 
   cli.query<_VersionInput, _VersionOutput>(
     'version',
     (req) => _VersionCommand(_VersionInput()),
+    globals: true,
+    contract: CliContract.none,
     description: 'Print application version',
   );
 
@@ -96,8 +101,9 @@ ModularCli _buildCli() {
     m.query<_AddInput, _SumOutput>(
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      globals: true,
       description: 'Add two numbers',
-      params: _AddInput.params,
+      contract: _AddInput.contract,
     );
   });
 
@@ -164,6 +170,8 @@ void main() {
         _buildCli()..query<_VersionInput, _VersionOutput>(
           '',
           (req) => _VersionCommand(_VersionInput()),
+          globals: true,
+          contract: CliContract.none,
           description: 'Show the dashboard',
         );
 
@@ -220,10 +228,12 @@ void main() {
     test(
       'a help command registered by the developer overrides the auto one',
       () async {
-        final cli = ModularCli();
+        final cli = ModularCli(suggestionDistance: 2);
         cli.query<_VersionInput, _VersionOutput>(
           'help',
           (req) => _VersionCommand(_VersionInput()),
+          globals: true,
+          contract: CliContract.none,
           description: 'My own help',
         );
 

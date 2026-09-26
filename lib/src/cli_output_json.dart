@@ -3,6 +3,7 @@ import 'dart:io' as io;
 
 import 'cli_output.dart';
 import 'command_exception.dart';
+import 'invocation_outcome.dart';
 
 /// Formats all output as JSON — one JSON value per write call.
 ///
@@ -48,8 +49,14 @@ class JsonCliOutput implements CliOutput {
     stdout.writeln(_encoder.convert({'message': message}));
   }
 
+  /// Records [error] as the current invocation's outcome instead of
+  /// writing it: [ModularCli.run] is the only place that ever renders it,
+  /// exactly once, after the whole dispatch finishes (round-6 review
+  /// findings 1 through 3). [stderr] is still declared above for callers
+  /// that read it as this output's own error sink, but this method itself
+  /// no longer writes to it directly.
   @override
   void writeError(CommandException error) {
-    stderr.writeln(_encoder.convert(error.toJson()));
+    recordInvocationError(error, jsonMode: true);
   }
 }

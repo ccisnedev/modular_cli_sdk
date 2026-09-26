@@ -15,10 +15,12 @@ import 'package:test/test.dart';
 import 'doubles.dart';
 
 ModularCli _cliWith(TouchCommand command, {Approver? approver}) {
-  final cli = ModularCli(approver: approver);
+  final cli = ModularCli(approver: approver, suggestionDistance: 2);
   cli.command<TouchInput, TouchOutput>(
     'touch',
     (req) => command,
+    globals: true,
+    contract: CliContract.none,
     description: 'Touch things',
   );
   return cli;
@@ -105,22 +107,26 @@ void main() {
       expect(out.output, contains('nothing would change'));
     });
 
-    test('a command that does not implement the interface is unaffected',
-        () async {
-      // The interface is opt-in: a command that never heard of it must behave
-      // exactly as before, which is what keeps this additive.
-      final out = MemorySink();
-      final code = await ModularCli()
-          .command<TouchInput, TouchOutput>(
-            'ping',
-            (req) => PlainEmptyCommand(TouchInput()),
-            description: 'Builds no steps, explains nothing',
-          )
-          .run(['ping', '--apply'], stdout: out);
+    test(
+      'a command that does not implement the interface is unaffected',
+      () async {
+        // The interface is opt-in: a command that never heard of it must behave
+        // exactly as before, which is what keeps this additive.
+        final out = MemorySink();
+        final code = await ModularCli(suggestionDistance: 2)
+            .command<TouchInput, TouchOutput>(
+              'ping',
+              (req) => PlainEmptyCommand(TouchInput()),
+              globals: true,
+              contract: CliContract.none,
+              description: 'Builds no steps, explains nothing',
+            )
+            .run(['ping', '--apply'], stdout: out);
 
-      expect(code, ExitCode.ok);
-      expect(out.output, contains('nothing would change'));
-    });
+        expect(code, ExitCode.ok);
+        expect(out.output, contains('nothing would change'));
+      },
+    );
   });
 
   group('an empty plan is not told to re-run', () {

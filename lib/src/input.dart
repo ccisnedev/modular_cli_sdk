@@ -1,5 +1,3 @@
-import 'cli_param.dart';
-
 /// Inbound DTO that a [Command] receives.
 ///
 /// Symmetric with `Input` in modular_api — but deserializes from CLI
@@ -9,28 +7,29 @@ import 'cli_param.dart';
 /// `fromCliRequest` is enforced by convention (the framework calls it
 /// via the factory function registered in [ModuleBuilder.command]).
 ///
+/// The contract itself (what this Input reads, with what types, defaults
+/// and constraints) is declared once, separately, as a [CliContract] passed
+/// to [ModuleBuilder.query] or [ModuleBuilder.command]; it is what help
+/// renders from and what the framework enforces before the factory below
+/// ever runs, so a value read here is already known to honour it. A
+/// [DeclaredDefault] on the contract means it does not need `??` here too:
+/// once declared, it is already in the request.
+///
 /// ```dart
 /// class GreetInput implements Input {
 ///   final String name;
 ///   GreetInput({required this.name});
 ///
 ///   factory GreetInput.fromCliRequest(CliRequest req) =>
-///       GreetInput(name: req.flagString('name') ?? 'World');
+///       GreetInput(name: req.flagString('name')!);
 ///
 ///   @override
 ///   Map<String, dynamic> toJson() => {'name': name};
 /// }
 /// ```
 abstract class Input {
-  /// Generative constructor — enables `extends Input` so subclasses
-  /// inherit the default [schemaFields].
   Input();
 
   /// Serialize the input payload to a JSON-encodable map.
   Map<String, dynamic> toJson();
-
-  /// The command's declared parameter contract.  Returns `null` by default —
-  /// an Input that declares none is not enforced and is described in help by
-  /// its route and description alone.
-  List<CliParam>? get schemaFields => null;
 }

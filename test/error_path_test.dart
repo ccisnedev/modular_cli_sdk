@@ -10,26 +10,29 @@ class _AddInput extends Input {
   final int b;
   _AddInput({required this.a, required this.b});
 
-  static final params = [
-    CliParam.integer(
-      'a',
-      abbr: 'a',
-      required: true,
-      description: 'First operand',
-    ),
-    CliParam.integer(
-      'b',
-      abbr: 'b',
-      required: true,
-      description: 'Second operand',
-    ),
-  ];
+  static final contract = CliContract(
+    options: [
+      CliParam.integer(
+        'a',
+        abbr: 'a',
+        required: true,
+        repeatable: false,
+        defaultValue: null,
+        description: 'First operand',
+      ),
+      CliParam.integer(
+        'b',
+        abbr: 'b',
+        required: true,
+        repeatable: false,
+        defaultValue: null,
+        description: 'Second operand',
+      ),
+    ],
+  );
 
   factory _AddInput.fromCliRequest(CliRequest req) =>
       _AddInput(a: req.flagInt('a')!, b: req.flagInt('b')!);
-
-  @override
-  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {'a': a, 'b': b};
@@ -59,13 +62,14 @@ class _AddCommand implements Query<_AddInput, _SumOutput> {
 }
 
 ModularCli _buildCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
   cli.module('math', (m) {
     m.query<_AddInput, _SumOutput>(
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      globals: true,
       description: 'Add two numbers',
-      params: _AddInput.params,
+      contract: _AddInput.contract,
     );
   });
   // A route of more than one segment inside a module. `api graphql` is then a
@@ -74,8 +78,9 @@ ModularCli _buildCli() {
     m.query<_AddInput, _SumOutput>(
       'graphql compile',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      globals: true,
       description: 'Compile GraphQL artifacts',
-      params: _AddInput.params,
+      contract: _AddInput.contract,
     );
   });
   return cli;
@@ -160,12 +165,24 @@ void main() {
       expect(result.stderr, isNot(contains('math add')));
     });
 
-    test('a flag does not change what is missing', () async {
-      final result = await _run(['math', '--verbose']);
+    // `math --verbose` is not `incomplete`: the router rejects the
+    // undeclared `--verbose` on its own terms (`unknownOption`), before it
+    // ever gets to judge whether `math` alone continues a route. The
+    // "is not a complete command" rewrite is keyed on kind == incomplete
+    // only (see `ModularCli._emitRejectionError`), so a different kind of
+    // rejection under an incomplete prefix keeps the router's own message:
+    // it still narrows the shown commands to what `math` could complete
+    // into, it just does not relabel *why* the invocation failed.
+    test(
+      'an unrelated rejection under an incomplete prefix keeps its own kind',
+      () async {
+        final result = await _run(['math', '--verbose']);
 
-      expect(result.stderr, contains('not a complete command'));
-      expect(result.stderr, contains('math add'));
-    });
+        expect(result.stderr, isNot(contains('not a complete command')));
+        expect(result.stderr, contains("unknown option '--verbose'"));
+        expect(result.stderr, contains('math add'));
+      },
+    );
 
     test(
       'it stays an invalid usage, with the same exit code as before',
@@ -208,8 +225,9 @@ void main() {
       final result = await _run(['math', 'add', '--b', '7', '--json']);
 
       expect(result.exitCode, equals(ExitCode.validationFailed));
-      final error = jsonDecode(result.stderr) as Map<String, dynamic>;
-      expect(error['error'], equals('VALIDATION_FAILED'));
+      final envelope = jsonDecode(result.stderr) as Map<String, dynamic>;
+      final error = envelope['error'] as Map<String, dynamic>;
+      expect(error['id'], equals('missing-required-option'));
     });
   });
 }

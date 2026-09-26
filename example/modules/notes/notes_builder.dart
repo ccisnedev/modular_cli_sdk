@@ -10,7 +10,8 @@ void buildNotesModule(ModuleBuilder m) {
   m.command<WriteNoteInput, WriteNoteOutput>(
     'write <name>',
     (req) => WriteNoteCommand(WriteNoteInput.fromCliRequest(req)),
+    globals: true,
     description: 'Write a note',
-    params: WriteNoteInput.params,
+    contract: WriteNoteInput.contract,
   );
 }

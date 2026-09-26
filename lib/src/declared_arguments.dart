@@ -1,105 +1,126 @@
 import 'package:cli_router/cli_router.dart';
 
-import 'cli_param.dart';
-import 'command_exception.dart';
-import 'exit_codes.dart';
-import 'global_options.dart';
+import 'cli_contract.dart';
 
 /// Applies a command's declared contract to the invocation that arrived.
 ///
-/// Declaring is parsing: the same [CliParam] list that help renders is the one
-/// that resolves abbreviations, applies defaults, coerces types, and rejects
-/// what the command never declared. The request handed to the command's Input
-/// factory is therefore already the contract, not the raw command line.
+/// By the time this runs, `cli_router` has already rejected what it alone
+/// can tell is wrong: an option nobody declared, a required option that
+/// never showed up, an option repeated when it was not declared repeatable.
+/// What is left is this SDK's own concern (the shape `cli_router` cannot
+/// see): whether a value parses as the declared type, whether it is one of a
+/// declared enumeration, whether a declared path exists, whether a declared
+/// positional parses, and whether the options that *are* present satisfy
+/// the contract's cross-field [CliConstraint]s. A declared but absent
+/// [DeclaredDefault] is synthesized here, so a command reads it exactly as
+/// if the caller had written it.
 ///
-/// A command that declares **nothing** (`params` omitted, i.e. null) is returned
-/// untouched — it keeps parsing its arguments imperatively, as before.
-///
-/// Declaring an **empty** contract (`params: const []`) is a different statement
-/// and is enforced: the command accepts no option at all, so any option is an
-/// error. The two were once the same value, which left the commands that take no
-/// arguments — exactly the ones most likely to be mis-invoked — unchecked.
-CliRequest applyDeclaredContract(CliRequest req, List<CliParam>? params) {
-  if (params == null) return req;
+/// A contract is always supplied ([CliContract.none] for a command that
+/// declares nothing), so there is no undeclared branch left to skip.
+CliRequest applyDeclaredContract(CliRequest req, CliContract contract) {
+  final resolvedOptions = <ParsedOption>[...req.options];
 
-  _rejectUndeclaredFlags(req.flags.keys, params);
-
-  final resolvedFlags = <String, String?>{
-    for (final entry in req.flags.entries)
-      if (globalOptionNames.contains(entry.key)) entry.key: entry.value,
+  // A constraint (spec's `ExactlyOne`/`MutuallyExclusive`) is checked over
+  // every field the caller actually chose, and a bound positional is
+  // exactly as much a choice as a `--flag` is: `eval rpn '1 2 +'` chose
+  // `program` precisely as deliberately as `eval rpn --stdin '1 2 +'`
+  // chose `stdin`. Leaving positionals out of `present` made a constraint
+  // spanning a positional and an option unsatisfiable through the
+  // positional side alone.
+  final present = <String>{
+    for (final o in req.options) o.spec.name,
+    for (final p in contract.positionals)
+      if (req.param(p.name) != null) p.name,
   };
 
-  for (final param in params) {
-    if (param.kind == CliParamKind.positional) {
-      _validatePositional(req, param);
+  for (final param in contract.options) {
+    // A repeatable option can occur more than once on the invocation:
+    // `cli_router` allows every occurrence through once it has confirmed
+    // the option itself is declared repeatable, but it does not know this
+    // SDK's own type/enum/path rules, so every occurrence, not just the
+    // first, must be checked against them: `repeat --count 1 --count bad`
+    // is only caught by validating the second occurrence too.
+    final occurrences = _findAll(resolvedOptions, param.name);
+    if (occurrences.isNotEmpty) {
+      for (final occurrence in occurrences) {
+        // Type, enumeration and path-existence checks; throws on failure.
+        // Router already guaranteed presence/required/repeat-count.
+        param.parse(occurrence.value ?? '');
+      }
       continue;
     }
-    final rawValue = _rawValueOf(req, param);
-    if (rawValue == null) {
-      _applyAbsence(resolvedFlags, param);
-      continue;
+    final declaredDefault = param.defaultValue;
+    if (declaredDefault != null) {
+      final rawValue = '${declaredDefault.value}';
+      // A declared default must satisfy the same declaration it is a
+      // default *for*: an enum default outside its own `values` is already
+      // rejected at registration (`CliParam`'s constructor), but a
+      // `mustExist` path default can only be checked against the
+      // filesystem as it stands right now, so it is validated here, the
+      // same way a value the caller actually typed would be, rather than
+      // trusted unchecked because nobody typed it.
+      param.parse(rawValue);
+      resolvedOptions.add(
+        ParsedOption(
+          spec: param.toOptionSpec(),
+          written: '--${param.name}',
+          argvIndex: -1,
+          value: rawValue,
+          attached: false,
+        ),
+      );
     }
-    param.parse(rawValue);
-    resolvedFlags[param.name] = rawValue;
   }
+
+  for (final positional in contract.positionals) {
+    final rawValue = req.param(positional.name);
+    if (rawValue != null) positional.parse(rawValue);
+  }
+
+  contract.validateConstraints(present);
 
   return CliRequest(
     originalArgs: req.originalArgs,
-    matchedCommand: req.matchedCommand,
+    route: req.route,
     params: req.params,
-    flags: resolvedFlags,
-    positionals: req.positionals,
+    rest: req.rest,
+    options: resolvedOptions,
     stdout: req.stdout,
     stderr: req.stderr,
   );
 }
 
-/// A flag nobody declared is a mistake the user wants to hear about, not a
-/// value to ignore.
-void _rejectUndeclaredFlags(Iterable<String> flagNames, List<CliParam> params) {
-  final declared = <String>{
-    for (final param in params) ...[param.name, ...param.aliases],
-  };
-  for (final flagName in flagNames) {
-    if (declared.contains(flagName) || globalOptionNames.contains(flagName)) {
-      continue;
+List<ParsedOption> _findAll(List<ParsedOption> options, String name) => [
+  for (final option in options)
+    if (option.spec.name == name) option,
+];
+
+/// Type-checks every option value the caller actually supplied in [options]
+/// against [contract], without synthesizing defaults, coercing positionals
+/// or checking constraints.
+///
+/// Exists to run *before* a route answers `--help` (issue #27 section 5:
+/// "help loses to an option error"): a missing required option is still
+/// caught by `cli_router` itself before any handler runs, and a constraint
+/// violation is still only checked inside [applyDeclaredContract], so both
+/// correctly stay skipped when `--help` wins. A supplied value that fails
+/// to parse (`repeat --count bad --help`) is the one kind of failure that
+/// must not lose to `--help`, because unlike the other two, `cli_router`
+/// itself has no way to catch it: nothing here runs until this SDK does.
+///
+/// Takes the raw [ParsedOption]s rather than a [CliRequest] so it can be
+/// called both on a resolved invocation's `req.options` (from
+/// [ModuleBuilder]'s own handler) and on a rejected one's
+/// `CliRejection.options` (from [ModularCli]'s help-precedence check): a
+/// rejection has no [CliRequest] to offer, `cli_router` never resolves one
+/// for an invocation it refuses.
+void validateSuppliedOptionValues(
+  List<ParsedOption> options,
+  CliContract contract,
+) {
+  for (final param in contract.options) {
+    for (final occurrence in _findAll(options, param.name)) {
+      param.parse(occurrence.value ?? '');
     }
-    throw CommandException(
-      code: 'VALIDATION_FAILED',
-      message: 'unknown option --$flagName',
-      exitCode: ExitCode.validationFailed,
-      details: {'parameter': flagName},
-    );
   }
-}
-
-/// The value as written, under the long name or under the abbreviation.
-String? _rawValueOf(CliRequest req, CliParam param) {
-  for (final name in [param.name, ...param.aliases]) {
-    if (req.flags.containsKey(name)) return req.flags[name] ?? '';
-  }
-  return null;
-}
-
-void _applyAbsence(Map<String, String?> resolvedFlags, CliParam param) {
-  if (param.required) {
-    throw CommandException(
-      code: 'VALIDATION_FAILED',
-      message: 'missing required option --${param.name}',
-      exitCode: ExitCode.validationFailed,
-      details: {'parameter': param.name},
-    );
-  }
-  final declaredDefault = param.defaultValue;
-  if (declaredDefault != null) {
-    resolvedFlags[param.name] = '$declaredDefault';
-  }
-}
-
-/// The route matched, so the positional is present; only its type and its
-/// allowed values are still open questions.
-void _validatePositional(CliRequest req, CliParam param) {
-  final rawValue = req.param(param.name);
-  if (rawValue == null) return;
-  param.parse(rawValue);
 }

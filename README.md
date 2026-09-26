@@ -18,12 +18,13 @@ import 'package:cli_router/cli_router.dart';
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 
 void main(List<String> args) async {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
 
   // Reads. No --plan, no --apply — it has nothing to plan.
   cli.query<VersionInput, VersionOutput>(
     'version',
     (req) => VersionQuery(VersionInput.fromCliRequest(req)),
+    contract: CliContract.none,
     description: 'Print version info',
   );
 
@@ -32,7 +33,7 @@ void main(List<String> args) async {
       'list',
       (req) => ListNotes(ListInput.fromCliRequest(req)),
       description: 'List your notes',
-      params: ListInput.params,
+      contract: ListInput.contract,
     );
 
     // Changes something. --plan / --apply / --autoapprove are declared,
@@ -41,7 +42,7 @@ void main(List<String> args) async {
       'write <name>',
       (req) => WriteNote(WriteInput.fromCliRequest(req)),
       description: 'Write a note',
-      params: WriteInput.params,
+      contract: WriteInput.contract,
     );
   });
 
@@ -63,7 +64,9 @@ dart run bin/main.dart notes write today
 #   --apply  show it, ask for approval, then do it
 # exit code 7
 
-dart run bin/main.dart notes write today --plan
+# Options must come before the positional: cli_router's grammar requires
+# it (an option can never follow an operand), so --plan precedes today.
+dart run bin/main.dart notes write --plan today
 # Plan — notes write
 #
 #   create   notes
@@ -147,6 +150,13 @@ A command that builds no steps has nothing to approve, so nobody is asked:
 `--apply` reports that nothing would change and exits `0`. Asking `y/N` about no
 change at all is noise on a terminal, and on a run without one it failed an
 invocation that had nothing to fail at.
+
+A refused approval and a step failure are both reported the same way every
+other error is (see [Error handling](#error-handling)): a refusal is written
+with `id: 'approval-refused'` and the refusal reason as `details.reason`; a
+step failure reuses the thrown `CommandException`'s own `id` and `exitCode`
+when the step threw one directly, or is wrapped under `id: 'step-failed'`
+otherwise. Neither bypasses the structured envelope, under `--json` or not.
 
 Note what `describe` does **not** carry: no `planPath`, no `blocked`, no
 `message`. Those describe the gate, and the gate is the SDK's.
@@ -246,7 +256,7 @@ Run the same code from source and it does not:
 
 ```bash
 dart run example/beside_executable.dart greet
-# Error: no assets/ folder beside this executable: the CLI is running from source [ASSETS_NOT_FOUND]
+# Error: no assets/ folder beside this executable: the CLI is running from source [assets-not-found]
 #   lookedFor: <your-dart-sdk>/assets/greeting.txt
 #   resolvedExecutable: <your-dart-sdk>/bin/dart.exe
 # exit code 4
@@ -268,25 +278,33 @@ See [Compile to executable](#compile-to-executable) for the layout.
 
 ## Help and the command contract
 
-Each command declares its parameters once, on its `Input`. The SDK introspects
-its own command registry to render help — the CLI counterpart of the OpenAPI
-document `modular_api` generates from its registered use cases.
+Each command declares its arguments once, on its `Input`, as a `CliContract`:
+`CliParam` for its options, `CliPositional` for words read by their place in
+the route rather than by a `--name`, and `CliConstraint` (`ExactlyOne`,
+`MutuallyExclusive`) for rules spanning more than one option. The SDK
+introspects its own command registry to render help: the CLI counterpart of
+the OpenAPI document `modular_api` generates from its registered use cases.
 
 ```dart
 class HelloInput extends Input {
   final String name;
   HelloInput({required this.name});
 
-  static final params = [
-    CliParam.string('name', abbr: 'n', defaultValue: 'World',
-        description: 'Who to greet'),
-  ];
+  static final contract = CliContract(
+    options: [
+      CliParam.string(
+        'name',
+        abbr: 'n',
+        required: false,
+        repeatable: false,
+        defaultValue: const DeclaredDefault('World', reason: 'the name used when nobody gave one'),
+        description: 'Who to greet',
+      ),
+    ],
+  );
 
   factory HelloInput.fromCliRequest(CliRequest req) =>
       HelloInput(name: req.flagString('name')!); // already resolved and defaulted
-
-  @override
-  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {'name': name};
@@ -295,17 +313,80 @@ class HelloInput extends Input {
 
 **Declaring is parsing.** The same declaration that help renders is the one the
 framework enforces before your `Input` reads a flag: it resolves `-n` to
-`--name`, applies the declared default, coerces `--a abc` to a validation error
+`--name`, applies the declared default (with its `reason`, which help renders
+alongside it: `default: World`), coerces `--a abc` to a validation error
 instead of a silent `0`, rejects an option nobody declared, and checks
-`allowed` values. Help therefore cannot describe a contract the CLI does not
-actually apply. A **query** that declares no `params` keeps parsing its
-arguments by hand and is neither described nor enforced.
+`allowed` values. A positional works the same way through `CliPositional`, and
+a route pattern's `<placeholder>` is where it binds. Help therefore cannot
+describe a contract the CLI does not actually apply. A **query** that declares
+`CliContract.none` (the default) is neither described as taking arguments nor
+enforced beyond that; one with a non-empty contract is both.
 
-A **command** is always enforced: omitting `params` does not leave it
-undeclared, it declares that the command takes nothing but `--plan`, `--apply`
-and `--autoapprove`. A route that changes something cannot be the one whose
-arguments nobody checks — and the three flags have to be declared to be typed
-at all.
+A **command** is always enforced: its declared `contract` always gains
+`--plan`, `--apply` and `--autoapprove` from the SDK, even when the command's
+own contract is `CliContract.none`. A route that changes something cannot be
+the one whose arguments nobody checks, and the three flags have to be
+declared to be typed at all.
+
+**cli_router requires every option to precede the first positional** on the
+actual command line: an option can never follow an operand. `notes write
+--plan today` parses; `notes write today --plan` is rejected. The `Usage:`
+line the SDK renders is written in that same order.
+
+**A `CliPositional`'s declaration must match its route pattern.** `show <id>`
+requires a `CliPositional` named `id`; `[<name>]` (a trailing optional
+segment) requires one declared `required: false`. A missing, extra,
+misnamed or wrongly-required/optional positional is an `ArgumentError` at
+registration, before the route can ever be dispatched to.
+
+**`shortcut()`** declares a route that runs *another* route's handler under a
+narrower contract:
+
+```dart
+cli.shortcut(
+  '<program>',
+  target: 'eval rpn',
+  globals: false,
+  contract: CliContract.none,
+);
+```
+
+`mycli '1 2 +'` then runs the same handler as `mycli eval rpn '1 2 +'`, but
+through its own, narrower contract: here, with `globals: false`, none of the
+SDK's global options (`--json`, `--quiet`, `--help`) are accepted on the
+shortcut itself. A shortcut never declares its own positionals: `program` is
+taken from the target's own declaration, by name, and rebound to whichever
+cardinality `<program>` itself gives it (`required` here, even though the
+target's own `[<program>]` makes it optional). `contract` is required, like
+every other registration call (`CliContract.none` for a shortcut that
+declares nothing of its own); passing one lets a shortcut add its own options
+or constraints on top. When `target` is a `Command`, `contract` gains
+`--plan`/`--apply`/`--autoapprove` automatically, exactly as `command()`
+itself always gains them: a shortcut to a route that changes something is
+still a route that changes something. `target` must already be registered
+and name exactly one route; registering a shortcut to a route that does not
+exist, or that matches more than one registered route, is an `ArgumentError`,
+and so is declaring a positional directly in a shortcut's own `contract`.
+Like every other registration call, `globals` is required: there is no
+default that would silently decide it for you.
+
+**`suggest()`** answers "did you mean?" over the command catalog:
+
+```dart
+final closest = cli.suggest('shwo'); // → 'show'
+```
+
+It compares `word` against the catalog's route vocabulary by restricted edit
+distance (Levenshtein plus one adjacent-transposition operation), returns the
+closest match within `maxDistance` (ties broken by catalog registration
+order), or `null` if nothing is close enough. `cli.suggest()` uses the CLI's
+own `suggestionDistance` (required on `ModularCli(...)`, no default) unless a
+call passes `maxDistance` to override it for that one call.
+`CommandCatalog.suggest(word, {required maxDistance})`, the lower-level call
+a `CommandCatalog` is read through directly, requires `maxDistance`
+explicitly every time: the catalog has no distance of its own to fall back
+to. The SDK calls `cli.suggest()` itself on an `unknownCommand`/`incomplete`
+rejection, so `mycli commands shwo power` suggests `show` on stderr.
 
 Help is a **success**, not an error:
 
@@ -336,17 +417,19 @@ A `help` command you register yourself always wins over the built-in one.
 - `Command<I, O>` — changes something, as steps that are held to what they said
 - `--plan` / `--apply` / `--autoapprove` — declared, enforced and acted on for every command; neither of the first two is a default
 - `Approver` / `PlanSink` — how approval is taken and where a plan is filed, left to the host
-- `CliParam` — a route's declared contract: renders help *and* enforces parsing
-- Native help — `help`, no args, `--help`/`-h` on stdout with exit 0; `help --json` for machines, with `kind` on every route
+- `CliContract`: a route's declared arguments, `CliParam` (options), `CliPositional` (positionals) and `CliConstraint` (`ExactlyOne`, `MutuallyExclusive`); renders help *and* enforces parsing
+- `DeclaredDefault<T>`: a default value that carries its own `reason`, which help renders alongside it
+- Native help: `help`, no args, `--help`/`-h` on stdout with exit 0; `help --json` for machines, with `kind` on every route. `--help` wins over enforcement on an otherwise-invalid invocation, so asking how a command is used never requires already knowing
 - `Input` / `Output` — typed DTOs for I/O
-- `CommandException` — structured errors with code, message, exit code, and retryable flag
+- `CommandException`: structured errors with a kebab-case `id`, message, required exit code, and optional `details`
+- A router-level rejection (unknown command, missing required option, and so on) is reported through the same JSON error envelope as a `CommandException`: `{"error": {"id", "message", "exitCode", ...}}`, with `contract` and `details` present only when they apply (see [Error handling](#error-handling))
 - `ModularCli` + `ModuleBuilder` — module registration and routing
 - Root routes — register without a module prefix via `cli.query()` / `cli.command()`
 - `--json` global flag — machine-readable JSON output
 - `--quiet` global flag — suppress informational messages
 - TTY detection — automatic format selection
-- Semantic exit codes — 0 (OK), 1 (error), 4 (not found), 5 (unauthorized), 7 (validation), 64 (usage)
-- Built on `cli_router` — GNU flags, middleware, modular mounting
+- Semantic exit codes: 0 (OK), 1 (error), 2 (API error), 4 (not found), 5 (unauthorized), 6 (conflict), 7 (validation), 64 (usage), 65 (data error), 78 (config error)
+- Built on `cli_router`: GNU flags, middleware, modular mounting, and a grammar where every option precedes the first positional on the command line
 
 ---
 
@@ -371,7 +454,7 @@ Future<MyOutput> execute() async {
   final ticket = await repository.findById(input.ticketId);
   if (ticket == null) {
     throw CommandException(
-      code: 'TICKET_NOT_FOUND',
+      id: 'ticket-not-found',
       message: 'Ticket #${input.ticketId} not found',
       exitCode: ExitCode.notFound,
     );
@@ -381,13 +464,60 @@ Future<MyOutput> execute() async {
 ```
 
 ```
-Error: Ticket #42 not found [TICKET_NOT_FOUND]
+Error: Ticket #42 not found [ticket-not-found]
 ```
 
 With `--json`:
 ```json
-{"error": "TICKET_NOT_FOUND", "message": "Ticket #42 not found", "exitCode": 4, "isRetryable": false}
+{"error": {"id": "ticket-not-found", "message": "Ticket #42 not found", "exitCode": 4}}
 ```
+
+Every error written in JSON mode, whether a `CommandException` thrown from a
+command, a router-level rejection (unknown command, missing required option,
+and so on), or a plugin error, uses this one shape, nested under `"error"`:
+
+```json
+{"error": {"id": "<kebab-case id>", "message": "...", "exitCode": <int>, "contract": {...}, "details": {...}}}
+```
+
+`id` is always kebab-case. `contract` (the failing route's contract, when one
+is known) and `details` (a typed map of extra fields: a validation
+failure's `parameter`, or a domain error's own fields, such as a calculatrix
+parse error's `token` and `position`) are both optional: present only when
+they apply. There is no `kind` field and no `isRetryable` field.
+
+A `CommandException`'s own `id` is chosen by the code that throws it (and
+must be kebab-case, or the constructor throws `ArgumentError`). A
+router-level rejection's `id` comes from a fixed table, one entry per
+`CliRejectionKind`:
+
+| Rejection | `id` |
+| --- | --- |
+| Unknown command | `unknown-command` |
+| Incomplete command | `incomplete-command` |
+| Missing required argument | `missing-argument` |
+| Extra argument | `extra-argument` |
+| Unknown option | `unknown-option` |
+| Misplaced option | `misplaced-option` |
+| Missing required option | `missing-required-option` |
+| Repeated option | `repeated-option` |
+| Invalid short option | `invalid-short-option` |
+| Missing option value | `missing-value` |
+| Unexpected option value | `unexpected-value` |
+
+A contract violation the SDK itself enforces (a required option missing, a
+value of the wrong type, an allow-list mismatch, a failed `CliConstraint`)
+raises a `CommandException` with `id: 'validation-failed'` (the one `id`
+this table does not list, because it is not a router rejection). A refused
+`--apply` approval and a step failure with nothing more specific of its own
+to report are two more such SDK-raised ids not in the table, above:
+`approval-refused` and `step-failed` (see [Commands that say what they would
+do](#commands-that-say-what-they-would-do)).
+
+A middleware registered through `ModularCli.use()` runs inside its own error
+boundary: a `CommandException` it throws is caught there and turned into this
+same envelope, honoring the resolved request's `--json` mode, instead of
+escaping `run()` as an uncaught exception.
 
 ---
 

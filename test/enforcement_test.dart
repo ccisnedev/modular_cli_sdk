@@ -12,16 +12,29 @@ class _AddInput extends Input {
   final int b;
   _AddInput({required this.a, required this.b});
 
-  static final params = [
-    CliParam.integer('a', abbr: 'a', required: true, description: 'First'),
-    CliParam.integer('b', abbr: 'b', required: true, description: 'Second'),
-  ];
+  static final contract = CliContract(
+    options: [
+      CliParam.integer(
+        'a',
+        abbr: 'a',
+        required: true,
+        repeatable: false,
+        defaultValue: null,
+        description: 'First',
+      ),
+      CliParam.integer(
+        'b',
+        abbr: 'b',
+        required: true,
+        repeatable: false,
+        defaultValue: null,
+        description: 'Second',
+      ),
+    ],
+  );
 
   factory _AddInput.fromCliRequest(CliRequest req) =>
       _AddInput(a: req.flagInt('a')!, b: req.flagInt('b')!);
-
-  @override
-  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {'a': a, 'b': b};
@@ -57,18 +70,33 @@ class _GreetInput extends Input {
   final String format;
   _GreetInput({required this.name, required this.format});
 
-  static final params = [
-    CliParam.string('name', abbr: 'n', defaultValue: 'World'),
-    CliParam.string('format', allowed: ['text', 'shout']),
-  ];
+  static final contract = CliContract(
+    options: [
+      CliParam.string(
+        'name',
+        abbr: 'n',
+        required: false,
+        repeatable: false,
+        defaultValue: const DeclaredDefault(
+          'World',
+          reason: 'the name used when nobody gave one',
+        ),
+      ),
+      CliParam.enumeration(
+        'format',
+        abbr: null,
+        required: false,
+        repeatable: false,
+        values: const ['text', 'shout'],
+        defaultValue: const DeclaredDefault('text', reason: 'plain by default'),
+      ),
+    ],
+  );
 
   factory _GreetInput.fromCliRequest(CliRequest req) => _GreetInput(
     name: req.flagString('name')!,
-    format: req.flagString('format') ?? 'text',
+    format: req.flagString('format')!,
   );
-
-  @override
-  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {'name': name, 'format': format};
@@ -108,15 +136,14 @@ class _ShowInput extends Input {
   final int id;
   _ShowInput(this.id);
 
-  static final params = [
-    CliParam.positional('id', type: CliParamType.integer, description: 'Id'),
-  ];
+  static final contract = CliContract(
+    positionals: [
+      CliPositional.integer('id', required: true, description: 'Id'),
+    ],
+  );
 
   factory _ShowInput.fromCliRequest(CliRequest req) =>
       _ShowInput(int.parse(req.param('id')!));
-
-  @override
-  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {'id': id};
@@ -134,46 +161,18 @@ class _ShowCommand implements Query<_ShowInput, _SumOutput> {
   Future<_SumOutput> execute() async => _SumOutput(input.id);
 }
 
-// ── Undeclared command (backward compatibility) ──────────────────────────────
-
-class _LegacyInput extends Input {
-  final int a;
-  _LegacyInput(this.a);
-
-  factory _LegacyInput.fromCliRequest(CliRequest req) =>
-      _LegacyInput(req.flagInt('a') ?? 0);
-
-  @override
-  Map<String, dynamic> toJson() => {'a': a};
-}
-
-class _LegacyCommand implements Query<_LegacyInput, _SumOutput> {
-  @override
-  final _LegacyInput input;
-  _LegacyCommand(this.input);
-
-  @override
-  String? validate() => null;
-
-  @override
-  Future<_SumOutput> execute() async => _SumOutput(input.a);
-}
-
 // ── Declared command that takes NO options at all ────────────────────────────
 //
-// Distinct from _LegacyInput: that one declares nothing (undeclared, not
-// enforced). This one declares its contract and the contract is *empty* — it
-// accepts no option whatsoever, and anything passed is an error.
+// `CliContract.none` says "accepts no option whatsoever" explicitly: there is
+// no undeclared escape hatch left in 0.6.0 for a command to leave unenforced,
+// so what used to be "an undeclared command ignores an unknown flag" is no
+// longer expressible: every command is enforced against its contract, and an
+// empty contract is the strictest one there is.
 
 class _InitInput extends Input {
   _InitInput();
 
-  static const List<CliParam> params = [];
-
   factory _InitInput.fromCliRequest(CliRequest req) => _InitInput();
-
-  @override
-  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {};
@@ -192,41 +191,39 @@ class _InitCommand implements Query<_InitInput, _SumOutput> {
 }
 
 ModularCli _buildCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
 
   cli.query<_InitInput, _SumOutput>(
     'init',
     (req) => _InitCommand(_InitInput.fromCliRequest(req)),
+    globals: true,
     description: 'Takes no options',
-    params: _InitInput.params,
+    contract: CliContract.none,
   );
 
   cli.query<_GreetInput, _GreetOutput>(
     'greet',
     (req) => _GreetCommand(_GreetInput.fromCliRequest(req)),
+    globals: true,
     description: 'Greet someone',
-    params: _GreetInput.params,
+    contract: _GreetInput.contract,
   );
 
   cli.query<_ShowInput, _SumOutput>(
     'show <id>',
     (req) => _ShowCommand(_ShowInput.fromCliRequest(req)),
+    globals: true,
     description: 'Show a record',
-    params: _ShowInput.params,
-  );
-
-  cli.query<_LegacyInput, _SumOutput>(
-    'legacy',
-    (req) => _LegacyCommand(_LegacyInput.fromCliRequest(req)),
-    description: 'Declares no contract',
+    contract: _ShowInput.contract,
   );
 
   cli.module('math', (m) {
     m.query<_AddInput, _SumOutput>(
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      globals: true,
       description: 'Add two numbers',
-      params: _AddInput.params,
+      contract: _AddInput.contract,
     );
   });
 
@@ -273,7 +270,7 @@ void main() {
     });
   });
 
-  group('an undeclared parameter is rejected', () {
+  group('an undeclared option is rejected on every command', () {
     test('math add --typo-flag x fails instead of being ignored', () async {
       final result = await _run([
         'math',
@@ -333,26 +330,12 @@ void main() {
     });
   });
 
-  group('a command that declares no contract is not enforced', () {
-    test('legacy keeps its imperative defaulting', () async {
-      final result = await _run(['legacy']);
-
-      expect(result.exitCode, equals(ExitCode.ok));
-      expect(result.stdout, contains('0'));
-    });
-
-    test('legacy still ignores an unknown flag', () async {
-      final result = await _run(['legacy', '--whatever', 'x']);
-
-      expect(result.exitCode, equals(ExitCode.ok));
-    });
-  });
-
-  // "I accept no options" was inexpressible: `params: const []` is the same
-  // value as the default, so a zero-parameter command was indistinguishable
-  // from an undeclared one and its arguments went unchecked. That is precisely
+  // "I accept no options" was inexpressible in 0.5.0: an absent `params:` was
+  // the same as an empty list, so a zero-parameter command was indistinguish-
+  // able from one whose arguments went unchecked entirely. That is precisely
   // the command most likely to be mis-invoked — `init --host foo` ran, doing
-  // nothing of what the flag implied.
+  // nothing of what the flag implied. `CliContract.none` is now that explicit,
+  // enforced statement, and, in 0.6.0, the only kind of "no contract" there is.
   group('a command that declares an EMPTY contract accepts no option', () {
     test('a bare invocation runs', () async {
       final result = await _run(['init']);
@@ -364,7 +347,8 @@ void main() {
       final result = await _run(['init', '--host', 'claude']);
 
       expect(result.exitCode, equals(ExitCode.validationFailed));
-      expect(result.stderr, contains('unknown option --host'));
+      // cli_router quotes the offending flag in its own message.
+      expect(result.stderr, contains("unknown option '--host'"));
     });
 
     test('it is still described in the help', () async {
@@ -380,8 +364,9 @@ void main() {
       final result = await _run(['math', 'add', '--b', '7', '--json']);
 
       expect(result.exitCode, equals(ExitCode.validationFailed));
-      final error = jsonDecode(result.stderr) as Map<String, dynamic>;
-      expect(error['error'], equals('VALIDATION_FAILED'));
+      final envelope = jsonDecode(result.stderr) as Map<String, dynamic>;
+      final error = envelope['error'] as Map<String, dynamic>;
+      expect(error['id'], equals('missing-required-option'));
       expect(error['details'], containsPair('parameter', 'a'));
     });
   });

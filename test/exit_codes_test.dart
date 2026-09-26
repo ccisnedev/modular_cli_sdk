@@ -16,10 +16,12 @@ void main() {
       expect(ExitCode.conflict, 6);
       expect(ExitCode.validationFailed, 7);
       expect(ExitCode.invalidUsage, 64);
+      expect(ExitCode.dataError, 65);
+      expect(ExitCode.configError, 78);
     });
 
     test('should define distinct codes for each error category', () {
-      expect(ExitCode.all.length, 8, reason: 'all codes must be unique');
+      expect(ExitCode.all.length, 10, reason: 'all codes must be unique');
     });
   });
 }

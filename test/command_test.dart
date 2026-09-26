@@ -59,7 +59,7 @@ class _FailingCommand implements Query<_GreetInput, _GreetOutput> {
   @override
   Future<_GreetOutput> execute() async {
     throw CommandException(
-      code: 'BROKEN',
+      id: 'broken',
       message: 'Something went wrong',
       exitCode: ExitCode.genericError,
     );

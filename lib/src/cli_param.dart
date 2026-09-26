@@ -1,47 +1,79 @@
+import 'dart:io' as io;
+
+import 'package:cli_router/cli_router.dart';
+
 import 'command_exception.dart';
 import 'exit_codes.dart';
 
-/// How a parameter is written on the command line.
-enum CliParamKind {
-  /// `--count 3` / `--count=3` / `-c 3`.
-  option,
-
-  /// `--verbose` / `-v` / `--no-verbose`.
+/// The type a raw option value is coerced into.
+enum CliParamType {
+  /// `--verbose` / `-v`. Carries no value.
   flag,
 
-  /// An ordered token embedded in the route: `show <id>`.
-  positional,
+  /// `--name value`.
+  string,
+
+  /// `--count 3`.
+  integer,
+
+  /// `--ratio 1.5`.
+  number,
+
+  /// `--format text`, restricted to [CliParam.values].
+  enumeration,
+
+  /// `--config file.yaml`, optionally required to exist ([CliParam.mustExist]).
+  path,
 }
 
-/// The type a raw argument string is coerced into.
-enum CliParamType { string, integer, number, boolean }
+/// A declared fallback value, applied when the option is absent.
+///
+/// Wrapped rather than a bare value so a default is never silent: [reason]
+/// says why the default is what it is, and that reason is what help renders
+/// alongside it. "default: World" on its own answers nothing a caller could
+/// not already see from the flag being optional.
+class DeclaredDefault<T extends Object> {
+  const DeclaredDefault(this.value, {required this.reason});
 
-/// One declared parameter of a command.
+  final T value;
+  final String reason;
+
+  @override
+  String toString() => '$value';
+}
+
+/// One declared **option** of a command: never a positional; see
+/// [CliPositional] for that.
 ///
 /// The declaration is the single source of truth: the framework renders help
 /// from it *and* enforces it at parse time, so help can never describe a
-/// contract the command does not actually apply. For that reason a facet the
-/// runtime cannot honour is not declarable: `cli_router` keeps flags in a map
-/// keyed by name, so a repeated flag overwrites the previous one and there is
-/// no repeatable parameter to describe.
+/// contract the command does not actually apply.
+///
+/// Every field that changes behavior is required and named, mirroring
+/// `cli_router`'s own [OptionSpec]: there is no default shape an option
+/// falls back on. A flag is never `required` (there is nothing to be
+/// "missing"; either it was read or not).
 ///
 /// ```dart
 /// class AddInput extends Input {
-///   static final params = [
-///     CliParam.integer('a', abbr: 'a', required: true, description: 'First operand'),
-///     CliParam.integer('b', abbr: 'b', required: true, description: 'Second operand'),
+///   static final options = [
+///     CliParam.integer('a', abbr: 'a', required: true, repeatable: false,
+///         description: 'First operand'),
+///     CliParam.integer('b', abbr: 'b', required: true, repeatable: false,
+///         description: 'Second operand'),
 ///   ];
 /// }
 /// ```
 class CliParam {
   CliParam._({
     required this.name,
-    required this.kind,
     required this.type,
     this.abbr,
-    this.required = false,
+    required this.required,
+    required this.repeatable,
     this.defaultValue,
-    this.allowed,
+    this.values,
+    this.mustExist,
     this.description,
   }) {
     if (required && defaultValue != null) {
@@ -50,59 +82,100 @@ class CliParam {
         'value can never apply.',
       );
     }
+    if (type == CliParamType.enumeration &&
+        (values == null || values!.isEmpty)) {
+      throw ArgumentError(
+        'Parameter "$name" is an enumeration and must declare its values.',
+      );
+    }
+    final default_ = defaultValue;
+    if (type == CliParamType.enumeration &&
+        default_ != null &&
+        !values!.contains(default_.value)) {
+      throw ArgumentError(
+        'Parameter "$name" declares a default of "${default_.value}", '
+        'which is not one of its own allowed values: '
+        '${values!.join(', ')}.',
+      );
+    }
   }
 
   /// Long name, written `--name` on the command line.
   final String name;
 
-  final CliParamKind kind;
   final CliParamType type;
 
   /// Short alias, written `-n`.
   final String? abbr;
 
+  /// Whether the route cannot resolve without this option. Always `false`
+  /// for a flag.
   final bool required;
 
-  /// Applied when the parameter is absent from the invocation.
-  final Object? defaultValue;
+  /// Whether the option may occur more than once on the same invocation.
+  final bool repeatable;
 
-  /// When set, any value outside this list is rejected.
-  final List<String>? allowed;
+  /// Applied when the option is absent from the invocation.
+  final DeclaredDefault<Object>? defaultValue;
+
+  /// The closed set of values a [CliParamType.enumeration] accepts.
+  final List<String>? values;
+
+  /// For [CliParamType.path]: whether the path must exist on disk to be
+  /// accepted. Required precisely because there is no sensible default for
+  /// it: a path option that does not say either way would silently accept
+  /// paths nobody checked.
+  final bool? mustExist;
 
   final String? description;
 
-  /// An option carrying a value: `--count 3`.
-  factory CliParam.string(
+  /// A switch that needs no value: `--verbose`, `-v`.
+  factory CliParam.flag(
     String name, {
-    String? abbr,
-    bool required = false,
-    String? defaultValue,
-    List<String>? allowed,
+    required String? abbr,
+    required bool repeatable,
     String? description,
   }) => CliParam._(
     name: name,
-    kind: CliParamKind.option,
+    type: CliParamType.flag,
+    abbr: abbr,
+    required: false,
+    repeatable: repeatable,
+    description: description,
+  );
+
+  /// An option carrying a string value: `--name value`.
+  factory CliParam.string(
+    String name, {
+    required String? abbr,
+    required bool required,
+    required bool repeatable,
+    required DeclaredDefault<String>? defaultValue,
+    String? description,
+  }) => CliParam._(
+    name: name,
     type: CliParamType.string,
     abbr: abbr,
     required: required,
+    repeatable: repeatable,
     defaultValue: defaultValue,
-    allowed: allowed,
     description: description,
   );
 
   /// An option whose value is a whole number: `--count 3`.
   factory CliParam.integer(
     String name, {
-    String? abbr,
-    bool required = false,
-    int? defaultValue,
+    required String? abbr,
+    required bool required,
+    required bool repeatable,
+    required DeclaredDefault<int>? defaultValue,
     String? description,
   }) => CliParam._(
     name: name,
-    kind: CliParamKind.option,
     type: CliParamType.integer,
     abbr: abbr,
     required: required,
+    repeatable: repeatable,
     defaultValue: defaultValue,
     description: description,
   );
@@ -110,53 +183,82 @@ class CliParam {
   /// An option whose value is a decimal number: `--ratio 1.5`.
   factory CliParam.number(
     String name, {
-    String? abbr,
-    bool required = false,
-    double? defaultValue,
+    required String? abbr,
+    required bool required,
+    required bool repeatable,
+    required DeclaredDefault<double>? defaultValue,
     String? description,
   }) => CliParam._(
     name: name,
-    kind: CliParamKind.option,
     type: CliParamType.number,
     abbr: abbr,
     required: required,
+    repeatable: repeatable,
     defaultValue: defaultValue,
     description: description,
   );
 
-  /// A switch that needs no value: `--verbose`, `-v`, `--no-verbose`.
-  factory CliParam.boolean(
+  /// An option restricted to a closed set of values: `--format text`.
+  factory CliParam.enumeration(
     String name, {
-    String? abbr,
-    bool? defaultValue,
+    required String? abbr,
+    required bool required,
+    required bool repeatable,
+    required List<String> values,
+    required DeclaredDefault<String>? defaultValue,
     String? description,
   }) => CliParam._(
     name: name,
-    kind: CliParamKind.flag,
-    type: CliParamType.boolean,
+    type: CliParamType.enumeration,
     abbr: abbr,
+    required: required,
+    repeatable: repeatable,
     defaultValue: defaultValue,
+    values: values,
     description: description,
   );
 
-  /// A route segment: `show <id>`. Always required — without it the route
-  /// does not match at all.
-  factory CliParam.positional(
+  /// An option whose value names a filesystem path: `--config file.yaml`.
+  ///
+  /// [mustExist] is required, not defaulted: whether a missing path is this
+  /// option's problem or the command's is a fact about the option, and no
+  /// answer is the safe one to assume silently.
+  factory CliParam.path(
     String name, {
-    CliParamType type = CliParamType.string,
-    List<String>? allowed,
+    required String? abbr,
+    required bool required,
+    required bool repeatable,
+    required bool mustExist,
+    required DeclaredDefault<String>? defaultValue,
     String? description,
   }) => CliParam._(
     name: name,
-    kind: CliParamKind.positional,
-    type: type,
-    required: true,
-    allowed: allowed,
+    type: CliParamType.path,
+    abbr: abbr,
+    required: required,
+    repeatable: repeatable,
+    defaultValue: defaultValue,
+    mustExist: mustExist,
     description: description,
   );
 
-  /// Every name this parameter answers to besides [name].
+  bool get isFlag => type == CliParamType.flag;
+
+  /// Every name this option answers to besides [name].
   List<String> get aliases => abbr == null ? const [] : [abbr!];
+
+  /// The shape `cli_router` enforces before this option ever reaches the
+  /// command: which flags exist, which are required, which repeat. Type,
+  /// enumeration membership and path existence are this SDK's own concern
+  /// (`cli_router` knows nothing about them) and are checked by [parse].
+  OptionSpec toOptionSpec() => isFlag
+      ? OptionSpec.flag(name, abbr: abbr, repeatable: repeatable)
+      : OptionSpec.value(
+          name,
+          abbr: abbr,
+          required: required,
+          repeatable: repeatable,
+        );
 
   /// Coerce a raw command-line value into the declared type.
   ///
@@ -167,63 +269,62 @@ class CliParam {
     if (value == null) {
       throw _rejected('expected $_typeLabel, got "$rawValue"');
     }
-    final allowedValues = allowed;
-    if (allowedValues != null && !allowedValues.contains(rawValue)) {
-      throw _rejected('must be one of ${allowedValues.join(', ')}');
+    if (type == CliParamType.enumeration && !values!.contains(rawValue)) {
+      throw _rejected('must be one of ${values!.join(', ')}');
+    }
+    if (type == CliParamType.path && mustExist! && !_existsOnDisk(rawValue)) {
+      throw _rejected('no such file or directory');
     }
     return value;
   }
 
   Object? _coerce(String rawValue) {
     switch (type) {
+      case CliParamType.flag:
+        return true;
       case CliParamType.string:
+      case CliParamType.enumeration:
+      case CliParamType.path:
         return rawValue;
       case CliParamType.integer:
         return int.tryParse(rawValue);
       case CliParamType.number:
         return double.tryParse(rawValue);
-      case CliParamType.boolean:
-        return _coerceBoolean(rawValue);
     }
   }
 
-  /// A flag written bare (`--verbose`) reaches here with an empty value.
-  bool? _coerceBoolean(String rawValue) {
-    const truthy = {'', 'true', '1', 'yes', 'on'};
-    const falsy = {'false', '0', 'no', 'off'};
-    final value = rawValue.toLowerCase();
-    if (truthy.contains(value)) return true;
-    if (falsy.contains(value)) return false;
-    return null;
-  }
+  bool _existsOnDisk(String rawValue) =>
+      io.FileSystemEntity.typeSync(rawValue) !=
+      io.FileSystemEntityType.notFound;
 
   String get _typeLabel => switch (type) {
+    CliParamType.flag => 'nothing',
     CliParamType.string => 'a string',
     CliParamType.integer => 'an integer',
     CliParamType.number => 'a number',
-    CliParamType.boolean => 'a boolean',
+    CliParamType.enumeration => 'one of ${values!.join(', ')}',
+    CliParamType.path => 'a path',
   };
 
   CommandException _rejected(String reason) => CommandException(
-    code: 'VALIDATION_FAILED',
-    message: '$_invocationName: $reason',
+    id: 'validation-failed',
+    message: '--$name: $reason',
     exitCode: ExitCode.validationFailed,
     details: {'parameter': name},
   );
 
-  /// How the parameter is written when reported back to the user.
-  String get _invocationName =>
-      kind == CliParamKind.positional ? '<$name>' : '--$name';
-
   /// The contract as `help --json` publishes it.
   Map<String, dynamic> toJson() => {
     'name': name,
-    'kind': kind.name,
+    'kind': 'option',
     'type': type.name,
     'aliases': aliases,
     'required': required,
-    if (defaultValue != null) 'default': defaultValue,
-    if (allowed != null) 'allowed': allowed,
+    'repeatable': repeatable,
+    if (defaultValue != null) 'default': defaultValue!.value,
+    if (defaultValue != null) 'defaultReason': defaultValue!.reason,
+    if (values != null) 'allowed': values,
+    if (mustExist != null) 'mustExist': mustExist,
     if (description != null) 'description': description,
   };
 }

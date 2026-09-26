@@ -4,6 +4,387 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.6.0
+
+Built against `cli_router: { path: ../cli_router-0.2.0 }`. The constraint
+must become `cli_router: ^0.2.0` once that release is published to pub.dev.
+This entry is written against the API `cli_router` 0.2.0 carries as of commit
+`0f28e32`: `abbr` is required on every `OptionSpec`, `mount()` requires equal
+`globalOptions` on both routers, and a bare `--` after an operand is
+rejected. No bug or missing API was found in it while building this one.
+
+### Added
+
+- **`CliPositional`**: a declared positional argument (`.string`, `.integer`,
+  `.number`), distinct from `CliParam` because it has no `--name`, no
+  abbreviation and no repeatability. Renders in help and is enforced exactly
+  like an option. `required` is a mandatory, no-default `bool`: a route
+  pattern's trailing `[<name>]` segment is declared with `required: false`,
+  and registration cross-checks the contract's positionals against the
+  pattern's: a missing, extra, misnamed, duplicated, or wrongly-required/
+  optional positional declaration is an `ArgumentError` at registration time,
+  not a silent pass-through at dispatch
+- **`ModularCli.shortcut(pattern, {target, globals, contract, description})`**:
+  a declared route that runs another route's handler under a narrower
+  contract (issue #27 section 4), dispatched through the shortcut's *own*
+  contract, never the target's. `target` names the route it dispatches to by
+  its router pattern (e.g. `'eval rpn'`) and must match exactly one
+  registered route; registration fails with an `ArgumentError` if `target` is
+  not registered, or if it is ambiguous (matches more than one route). A
+  shortcut never declares its own positionals: they are derived from
+  `target`'s own declaration, by name, and rebound to whichever cardinality
+  `pattern` itself gives them: declaring one directly in `contract` is an
+  `ArgumentError`. `contract` is required, with no default, like every other
+  registration call on this SDK (`CliContract.none` for a shortcut that
+  declares nothing itself; issue #27's own example now reads
+  `shortcut('<program>', target: 'eval rpn', globals: false, contract:
+  CliContract.none)`). When `target` is a `Command`, `contract` gains
+  `ChangeFlags.params` regardless, the same way `command()` itself always
+  gains them, so a shortcut to a command still demands `--plan` or `--apply`
+  exactly as the target does, instead of `cli_router` rejecting either as an
+  undeclared option. Like every other registration call, `globals` has no
+  default: a shortcut states explicitly whether the SDK's global options
+  (`--plan`, `--apply`, `--json`, and so on) are accepted on it
+- **`CommandCatalog.suggest(word, {required maxDistance})`** (issue #27
+  section 6):
+  the closest word in the catalog's route vocabulary to `word`, by
+  restricted edit distance (Levenshtein plus one adjacent-transposition
+  operation, i.e. Damerau-Levenshtein limited to non-overlapping
+  transpositions), `<= maxDistance`; ties are broken by catalog registration
+  order; returns `null` when nothing is within range. Wired into
+  `unknownCommand` and `incomplete` rejections, so `commands shwo power`
+  suggests `show`. `maxDistance` is required, with no default: the catalog
+  has no distance of its own to fall back to, and `ModularCli` (the usual
+  caller) always threads its own configured `suggestionDistance` through
+  explicitly
+- **`CliContract`**: the full declared shape of a route's arguments:
+  `options` (`CliParam`), `positionals` (`CliPositional`) and `constraints`
+  (`CliConstraint`), replacing the bare `List<CliParam>? params`.
+  `CliContract.none` declares nothing; `withOptions()` returns a copy with
+  extra options appended (how the SDK adds `--plan`/`--apply`/`--autoapprove`
+  to a command's own contract without mutating it)
+- **`CliConstraint`, `ExactlyOne`, `MutuallyExclusive`**: cross-field rules
+  checked once every option has been read and defaulted, over the set of
+  option names actually *present* on the invocation (a `DeclaredDefault` does
+  not count as present)
+- **`DeclaredDefault<T>`**: a default value wrapped with a required `reason`,
+  so a default is never silent; help renders `default: <value>` from it
+- **`--help` wins over enforcement.** `<command> --help` on an otherwise
+  invalid or incomplete invocation now always renders that command's contract
+  and exits `0`, instead of failing enforcement first. Concretely: an
+  invocation the router classifies as `incomplete`, `missingArgument` or
+  `missingRequiredOption` is help-eligible; `--help` short-circuits it
+- **A half-typed route says so specifically.** `math` (where only `math add`
+  is registered), `api graphql` (a route prefix, not a module) and a route hit
+  with an unrelated bad option before its own contract could be resolved are
+  now all reported as `'<what you typed>' is not a complete command`, instead
+  of the router's generic `incomplete command` / `does not continue this
+  command` wording, whenever no contract names the exact invocation but at
+  least one registered route continues it
+- **Exit codes `dataError` (65, `EX_DATAERR`) and `configError` (78,
+  `EX_CONFIG`)**, alongside the existing eight (`ExitCode.all` now has 10
+  entries)
+- `test/cli_positional_test.dart`, `test/cli_contract_test.dart`: dedicated
+  coverage for the two new declaration types
+
+### Changed (BREAKING)
+
+- **`params: List<CliParam>?` is gone; every route declares `contract:
+  CliContract` instead.** `command(...)` / `query(...)` on both `ModularCli`
+  and `ModuleBuilder` take `contract` (defaulting to `CliContract.none`), not
+  `params`. A positional argument, previously undeclarable, is now a
+  `CliPositional` inside the same contract a route's options live in
+- **`Input.schemaFields` and `Output.schemaFields` are removed.** They were
+  reserved surface that predated `CliContract`; a route's `Input` now exposes
+  its contract as a `static final contract`, read by the registration call,
+  not by an interface member every `Input`/`Output` had to carry
+- **A positional can be optional.** A route pattern's trailing `[<name>]`
+  segment is declared with a `CliPositional(required: false)`; help renders
+  `Usage: eval rpn [options] [<program>]`, with the bracket and the
+  "required"/"optional" facet both taken from the pattern and the
+  declaration, not hand-rolled
+- **Every error, under `--json`, is now one shape, nested under `"error"`.**
+  Previously a router-level rejection (unknown command, missing required
+  option, …) surfaced as `{"error": "<raw human-readable message>", "kind":
+  ..., "contract": ...}`, a different shape from `CommandException.toJson()`,
+  and carried a `kind` field and an `isRetryable` flag. Both are now:
+  `{"error": {"id": "<kebab-case-id>", "message": "<text>", "exitCode":
+  <int>, "contract": ..., "details": {...}}}`. `contract` and `details` are
+  only present when they apply, and there is no `kind` and no `isRetryable`.
+  A router rejection's `id` comes from a fixed table (documented in
+  README.md's "Error handling" section): `unknown-command`,
+  `incomplete-command`, `missing-argument`, `extra-argument`,
+  `unknown-option`, `misplaced-option`, `missing-required-option`,
+  `repeated-option`, `invalid-short-option`, `missing-value`,
+  `unexpected-value`. An SDK-enforced contract violation (a required option
+  missing, the wrong type, an allow-list mismatch, a failed `CliConstraint`)
+  raises a `CommandException` with `id: 'validation-failed'`, a twelfth id
+  not in that table, since it is not a router rejection. A `--json` caller
+  now has one error vocabulary and one place to look for it, regardless of
+  whether the rejection came from `cli_router`, the SDK's own enforcement, or
+  a handler's own `CommandException`
+- **`CommandException.code` is renamed to `id`, and validated.** `id` is
+  `required`, kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`), and throws
+  `ArgumentError` at construction otherwise; `exitCode` is now `required`
+  with no default. `details` (`Map<String, dynamic>?`, optional, free-form)
+  replaces the old fixed field set, so a domain error (calculatrix's, for
+  example) can carry `token`/`position` through it. `isRetryable` is
+  removed entirely; nothing in either CLI built on this SDK read it
+- **`help --json`'s `route` and `kind` keys**: `kind` is the route's
+  `CommandKind` (`"query"` / `"command"`); a JSON consumer keying off the
+  wrong field will find one missing rather than silently reading the other's
+  value
+- **The generated `Usage:` line orders options before positionals**:
+  `Usage: notes write [options] <name>`, not `<name> [options]`, because
+  `cli_router`'s grammar requires every option to precede the first
+  positional on the actual command line (an option can never follow an
+  operand); the old order documented an invocation the router would reject
+- **`CliParam`'s `abbr` and `defaultValue` are required on every factory
+  (`.string`, `.integer`, `.number`, `.flag`, `.enumeration`), but stay
+  nullable.** Previously both were optional parameters that silently
+  defaulted to `null`/absent, so a call site could not tell "no abbreviation,
+  on purpose" from "I forgot the abbreviation." Every call site now writes
+  `abbr: null` or `defaultValue: null` explicitly when it means that
+- **`contract` is required, with no default, on `query()` and `command()`**
+  (`ModularCli` and `ModuleBuilder` alike). `CliContract.none` remains
+  available and is one explicit keystroke away; what is gone is a route
+  silently getting an empty contract because `contract:` was left off
+- **`ModularCli(...)` requires `suggestionDistance`, with no default.** The
+  "did you mean" suggestion introduced in this release (`CommandCatalog.
+  suggest`) needs a distance threshold from somewhere; leaving it defaulted
+  would mean most call sites never think about it. Every construction now
+  passes one explicitly (this SDK's own example and tests use `2`)
+
+### Fixed
+
+- **The SDK no longer parses `CliRejection.message` with regexes to recover
+  typed data; it reads `cli_router` 0.2.0's own typed fields instead.**
+  `_withSuggestion` used an unanchored `RegExp("'([^']*)'")` over the
+  router's message to find the offending argv token for "Did you mean"
+  suggestions, and `_missingPositionalName` parsed the message again to
+  recover the missing positional's name for `_applicableContractFor`. Both
+  broke silently if the router's wording ever changed, and the suggestion
+  regex additionally truncated its match at the first closing quote, so an
+  offending token containing an apostrophe (e.g. `s'how`) was extracted as
+  only its prefix, too short to suggest anything close. `_withSuggestion`
+  now takes `CliRejection.token` directly, and `_applicableContractFor`
+  reads `CliRejection.argument` directly; `_missingPositionalPattern` and
+  `_missingPositionalName` are deleted. `rejection.message` is still read
+  once, for display, never parsed
+- **A `--apply`'s approval refusal and a step failure are now structured
+  errors, under `--json` too.** `_carryOut()` previously wrote a refused
+  approval as a plain success-shaped object via `writeObject` and a step
+  failure as a raw `! <message>` line on stderr, bypassing the structured
+  error envelope entirely. Both now go through `CliOutput.writeError`: a
+  refusal is `id: 'approval-refused'` with the refusal reason carried as a
+  `details.reason`; a step failure reuses the thrown `CommandException`'s
+  own `id` and `exitCode` when the step threw one directly, or is wrapped
+  under a fixed `id: 'step-failed'` otherwise. The exit code `_carryOut`
+  returns is now always the written exception's own `exitCode`, not a
+  separate computation that could drift from it
+- **No SDK code path writes an error to stderr directly any more; `run()`
+  alone renders it, exactly once, after the whole dispatch has finished.**
+  Every place that used to call `stderr.writeln(...)` (a middleware's own
+  catch, `CliOutput.writeError`, a rejection handled inside `ModularCli`)
+  now records its `CommandException` into an invocation-local outcome kept
+  as a `Zone` value, created fresh by `run()` for that one invocation and
+  threaded automatically across every `await`, instead of an instance field
+  a concurrent `run()` call on the same `ModularCli` could clobber. `run()`
+  decides once, after the whole chain returns: exit code `0` discards
+  whatever was recorded and renders nothing (a handler that recovers from a
+  middleware's failure and still succeeds no longer leaves a stale error
+  behind); a nonzero exit code renders the most recently recorded error,
+  in the `--json` or text mode the request actually used. The former
+  per-middleware error-boundary field, `_pendingMiddlewareError`, is gone
+  along with the patch-by-patch fixes layered on it: an inner middleware's
+  construction-time throw, escalated by an outer middleware into a fresh
+  throw of its own, no longer writes two concatenated JSON documents to
+  stderr, and two invocations to the same `ModularCli` running concurrently
+  no longer risk one seeing the other's recorded error
+- **A rejection under a mounted shortcut is now attributed to the right
+  contract, or explicitly reported as ambiguous, never guessed.** The
+  shortcut lookup used to be a single map from a route's bare pattern to its
+  contract, which broke as soon as a shortcut was itself mounted under a
+  prefix: the router's own rejection reports the mounted route, not the bare
+  one, so the lookup missed and `--help` fell through to the catalog instead
+  of the shortcut's own contract. There are now two maps, built at
+  registration time: an exact map from a shortcut's full mounted router
+  pattern to its one contract (registering two shortcuts under the same
+  mounted pattern is a registration-time error, not a silent overwrite), and
+  a prefix map from a mounted literal prefix to every shortcut contract that
+  starts with it. A lookup uses the exact map first when the rejection
+  itself carries a resolved route; otherwise it falls back to the prefix
+  candidates. Exactly one candidate validates against it as before. Several
+  shortcuts sharing a prefix can no longer be attributed to just one of
+  them, so `--help` no longer wins by picking arbitrarily; the router's own
+  rejection error is reported instead, exactly as if no shortcut existed.
+  `--help` on a resolved mounted shortcut now also renders the mounted route
+  in its usage line, not the bare pattern the shortcut was declared with
+- **A constraint (`ExactlyOne`, `MutuallyExclusive`) now counts a bound
+  positional by name, the same as an option.** Previously only option
+  presence was checked, so `eval rpn '1 2 +'` (the positional alone) ran
+  unconstrained while `eval rpn --stdin '1 2 +'` was correctly rejected by
+  `ExactlyOne(['program', 'file', 'stdin'])`; both are rejected now, and
+  supplying both a flag and the positional is caught as the two-members-
+  present violation it always was
+- **Every occurrence of a repeatable option is validated**, not just the
+  first (`repeat --count 1 --count bad` is now a validation failure instead
+  of silently accepting the first value and ignoring the rest)
+- **A `DeclaredDefault` is checked against its own declaration.** An
+  enumeration's default that is not one of its `values` is an
+  `ArgumentError` at registration time; a `mustExist`-constrained path's
+  default is validated before dispatch exactly like a value the caller
+  supplied, instead of bypassing the filesystem check because nothing was
+  typed
+- **A route is identified consistently by the router's `CliRoute`** (its
+  pattern and literal words) everywhere the SDK looks one up. Previously the
+  catalog derived a route's identity from its own contract-formatted string
+  (`eval rpn [<program>]` → name `eval rpn []`), which diverged from what the
+  router reports (`eval rpn`) and broke `help eval rpn`, the module-help
+  fallback shown for `eval rpn --help` alongside a missing required option,
+  and the `contract`/`details` fields of a JSON error for any route with a
+  positional segment
+- **The "is not a complete command" rewrite only applies to an actual
+  `incomplete` rejection.** `eval --json --bogus` previously kept the kind
+  `unknownOption` but relabelled the message as "'eval' is not a complete
+  command"; every rejection kind other than `incomplete` now keeps the
+  router's own message, even when it occurs under a prefix that is itself
+  incomplete
+- **`cli.module('', (m) { ... })` no longer throws.** Mounting a prefix
+  requires exactly one literal word in `cli_router`'s grammar, so an
+  empty-name module's routes are registered directly on the root router
+  instead of being mounted
+- **The catalog's handler map is keyed by route, not by bare name.** Two
+  routes that share a leading word but differ in arity (`show` and `show
+  <id>`) previously collided in a name-keyed map, so registering both left
+  only one dispatchable; each is now keyed by its own `CliRoute` and both
+  dispatch correctly
+- **`repeat --count bad --help` is now a validation failure, not a help
+  screen.** `--help` short-circuiting enforcement (see above) was only meant
+  to apply when the invocation is *incomplete*, not when a supplied value is
+  outright invalid; `--count bad` is a validation failure regardless of
+  `--help`, so it no longer exits `0`
+- **`globals: false` on a route now omits the SDK's global options
+  (`--plan`, `--apply`, `--json`, `--autoapprove`, …) from that route's own
+  focused help**, not just from enforcement. Previously a route that
+  declined the global options still had them listed in `<command> --help`,
+  which documented flags the route would then reject
+- **A wildcard positional's usage line renders its own `*`.** `batch *`'s
+  generated `Usage:` line previously dropped the trailing `*`, documenting
+  an invocation (`batch`, no arguments) that the route does not actually
+  accept
+- **What `run()` renders now always corresponds to the final dispatch
+  attempt, never a superseded one.** A middleware that retries by calling
+  `next` more than once (`ModuleBuilder._mount()`'s own handler never lets a
+  thrown `CommandException` propagate past its boundary, so a retry decides
+  from the plain, already-converted exit code) could leave an earlier
+  attempt's recorded error behind: attempt one throws, attempt two then
+  either succeeds outright with its own nonzero `Output.exitCode` or throws
+  a different error of its own, and nothing overwrote what attempt one had
+  already recorded. Both boundaries a retry can call more than once,
+  `ModularCli.use()`'s own wrapper and `ModuleBuilder._mount()`'s handler,
+  now clear the recorded outcome at the start of every dispatch attempt, so
+  a superseded attempt's error cannot outlive it
+- **A name-only catalog route match no longer silently overrides a deeper
+  shortcut the invocation positionally matches further.** An ordinary route
+  (`s`, no positionals) and a shortcut (`s <id> <sub>`) can share the same
+  literal prefix; a rejection that never resolved a specific route looked
+  the prefix up against the catalog first, so the shallower, unrelated
+  route's contract won even when the invocation was actually reaching for
+  the deeper shortcut, letting a badly typed value on the shortcut's own
+  option pass validation under the catalog route's more permissive one. The
+  applicable contract is now chosen from the router's own rejection, by
+  name, not by guessing from how many positionals each candidate declares
+  (a comparison that itself picked a winner even when the router made no
+  actual routing progress toward one candidate over the other, see below);
+  a catalog route and a shortcut that both remain viable at the same
+  rejected positional are reported as the router's own rejection, the same
+  as any other ambiguous case, rather than guessed
+- **`run()` no longer throws `StateError` when a middleware legitimately
+  remaps a nonzero result to a different exit code.** A handler's own
+  thrown `CommandException` can carry one exit code while an outer
+  middleware, having awaited `next(req)`, deliberately returns a different
+  one of its own (a `notFound` turned into a `genericError` further up the
+  chain, say); `run()` previously treated that mismatch as an invariant
+  violation. The process exit code returned through the pipeline is now
+  authoritative: the rendered envelope keeps the recorded error's own `id`,
+  `message` and any extras, but its own `exitCode` field is stamped with the
+  exit code `run()` is actually about to return, whatever the recorded
+  error's own `exitCode` was
+- **A middleware's own error, recorded before it calls `next(req)`, no
+  longer gets erased by the reset that starts the downstream dispatch it
+  calls into.** The per-attempt reset a retry needs (see above) reset the
+  same recorded-outcome slot a middleware itself had just written to,
+  before `next` even ran, so a middleware that records its own error,
+  awaits `next(req)`, and returns nonzero rendered nothing at all whenever
+  the downstream attempt recorded no error of its own. The recorded outcome
+  is now a stack of frames, one per nested dispatch level: entering
+  `next()` pushes a fresh frame for that attempt, and returning from it
+  folds the frame back, overwriting the enclosing level's own error only
+  when the downstream attempt actually recorded one of its own, and
+  restoring the enclosing middleware's own pre-`next()` baseline otherwise.
+  A retry that calls `next()` more than once keeps this correct across every
+  attempt: only the true baseline, captured once before the first attempt,
+  is ever restored, never a previous, already-superseded attempt's own
+  merged-in error
+- **An unresolved rejection's applicable contract is now chosen only from
+  actual routing progress.** The positional-depth comparison above (a
+  catalog route's and a shortcut's total positional counts) could still
+  pick a winner even when the router itself never got far enough to prefer
+  one candidate over the other: a catalog route `s <id> *` and a shortcut
+  `s <id> <sub> [<tail>]` both declare a positional named `id`, so
+  `s --json --a bad --help` (missing `<id>` entirely) resolved to the
+  shortcut's contract purely because it has more positionals overall, and
+  rendered a successful `--help` answer under the wrong one. Resolution now
+  matches candidates by the exact positional name the router's own
+  rejection names as missing (sound because `cli_router` itself refuses to
+  register two routes that disagree on the name of a positional they share
+  a trie slot with); when more than one candidate still declares that name,
+  the router's own rejection is kept unchanged, never resolved to a guess
+- **A middleware's own recorded error and its latest downstream attempt's
+  outcome are now two independent slots, not one shared value.** A
+  middleware that awaits a first `next()` attempt, records its own error
+  after that attempt fails, then awaits a second, silent retry, previously
+  lost its own recording: the retry's clean baseline overwrote it even
+  though nothing new was ever recorded during the retry itself. Each
+  middleware wrapper now tracks its own recording and its latest completed
+  downstream attempt separately, each stamped with a monotonically
+  increasing sequence number bumped on every recording anywhere in the
+  invocation, and renders whichever of the two is strictly more recent
+  after every attempt and once the middleware itself returns
+- **Calling `next()` again before a middleware's previous `next()` call has
+  completed is now a `StateError` naming the middleware's route, not a
+  silent race.** Two overlapping downstream attempts from the same
+  middleware invocation shared one frame stack with no way to tell which
+  attempt a given push or pop belonged to; this is a programming error, not
+  a retry pattern this SDK supports, so it is now rejected outright rather
+  than merged through a heuristic. Frames stay correctly isolated across
+  separate, unrelated `run()` calls made concurrently, as before
+- **`--help` resolution for an unresolved rejection now considers every
+  registered candidate sharing a name, not just the first one found, and
+  decides ambiguity only after filtering by the missing positional.** Two
+  distinct routes can share the exact same words-only name when one is a
+  strict prefix of the other's positionals (`s` and `s <id> <sub>` are both
+  named `s`); the catalog lookup `_applicableContractFor` used previously
+  returned only the first one registered, and a shortcut lookup sharing the
+  same prefix separately declared more than one candidate ambiguous before
+  ever checking whether only one of them still declares the positional the
+  rejection is actually missing. Both catalog and shortcut candidates
+  sharing a name or prefix are now collected into one list first; zero or
+  more than one candidate left after filtering by the missing positional's
+  name is reported as the router's own rejection, exactly one resolves.
+  `--help` on a rejection resolved this way to a single shortcut now
+  renders that shortcut's own contract, not a fallback catalog listing, the
+  same as an ordinary resolved route already does
+
+### Notes
+
+- `dart analyze` is clean except for the expected `invalid_dependency`
+  warning on the intentional local path dependency on `cli_router`
+- Every invocation in this README, the example app and the test suite that
+  exercises a route with a positional now places its options before the
+  positional, per the grammar rule above
+
 ## 0.5.0
 
 > Prepared as two releases and shipped as one. The version here was raised to

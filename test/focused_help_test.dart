@@ -10,21 +10,32 @@ class _AddInput extends Input {
   final int b;
   _AddInput({required this.a, required this.b});
 
-  static final params = [
-    CliParam.integer(
-      'a',
-      abbr: 'a',
-      required: true,
-      description: 'First operand',
-    ),
-    CliParam.integer('b', defaultValue: 10, description: 'Second operand'),
-  ];
+  static final contract = CliContract(
+    options: [
+      CliParam.integer(
+        'a',
+        abbr: 'a',
+        required: true,
+        repeatable: false,
+        defaultValue: null,
+        description: 'First operand',
+      ),
+      CliParam.integer(
+        'b',
+        abbr: null,
+        required: false,
+        repeatable: false,
+        defaultValue: const DeclaredDefault(
+          10,
+          reason: 'the usual second term',
+        ),
+        description: 'Second operand',
+      ),
+    ],
+  );
 
   factory _AddInput.fromCliRequest(CliRequest req) =>
       _AddInput(a: req.flagInt('a')!, b: req.flagInt('b')!);
-
-  @override
-  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {'a': a, 'b': b};
@@ -57,19 +68,14 @@ class _ShowInput extends Input {
   final int id;
   _ShowInput(this.id);
 
-  static final params = [
-    CliParam.positional(
-      'id',
-      type: CliParamType.integer,
-      description: 'Record id',
-    ),
-  ];
+  static final contract = CliContract(
+    positionals: [
+      CliPositional.integer('id', required: true, description: 'Record id'),
+    ],
+  );
 
   factory _ShowInput.fromCliRequest(CliRequest req) =>
       _ShowInput(int.parse(req.param('id')!));
-
-  @override
-  List<CliParam> get schemaFields => params;
 
   @override
   Map<String, dynamic> toJson() => {'id': id};
@@ -88,27 +94,30 @@ class _ShowCommand implements Query<_ShowInput, _SumOutput> {
 }
 
 ModularCli _buildCli() {
-  final cli = ModularCli();
+  final cli = ModularCli(suggestionDistance: 2);
 
   cli.query<_ShowInput, _SumOutput>(
     'show <id>',
     (req) => _ShowCommand(_ShowInput.fromCliRequest(req)),
+    globals: true,
     description: 'Show a record',
-    params: _ShowInput.params,
+    contract: _ShowInput.contract,
   );
 
   cli.module('math', (m) {
     m.query<_AddInput, _SumOutput>(
       'add',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      globals: true,
       description: 'Add two numbers',
-      params: _AddInput.params,
+      contract: _AddInput.contract,
     );
     m.query<_AddInput, _SumOutput>(
       'multiply',
       (req) => _AddCommand(_AddInput.fromCliRequest(req)),
+      globals: true,
       description: 'Multiply two numbers',
-      params: _AddInput.params,
+      contract: _AddInput.contract,
     );
   });
 
@@ -154,7 +163,9 @@ void main() {
     });
 
     test('a positional is shown as a required argument', () async {
-      final result = await _run(['show', '1', '--help']);
+      // --help precedes the positional: cli_router's grammar forbids an
+      // option following an operand.
+      final result = await _run(['show', '--help', '1']);
 
       expect(result.exitCode, equals(ExitCode.ok));
       expect(result.stdout, contains('<id>'));

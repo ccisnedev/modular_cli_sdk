@@ -16,15 +16,19 @@ void main() {
     late String listing;
 
     setUp(() async {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2)
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
+          globals: true,
+          contract: CliContract.none,
           description: 'Count things',
         )
         ..command<TouchInput, TouchOutput>(
           'touch',
           (req) => TouchCommand(TouchInput()),
+          globals: true,
+          contract: CliContract.none,
           description: 'Touch things',
         );
 
@@ -62,10 +66,12 @@ void main() {
       () async {
         // Two headings over one list would be noise, and every CLI written before
         // commands existed is this shape.
-        final cli = ModularCli()
+        final cli = ModularCli(suggestionDistance: 2)
           ..query<CountInput, CountOutput>(
             'count',
             (req) => CountQuery(CountInput(3)),
+            globals: true,
+            contract: CliContract.none,
             description: 'Count things',
           );
 
@@ -80,14 +86,18 @@ void main() {
 
   group('help --json', () {
     test('carries the kind of every route', () async {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2)
         ..query<CountInput, CountOutput>(
           'count',
           (req) => CountQuery(CountInput(3)),
+          globals: true,
+          contract: CliContract.none,
         )
         ..command<TouchInput, TouchOutput>(
           'touch',
           (req) => TouchCommand(TouchInput()),
+          globals: true,
+          contract: CliContract.none,
         );
 
       final out = MemorySink();
@@ -95,9 +105,15 @@ void main() {
 
       final commands =
           (jsonDecode(out.output) as Map<String, dynamic>)['commands'] as List;
+      // 'route' is the literal invocation pattern, positionals and wildcards
+      // included (`help *`): key by the name a user types instead, the same
+      // way the catalog itself resolves `help` to `help *`.
       final kinds = {
         for (final c in commands.cast<Map<String, dynamic>>())
-          c['route']: c['kind'],
+          (c['route'] as String)
+                  .replaceAll(RegExp(r'\s*(<[^>]+>|\*)'), '')
+                  .trim():
+              c['kind'],
       };
 
       expect(kinds['count'], 'query');
