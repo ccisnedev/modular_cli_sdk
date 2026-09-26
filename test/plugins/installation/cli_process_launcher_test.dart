@@ -484,10 +484,10 @@ void main() {
         'claim it won', () {
       final armedIndex = cleanupWorkerBootstrapScript.indexOf(r'if ($armed) {');
       final removeTargetIndex = cleanupWorkerBootstrapScript.indexOf(
-        r'Remove-Item -LiteralPath $path',
+        r'Remove-WithRetry $path',
       );
       final removePrivateDirIndex = cleanupWorkerBootstrapScript.indexOf(
-        r'Remove-Item -LiteralPath $PrivateDir -Recurse',
+        r'Remove-WithRetry $PrivateDir -Recurse',
       );
       expect(armedIndex, greaterThanOrEqualTo(0));
       expect(removeTargetIndex, greaterThan(armedIndex));
@@ -498,9 +498,40 @@ void main() {
       expect(cleanupWorkerBootstrapScript, contains('WaitForExit'));
       final waitIndex = cleanupWorkerBootstrapScript.indexOf('WaitForExit');
       final removeTargetIndex = cleanupWorkerBootstrapScript.indexOf(
-        r'Remove-Item -LiteralPath $path',
+        r'Remove-WithRetry $path',
       );
       expect(removeTargetIndex, greaterThan(waitIndex));
+    });
+
+    // The final deletion steps used to be the one place in the script that
+    // never rode out an unexpected failure the way every marker rename
+    // already does: an unhandled sharing violation there killed the worker
+    // (exit code 1) before the target was ever removed, exactly the
+    // intermittent failure this test root-causes. Remove-WithRetry closes
+    // that gap the same way Complete-Rename already does for renames.
+    test('retries deleting the target paths and the private directory the '
+        'same way it already retries a marker rename, but still stops '
+        'once a path is legitimately already gone', () {
+      expect(
+        cleanupWorkerBootstrapScript,
+        contains('function Remove-WithRetry'),
+      );
+      expect(
+        cleanupWorkerBootstrapScript,
+        contains('catch [System.Management.Automation.ItemNotFoundException]'),
+      );
+      expect(
+        cleanupWorkerBootstrapScript,
+        contains('Start-Sleep -Milliseconds 50'),
+      );
+      expect(
+        cleanupWorkerBootstrapScript,
+        isNot(contains(r'Remove-Item -LiteralPath $path')),
+      );
+      expect(
+        cleanupWorkerBootstrapScript,
+        isNot(contains(r'Remove-Item -LiteralPath $PrivateDir -Recurse')),
+      );
     });
 
     test('deletes with -LiteralPath under a Stop error action', () {

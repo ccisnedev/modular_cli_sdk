@@ -266,14 +266,28 @@ const String cleanupWorkerRevokedMarkerFileName = 'revoked';
 /// long that takes, rather than risk deleting out from under a parent that
 /// is merely slow to shut down. On a confirmed exit (or immediately, when
 /// the parent had already exited before the worker ever retained a
-/// handle), it deletes each given path with `Remove-Item -LiteralPath`
-/// under `$ErrorActionPreference = 'Stop'`, followed by its own private
+/// handle), it deletes each given path, followed by its own private
 /// directory: ownership of removing it belongs to the worker on this path,
 /// never to [IoCliProcessLauncher], since deleting it immediately after a
 /// successful claim would race the worker's own, still-pending, first look
 /// at the accepted marker. A worker that never arms deletes nothing and
 /// leaves the private directory for [IoCliProcessLauncher] to remove, the
 /// same as a worker that never even reaches the ready marker.
+///
+/// Every deletion goes through `Remove-WithRetry`, the same
+/// indefinitely-retrying idiom `Complete-Rename` already uses for both
+/// renames: an unexpected failure (a sharing violation from another
+/// process, most concretely a real-time antivirus scan of a path the
+/// worker only just touched) is retried rather than left to propagate as
+/// an unhandled, script-terminating exception under
+/// `$ErrorActionPreference = 'Stop'`, which would otherwise kill the
+/// worker before the target was ever removed. Only a path that no longer
+/// exists at all (`ItemNotFoundException`) ends that path's retry loop
+/// without deleting anything, the same "legitimately nothing to do" exit
+/// [tryClaimReadyMarker] and [tryRevokeAcceptedMarker] already give a
+/// rename whose source is already gone: without that distinction, a
+/// target some other, unrelated process had already removed would retry
+/// forever instead of simply being done.
 const String cleanupWorkerBootstrapScript = r'''
 $ErrorActionPreference = 'Stop'
 $data = $env:CLI_CLEANUP_PAYLOAD | ConvertFrom-Json
@@ -294,6 +308,23 @@ function Complete-Rename($From, $To) {
             return $true
         } catch [System.IO.FileNotFoundException] {
             return $false
+        } catch {
+            Start-Sleep -Milliseconds 50
+        }
+    }
+}
+
+function Remove-WithRetry($Path, [switch]$Recurse) {
+    while ($true) {
+        try {
+            if ($Recurse) {
+                Remove-Item -LiteralPath $Path -Recurse
+            } else {
+                Remove-Item -LiteralPath $Path
+            }
+            return
+        } catch [System.Management.Automation.ItemNotFoundException] {
+            return
         } catch {
             Start-Sleep -Milliseconds 50
         }
@@ -346,9 +377,9 @@ if ($armed) {
         $parent.WaitForExit()
     }
     foreach ($path in $paths) {
-        Remove-Item -LiteralPath $path
+        Remove-WithRetry $path
     }
-    Remove-Item -LiteralPath $PrivateDir -Recurse
+    Remove-WithRetry $PrivateDir -Recurse
 }
 ''';
 
@@ -856,12 +887,16 @@ abstract class CliProcessLauncher {
 /// and armed (a locked target file, most concretely), has no process left
 /// to report it to by the time it happens: whichever process started this
 /// one has typically already exited, which is the entire reason a detached
-/// worker exists in the first place. That is not a gap this class, or the
-/// worker's own bootstrap script, tries to close by adding another
-/// diagnostic channel (a marker file nobody reads, for instance, which is
-/// exactly what Round 8 finding 3 removed): it is accepted as the known,
-/// unavoidable cost of deleting a file unattended after the process that
-/// asked for it is gone.
+/// worker exists in the first place. An unexpected failure there is
+/// retried the same way an unexpected failure renaming a marker already
+/// was (see `Remove-WithRetry` in [cleanupWorkerBootstrapScript]), so a
+/// transient one (a real-time antivirus scan, concretely) no longer kills
+/// the worker before the target is ever removed. Only a failure that never
+/// clears is not a gap this class, or the worker's own bootstrap script,
+/// tries to close by adding another diagnostic channel (a marker file
+/// nobody reads, for instance, which is exactly what Round 8 finding 3
+/// removed): that is accepted as the known, unavoidable cost of deleting a
+/// file unattended after the process that asked for it is gone.
 class IoCliProcessLauncher implements CliProcessLauncher {
   /// [startupTimeout] and [markerDeadlineSafetyMargin] override
   /// [cleanupWorkerStartupTimeout] and
