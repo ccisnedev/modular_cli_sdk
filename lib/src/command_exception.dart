@@ -52,6 +52,15 @@ class CommandException implements Exception {
   /// exception itself, never on the outcome directly, since a thrown
   /// exception has already left the thrower's own stack frame by the time
   /// anything could record it.
+  ///
+  /// Always the constructor's own defensive, unmodifiable copy of whatever
+  /// map the caller passed in, never the caller's own map reference (Codex
+  /// review of 53aeb3f found this: the constructor used to keep the
+  /// caller's own mutable map, validated once at construction time, so a
+  /// caller mutating that map afterwards, or an unrelated holder of the
+  /// same reference, could corrupt the rendered envelope after validation
+  /// already passed). Attempting to mutate this map throws
+  /// [UnsupportedError], the same as any other unmodifiable map.
   final Map<String, dynamic>? extraFields;
 
   /// Text a domain error contributes after the rendered error line in text
@@ -88,9 +97,17 @@ class CommandException implements Exception {
     required this.message,
     required this.exitCode,
     this.details,
-    this.extraFields,
+    Map<String, dynamic>? extraFields,
     this.extraLines,
-  }) {
+  }) : extraFields = extraFields == null
+           ? null
+           // A defensive copy, taken before any validation below runs and
+           // before this constructor ever returns: extraFields, from here
+           // on, is this exception's own unmodifiable map, never the
+           // caller's. Mutating the caller's original map afterwards, or
+           // attempting to mutate this one directly, cannot reach what
+           // later gets rendered (Codex review of 53aeb3f).
+           : Map<String, dynamic>.unmodifiable(extraFields) {
     if (!_kebabCase.hasMatch(id)) {
       throw ArgumentError(
         'CommandException id "$id" must be kebab-case: lowercase letters '
@@ -98,8 +115,8 @@ class CommandException implements Exception {
         '"ticket-not-found").',
       );
     }
-    if (extraFields != null) {
-      final collisions = extraFields!.keys
+    if (this.extraFields != null) {
+      final collisions = this.extraFields!.keys
           .where(_reservedFieldNames.contains)
           .toList();
       if (collisions.isNotEmpty) {
