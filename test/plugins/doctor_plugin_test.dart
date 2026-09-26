@@ -13,7 +13,7 @@ void main() {
   test(
     'with no checks contributed, doctor reports none and exits ok',
     () async {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(const DoctorPlugin());
 
       final code = await cli.run(['doctor'], stdout: MemorySink());
@@ -22,7 +22,7 @@ void main() {
   );
 
   test('every check ok exits ok', () async {
-    final cli = ModularCli(name: 'x', version: '1.0.0')
+    final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
       ..plugin(const DoctorPlugin())
       ..plugin(
         _CheckContributingPlugin([
@@ -38,7 +38,7 @@ void main() {
   });
 
   test('a warning does not fail doctor', () async {
-    final cli = ModularCli(name: 'x', version: '1.0.0')
+    final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
       ..plugin(const DoctorPlugin())
       ..plugin(
         _CheckContributingPlugin([
@@ -58,7 +58,7 @@ void main() {
   });
 
   test('a lookup failure is reported as a warning, not an error', () async {
-    final cli = ModularCli(name: 'x', version: '1.0.0')
+    final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
       ..plugin(const DoctorPlugin())
       ..plugin(
         _CheckContributingPlugin([
@@ -77,7 +77,7 @@ void main() {
   test(
     'one error exits configError (78), even alongside ok and warning',
     () async {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(const DoctorPlugin())
         ..plugin(
           _CheckContributingPlugin([
@@ -105,7 +105,7 @@ void main() {
   );
 
   test('doctor --json reports every check by name', () async {
-    final cli = ModularCli(name: 'x', version: '1.0.0')
+    final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
       ..plugin(const DoctorPlugin())
       ..plugin(
         _CheckContributingPlugin([
@@ -125,7 +125,7 @@ void main() {
   });
 
   test('doctor --json reports the exact ordered checks array', () async {
-    final cli = ModularCli(name: 'x', version: '1.0.0')
+    final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
       ..plugin(const DoctorPlugin())
       ..plugin(
         _CheckContributingPlugin([
@@ -178,7 +178,7 @@ void main() {
   test(
     'two checks sharing a name are both kept, in order, rather than one overwriting the other',
     () async {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(const DoctorPlugin())
         ..plugin(
           _CheckContributingPlugin([
@@ -210,7 +210,7 @@ void main() {
   test(
     'a check that throws is recorded as an error and the rest still run',
     () async {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(const DoctorPlugin())
         ..plugin(
           _CheckContributingPlugin([

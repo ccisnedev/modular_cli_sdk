@@ -8,7 +8,7 @@ import '../doubles.dart';
 
 void main() {
   test('version reports the name and version given to ModularCli', () async {
-    final cli = ModularCli(name: 'demo', version: '1.2.3')
+    final cli = ModularCli(suggestionDistance: 2, name: 'demo', version: '1.2.3')
       ..plugin(const VersionPlugin(version: '1.2.3'));
 
     final out = MemorySink();
@@ -19,7 +19,7 @@ void main() {
   });
 
   test('version --json reports name and version as fields', () async {
-    final cli = ModularCli(name: 'demo', version: '1.2.3')
+    final cli = ModularCli(suggestionDistance: 2, name: 'demo', version: '1.2.3')
       ..plugin(const VersionPlugin(version: '1.2.3'));
 
     final out = MemorySink();
@@ -30,13 +30,13 @@ void main() {
   });
 
   test('registering it without host name/version fails at build time', () {
-    final cli = ModularCli()..plugin(const VersionPlugin(version: '1.2.3'));
+    final cli = ModularCli(suggestionDistance: 2, )..plugin(const VersionPlugin(version: '1.2.3'));
     expect(cli.buildPlugins, throwsStateError);
   });
 
   test('a VersionPlugin version that disagrees with ModularCli\'s own fails at '
       'build time, rather than one silently overriding the other', () {
-    final cli = ModularCli(name: 'demo', version: '1.2.3')
+    final cli = ModularCli(suggestionDistance: 2, name: 'demo', version: '1.2.3')
       ..plugin(const VersionPlugin(version: '0.8.0'));
 
     expect(

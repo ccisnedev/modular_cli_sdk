@@ -48,6 +48,7 @@ class VersionPlugin implements CliPlugin {
       'version',
       (req) =>
           VersionQuery(VersionInput(), name: metadata.name, version: version),
+      globals: true,
       description: "Print this CLI's name and version",
     );
   }

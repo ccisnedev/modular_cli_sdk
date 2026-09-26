@@ -10,7 +10,7 @@ import '../doubles.dart';
 void main() {
   group('build-time failures', () {
     test('two plugins sharing an id', () {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a'))
         ..plugin(_FakePlugin(id: 'a'));
 
@@ -25,7 +25,7 @@ void main() {
     });
 
     test('a plugin requiring an id nobody registered', () {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', requires: const ['missing']));
 
       expect(
@@ -39,7 +39,7 @@ void main() {
     });
 
     test('a dependency cycle', () {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', requires: const ['b']))
         ..plugin(_FakePlugin(id: 'b', requires: const ['a']));
 
@@ -56,7 +56,7 @@ void main() {
     });
 
     test('an incompatible hostApiVersion', () {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', hostApiVersion: '^99.0.0'));
 
       expect(
@@ -72,7 +72,7 @@ void main() {
     });
 
     test('an unparseable hostApiVersion', () {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', hostApiVersion: 'not a constraint'));
 
       expect(
@@ -88,7 +88,7 @@ void main() {
     });
 
     test('a route two plugins both register', () {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', onSetup: _registerCountQuery('shared')))
         ..plugin(_FakePlugin(id: 'b', onSetup: _registerCountQuery('shared')));
 
@@ -105,7 +105,7 @@ void main() {
     });
 
     test('a contribution to an extension point nobody declared', () {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(
           _FakePlugin(
             id: 'a',
@@ -129,7 +129,7 @@ void main() {
     test(
       'an extension point declared a second time, with a different type',
       () {
-        final cli = ModularCli(name: 'x', version: '1.0.0')
+        final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
           ..plugin(
             _FakePlugin(
               id: 'a',
@@ -156,7 +156,7 @@ void main() {
     test(
       'an extension point declared a second time, with the same type, is still rejected',
       () {
-        final cli = ModularCli(name: 'x', version: '1.0.0')
+        final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
           ..plugin(
             _FakePlugin(
               id: 'a',
@@ -181,7 +181,7 @@ void main() {
     );
 
     test('a contribution of the wrong type', () {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(
           _FakePlugin(
             id: 'a',
@@ -206,7 +206,7 @@ void main() {
 
     test('no plugin registered ever runs when one fails validation', () {
       final log = <String>[];
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', log: log))
         ..plugin(_FakePlugin(id: 'b', requires: const ['missing'], log: log));
 
@@ -217,7 +217,7 @@ void main() {
 
   group('extension points and contributions', () {
     test('a declared point with no contribution reads back empty', () {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(
           _FakePlugin(
             id: 'a',
@@ -230,7 +230,7 @@ void main() {
 
     test('contributions are read back in setup order', () {
       final contributions = <String>[];
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(
           _FakePlugin(
             id: 'owner',
@@ -263,7 +263,7 @@ void main() {
   group('ordering', () {
     test('a dependency is set up before whatever requires it', () {
       final log = <String>[];
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', requires: const ['b'], log: log))
         ..plugin(_FakePlugin(id: 'b', log: log));
 
@@ -273,7 +273,7 @@ void main() {
 
     test('registration order is preserved among independent plugins', () {
       final log = <String>[];
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', log: log))
         ..plugin(_FakePlugin(id: 'b', log: log))
         ..plugin(_FakePlugin(id: 'c', log: log));
@@ -284,7 +284,7 @@ void main() {
 
     test('a transitive dependency still comes first', () {
       final log = <String>[];
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', requires: const ['b'], log: log))
         ..plugin(_FakePlugin(id: 'b', requires: const ['c'], log: log))
         ..plugin(_FakePlugin(id: 'c', log: log));
@@ -297,7 +297,7 @@ void main() {
       'the sort is stable: registration order breaks ties among a plugin\'s own requirements',
       () {
         final log = <String>[];
-        final cli = ModularCli(name: 'x', version: '1.0.0')
+        final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
           ..plugin(_FakePlugin(id: 'a', requires: const ['c', 'b'], log: log))
           ..plugin(_FakePlugin(id: 'b', log: log))
           ..plugin(_FakePlugin(id: 'c', log: log));
@@ -315,7 +315,7 @@ void main() {
       'plugin over the whole remaining set, not just a\'s own requirements',
       () {
         final log = <String>[];
-        final cli = ModularCli(name: 'x', version: '1.0.0')
+        final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
           ..plugin(_FakePlugin(id: 'a', requires: const ['c'], log: log))
           ..plugin(_FakePlugin(id: 'b', log: log))
           ..plugin(_FakePlugin(id: 'c', log: log));
@@ -334,7 +334,7 @@ void main() {
   group('buildPlugins', () {
     test('is idempotent', () {
       final log = <String>[];
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', log: log));
 
       cli.buildPlugins();
@@ -344,7 +344,7 @@ void main() {
 
     test('run() builds the plugin set before dispatching', () async {
       final log = <String>[];
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', log: log));
 
       await cli.run(['help'], stdout: MemorySink(), stderr: MemorySink());
@@ -352,7 +352,7 @@ void main() {
     });
 
     test('a plugin route is reachable through run()', () async {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', onSetup: _registerCountQuery('count')));
 
       final out = MemorySink();
@@ -365,7 +365,7 @@ void main() {
     test(
       'a second call after a failed build rethrows the same failure instead of retrying',
       () {
-        final cli = ModularCli(name: 'x', version: '1.0.0')
+        final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
           ..plugin(_FakePlugin(id: 'a', requires: const ['missing']));
 
         final first = _capture(cli.buildPlugins);
@@ -379,7 +379,7 @@ void main() {
 
     test('a second call after a failed build does not run setup again', () {
       final log = <String>[];
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', log: log))
         ..plugin(_FakePlugin(id: 'b', requires: const ['missing'], log: log));
 
@@ -390,7 +390,7 @@ void main() {
     });
 
     test('plugin() after a failed build throws StateError', () {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a', requires: const ['missing']));
 
       _capture(cli.buildPlugins);
@@ -398,7 +398,7 @@ void main() {
     });
 
     test('plugin() after a successful build throws StateError', () {
-      final cli = ModularCli(name: 'x', version: '1.0.0')
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
         ..plugin(_FakePlugin(id: 'a'));
 
       cli.buildPlugins();
@@ -408,7 +408,7 @@ void main() {
 
   group('host metadata', () {
     test('a plugin reading metadata without name/version fails', () {
-      final cli = ModularCli()
+      final cli = ModularCli(suggestionDistance: 2, )
         ..plugin(_FakePlugin(id: 'a', onSetup: (host) => host.metadata()));
 
       expect(cli.buildPlugins, throwsStateError);
@@ -416,7 +416,7 @@ void main() {
 
     test('a plugin reads the name and version the host declared', () {
       CliHostMetadata? seen;
-      final cli = ModularCli(name: 'demo', version: '2.3.4')
+      final cli = ModularCli(suggestionDistance: 2, name: 'demo', version: '2.3.4')
         ..plugin(
           _FakePlugin(id: 'a', onSetup: (host) => seen = host.metadata()),
         );
@@ -432,6 +432,7 @@ void Function(CliPluginHost) _registerCountQuery(String route) => (host) {
   host.registerQuery<CountInput, CountOutput>(
     route,
     (req) => CountQuery(CountInput(0)),
+    globals: false,
   );
 };
 

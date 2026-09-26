@@ -403,9 +403,10 @@ void main() {
         expect(out.output, isEmpty);
 
         final decoded = jsonDecode(err.output) as Map<String, dynamic>;
-        expect(decoded['error'], 'file-access-denied');
-        expect(decoded['exitCode'], ExitCode.genericError);
-        final details = decoded['details'] as Map<String, dynamic>;
+        final error = decoded['error'] as Map<String, dynamic>;
+        expect(error['id'], 'file-access-denied');
+        expect(error['exitCode'], ExitCode.genericError);
+        final details = error['details'] as Map<String, dynamic>;
         expect(details['stepsCompleted'], ['cx-linux']);
       },
     );
@@ -1358,17 +1359,18 @@ void main() {
       expect(out.output, isEmpty);
 
       final decoded = jsonDecode(err.output) as Map<String, dynamic>;
-      expect(decoded['error'], 'cleanup-outcome-unknown');
-      expect(decoded['message'], contains('may still'));
+      final error = decoded['error'] as Map<String, dynamic>;
+      expect(error['id'], 'cleanup-outcome-unknown');
+      expect(error['message'], contains('may still'));
       expect(
-        decoded['message'],
+        error['message'],
         contains('/usr/local/bin/cx.uninstall-4242.old'),
       );
-      expect(decoded['exitCode'], ExitCode.genericError);
+      expect(error['exitCode'], ExitCode.genericError);
       // This step fails before returning its own outcome, so there is no
       // completed step to preserve here: the partial-results shape is
       // still present in details, honestly empty rather than omitted.
-      final details = decoded['details'] as Map<String, dynamic>;
+      final details = error['details'] as Map<String, dynamic>;
       expect(details['removed'], isEmpty);
       expect(details['scheduled'], isEmpty);
     });
@@ -1715,7 +1717,7 @@ CliRelease _release(
 );
 
 ModularCli _cliWith(InstallationPlugin plugin) =>
-    ModularCli(name: 'cx', version: '1.0.0')
+    ModularCli(suggestionDistance: 2, name: 'cx', version: '1.0.0')
       ..plugin(const DoctorPlugin())
       ..plugin(plugin);
 

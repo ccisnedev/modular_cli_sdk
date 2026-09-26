@@ -84,6 +84,7 @@ class InstallationPlugin implements CliPlugin {
         platform: platform,
         currentVersion: host.metadata().version,
       ),
+      globals: true,
       description: 'Upgrade to the latest release',
     );
     host.registerCommand<UninstallInput, UninstallOutput>(
@@ -95,6 +96,7 @@ class InstallationPlugin implements CliPlugin {
         platform: platform,
         processLauncher: processLauncher,
       ),
+      globals: true,
       description: 'Remove this CLI',
     );
   }
@@ -486,7 +488,7 @@ class UpgradeCommand
       releases = await releaseSource.listReleases(config.repository);
     } on Object catch (e) {
       throw CommandException(
-        code: 'release-lookup-failed',
+        id: 'release-lookup-failed',
         message: 'Could not look up releases for ${config.repository}: $e',
         exitCode: ExitCode.genericError,
       );
@@ -497,7 +499,7 @@ class UpgradeCommand
       latest = latestTaggedRelease(releases, config.tagPrefix);
     } on CliInvalidReleaseTag catch (e) {
       throw CommandException(
-        code: 'release-lookup-failed',
+        id: 'release-lookup-failed',
         message:
             'Release ${e.tagName} in ${config.repository} does not parse as '
             'semver once the tag prefix "${config.tagPrefix}" is stripped.',
@@ -506,7 +508,7 @@ class UpgradeCommand
     }
     if (latest == null) {
       throw CommandException(
-        code: 'release-lookup-failed',
+        id: 'release-lookup-failed',
         message:
             'No release with tag prefix "${config.tagPrefix}" was found in ${config.repository}.',
         exitCode: ExitCode.genericError,
@@ -530,7 +532,7 @@ class UpgradeCommand
     );
     if (asset == null) {
       throw CommandException(
-        code: 'release-lookup-failed',
+        id: 'release-lookup-failed',
         message:
             'Release ${latest.tagName} has no asset for platform "${platform.operatingSystem}".',
         exitCode: ExitCode.genericError,
@@ -542,14 +544,14 @@ class UpgradeCommand
       installPath = fileSystem.resolveOnPath(config.executable);
     } on Object catch (e) {
       throw CommandException(
-        code: 'executable-check-failed',
+        id: 'executable-check-failed',
         message: 'Could not check whether ${config.executable} is on PATH: $e',
         exitCode: ExitCode.genericError,
       );
     }
     if (installPath == null) {
       throw CommandException(
-        code: 'file-access-denied',
+        id: 'file-access-denied',
         message:
             '${config.executable} is not on PATH; there is nowhere to install it.',
         exitCode: ExitCode.genericError,
@@ -569,7 +571,7 @@ class UpgradeCommand
       resolvedPath = fileSystem.canonicalize(installPath);
     } on Object catch (e) {
       throw CommandException(
-        code: 'file-access-denied',
+        id: 'file-access-denied',
         message: 'Could not resolve $installPath to an install target: $e',
         exitCode: ExitCode.genericError,
       );
@@ -585,7 +587,7 @@ class UpgradeCommand
       aliasPath = fileSystem.resolveOnPath(config.alias);
     } on Object catch (e) {
       throw CommandException(
-        code: 'executable-check-failed',
+        id: 'executable-check-failed',
         message: 'Could not check whether ${config.alias} is on PATH: $e',
         exitCode: ExitCode.genericError,
       );
@@ -600,7 +602,7 @@ class UpgradeCommand
       );
     } on AliasIdentityCheckFailure catch (e) {
       throw CommandException(
-        code: 'executable-check-failed',
+        id: 'executable-check-failed',
         message:
             'Could not check whether ${config.alias} is a hard link to '
             '${config.executable}: $e',
@@ -609,7 +611,7 @@ class UpgradeCommand
     }
     if (hardLinkIssue != null) {
       throw CommandException(
-        code: 'alias-hard-link-unsupported',
+        id: 'alias-hard-link-unsupported',
         message: hardLinkIssue,
         exitCode: ExitCode.genericError,
       );
@@ -647,7 +649,7 @@ class UpgradeCommand
       // with the error's fields baked in as ordinary data. What ran
       // before the failure is not lost: it travels in details.
       throw CommandException(
-        code: id,
+        id: id,
         message: message,
         exitCode: ExitCode.genericError,
         details: {'stepsCompleted': stepsCompleted},
@@ -918,7 +920,7 @@ class UninstallCommand
       aliasPath = fileSystem.resolveOnPath(config.alias);
     } on Object catch (e) {
       throw CommandException(
-        code: 'executable-check-failed',
+        id: 'executable-check-failed',
         message:
             'Could not check whether ${config.executable} or '
             '${config.alias} is on PATH: $e',
@@ -952,7 +954,7 @@ class UninstallCommand
         isSameBinary = fileSystem.sameFile(aliasPath, executablePath);
       } on Object catch (e) {
         throw CommandException(
-          code: 'file-access-denied',
+          id: 'file-access-denied',
           message: 'Could not compare $aliasPath with $executablePath: $e',
           exitCode: ExitCode.genericError,
         );
@@ -1025,7 +1027,7 @@ class UninstallCommand
       // ran before the failure; they travel in details rather than being
       // dropped.
       throw CommandException(
-        code: id,
+        id: id,
         message: message,
         exitCode: ExitCode.genericError,
         details: {

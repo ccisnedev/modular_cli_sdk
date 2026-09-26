@@ -47,6 +47,7 @@ class RuntimeCliPluginHost implements CliPluginHost {
     String route,
     Query<I, O> Function(CliRequest req) queryFactory, {
     String? description,
+    required bool globals,
     CliContract contract = CliContract.none,
   }) {
     _guardingDuplicateRoute(
@@ -54,6 +55,7 @@ class RuntimeCliPluginHost implements CliPluginHost {
       () => _cli.query<I, O>(
         route,
         queryFactory,
+        globals: globals,
         description: description,
         contract: contract,
       ),
@@ -65,6 +67,7 @@ class RuntimeCliPluginHost implements CliPluginHost {
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
     String? description,
+    required bool globals,
     CliContract contract = CliContract.none,
   }) {
     _guardingDuplicateRoute(
@@ -72,6 +75,7 @@ class RuntimeCliPluginHost implements CliPluginHost {
       () => _cli.command<I, O>(
         route,
         commandFactory,
+        globals: globals,
         description: description,
         contract: contract,
       ),

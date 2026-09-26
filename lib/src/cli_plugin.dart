@@ -95,10 +95,16 @@ abstract class CliPluginHost {
   CliHostMetadata metadata();
 
   /// Register a root-level [Query], see `ModularCli.query`.
+  ///
+  /// [globals] is required, not defaulted, for the same reason it is
+  /// required on `ModularCli.query` itself: whether this route accepts a
+  /// global option (`--json` among them) is a fact about the route a
+  /// plugin author has to decide, not a default this host can assume.
   void registerQuery<I extends Input, O extends Output>(
     String route,
     Query<I, O> Function(CliRequest req) queryFactory, {
     String? description,
+    required bool globals,
     CliContract contract = CliContract.none,
   });
 
@@ -107,6 +113,7 @@ abstract class CliPluginHost {
     String route,
     Command<I, O> Function(CliRequest req) commandFactory, {
     String? description,
+    required bool globals,
     CliContract contract = CliContract.none,
   });
 

@@ -36,6 +36,7 @@ class DoctorPlugin implements CliPlugin {
         DoctorInput(),
         host.contributions<CliDoctorCheck>(extensionPoint),
       ),
+      globals: true,
       description: "Check this CLI's installation",
     );
   }
