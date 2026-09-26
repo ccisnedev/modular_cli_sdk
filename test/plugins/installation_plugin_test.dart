@@ -1213,6 +1213,46 @@ void main() {
       expect(out.output, contains('cleanup-start-failed'));
     });
 
+    // Round 8 finding 1: a startCleanupWorker failure that leaves it unknown
+    // whether the worker armed deletion or this process revoked its claim
+    // first is not the same failure as one where the worker was never
+    // reachable at all. This step maps it to its own distinct error id
+    // rather than folding it into cleanup-start-failed, and the message
+    // tells the operator the worker may still delete the renamed file
+    // later, so they know not to delete it by hand.
+    test('on Windows, if it cannot be determined whether the cleanup worker '
+        'armed deletion or this process revoked its claim first, uninstall '
+        'fails with cleanup-outcome-unknown rather than cleanup-start-failed',
+        () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+      final processLauncher = FakeProcessLauncher(
+        startError: CliCleanupOutcomeUnknown(
+          'renaming the accepted marker kept failing unexpectedly without '
+          'resolving either way',
+        ),
+      );
+      final cli = _cliWith(
+        _upgradePlugin(
+          fileSystem: fileSystem,
+          platform: const FakePlatform('windows'),
+          processLauncher: processLauncher,
+        ),
+      );
+
+      final out = MemorySink();
+      final code = await cli.run([
+        'uninstall',
+        '--apply',
+        '--autoapprove',
+      ], stdout: out);
+
+      expect(code, ExitCode.genericError);
+      expect(out.output, contains('cleanup-outcome-unknown'));
+      expect(out.output, isNot(contains('cleanup-start-failed')));
+      expect(out.output, contains('/usr/local/bin/cx.uninstall-4242.old'));
+      expect(out.output, contains('may still'));
+    });
+
     test(
       'a resolution failure while comparing the alias to the executable '
       'reports file-access-denied rather than crashing the run',

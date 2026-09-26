@@ -27,16 +27,17 @@ import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 // own pure attempt/poll helpers are reached the same way too.
 import 'package:modular_cli_sdk/src/plugins/installation/cli_process_launcher.dart'
     show
+        RevokeOrArmOutcome,
         cleanupWorkerAbandonedMarkerFileName,
         cleanupWorkerAcceptedMarkerFileName,
         cleanupWorkerArmedMarkerFileName,
         cleanupWorkerCmdCommandLine,
         cleanupWorkerEncodedBootstrapScript,
-        cleanupWorkerFailedMarkerFileName,
         cleanupWorkerReadyMarkerFileName,
         cleanupWorkerRevokedMarkerFileName,
         pollForArm,
         pollForClaim,
+        pollForRevokeOrArm,
         tryClaimReadyMarker,
         tryRevokeAcceptedMarker;
 import 'package:test/test.dart';
@@ -318,27 +319,30 @@ void main() {
 
     // Both the abandon rename and the arm rename retry through the same
     // shared Complete-Rename helper (kept as one definition specifically so
-    // the retry, typed-loss and failure-marker logic exists exactly once,
-    // short enough to stay well under cmd.exe's command-line limit even
-    // after Phase 2 grew the script). This checks the helper itself retries
-    // an unexpected failure rather than giving up the moment the first
-    // attempt fails, distinguishing that from the legitimate loss of the
-    // source already being gone, and that both call sites actually go
-    // through it.
+    // the retry and typed-loss logic exists exactly once, short enough to
+    // stay well under cmd.exe's command-line limit even after Phase 2 grew
+    // the script). This checks the helper itself retries an unexpected
+    // failure rather than giving up the moment the first attempt fails,
+    // distinguishing that from the legitimate loss of the source already
+    // being gone, and that both call sites actually go through it.
+    //
+    // Round 8 finding 2: there is no longer any deadline the worker gives up
+    // at while a claimable marker still exists; deciding whether the worker
+    // ever wins is left entirely to IoCliProcessLauncher's own side of the
+    // race (see pollForRevokeOrArm), so the worker's own copy of an ack
+    // deadline (`ackDeadlineUnixMs`) no longer exists at all, in this helper
+    // or anywhere else in the script.
     test(
-      'retries an unexpected rename failure on the same poll interval, '
-      'through the one shared helper both the abandon and the arm rename '
-      'call, rather than giving up the moment the first attempt fails',
+      'retries an unexpected rename failure on the same poll interval, with '
+      'no deadline of its own, through the one shared helper both the '
+      'abandon and the arm rename call, rather than giving up the moment '
+      'the first attempt fails or after any fixed amount of retrying',
       () {
         final functionIndex = cleanupWorkerBootstrapScript.indexOf(
           'function Complete-Rename',
         );
         final typedCatchIndex = cleanupWorkerBootstrapScript.indexOf(
           'catch [System.IO.FileNotFoundException]',
-          functionIndex,
-        );
-        final ackDeadlineIndex = cleanupWorkerBootstrapScript.indexOf(
-          'ackDeadlineUnixMs',
           functionIndex,
         );
         final abandonCallIndex = cleanupWorkerBootstrapScript.indexOf(
@@ -349,37 +353,35 @@ void main() {
         );
         expect(functionIndex, greaterThanOrEqualTo(0));
         expect(typedCatchIndex, greaterThan(functionIndex));
-        expect(
-          ackDeadlineIndex,
-          greaterThan(functionIndex),
-          reason:
-              'an unexpected rename failure is retried until the ack '
-              'deadline, not given up on immediately',
-        );
         expect(abandonCallIndex, greaterThan(functionIndex));
         expect(armCallIndex, greaterThan(functionIndex));
+        expect(
+          cleanupWorkerBootstrapScript,
+          isNot(contains('ackDeadlineUnixMs')),
+          reason:
+              'the worker no longer gives up on a retried rename at all, '
+              'so it has no use for a copy of the ack deadline',
+        );
       },
     );
 
+    // Round 8 finding 3: the failed marker used to be written, best effort,
+    // from within a nested catch when a retried rename never succeeded
+    // before a deadline the worker no longer has. With no such deadline to
+    // give up at, there is nothing left to record a failure from, so the
+    // marker, its path variable and the nested catch that wrote it are gone
+    // entirely, not merely unused.
     test(
-      'records a named failure marker, best effort, when a retried rename '
-      'never succeeds before the ack deadline, rather than exiting with no '
-      'trace of which case this was',
+      'no longer declares, or writes, a failed-marker path: there is no '
+      'deadline left for the worker to give up at and record one from',
       () {
         expect(
           cleanupWorkerBootstrapScript,
-          contains("Join-Path \$PrivateDir '$cleanupWorkerFailedMarkerFileName'"),
+          isNot(contains('FailedMarkerPath')),
         );
-        final failedPathOccurrences = RegExp(
-          r'\$FailedMarkerPath',
-        ).allMatches(cleanupWorkerBootstrapScript).length;
         expect(
-          failedPathOccurrences,
-          greaterThanOrEqualTo(2),
-          reason:
-              'declared once, then written from within the one shared '
-              'retry helper both the abandon and the arm rename call '
-              'through',
+          cleanupWorkerBootstrapScript,
+          isNot(contains("'failed'")),
         );
       },
     );
@@ -402,12 +404,21 @@ void main() {
       },
     );
 
+    // Round 8 finding 2: the CLI no longer carries an ack deadline to the
+    // worker at all (there is no more `ackDeadlineUnixMs` in the payload it
+    // sends); only the two deadlines the worker itself still acts on, the
+    // marker-creation deadline and the claim deadline, are read from it.
     test(
-      'reads its own copy of the CLI\'s ack deadline from the payload, '
-      'separately from the claim deadline',
+      'reads the marker-creation and claim deadlines from the payload, but '
+      'no ack deadline: deciding whether the worker ever arms in time is '
+      'entirely IoCliProcessLauncher\'s own concern',
       () {
-        expect(cleanupWorkerBootstrapScript, contains('ackDeadlineUnixMs'));
+        expect(cleanupWorkerBootstrapScript, contains('markerDeadlineUnixMs'));
         expect(cleanupWorkerBootstrapScript, contains('claimDeadlineUnixMs'));
+        expect(
+          cleanupWorkerBootstrapScript,
+          isNot(contains('ackDeadlineUnixMs')),
+        );
       },
     );
 
@@ -784,6 +795,226 @@ void main() {
     });
   });
 
+  // Round 8 finding 1: the seam IoCliProcessLauncher.startCleanupWorker
+  // itself calls once pollForArm has given up waiting, to decide the Phase 2
+  // race by retrying its own revoke rename rather than reporting failure (and
+  // removing the private directory) on a single failed attempt that the
+  // worker might still win a moment later.
+  group('pollForRevokeOrArm', () {
+    late io.Directory tempDir;
+
+    setUp(() {
+      tempDir = io.Directory.systemTemp.createTempSync('poll_revoke_test_');
+    });
+
+    tearDown(() {
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+
+    test('observes an already-armed marker without ever attempting a revoke rename', () async {
+      final armedPath = '${tempDir.path}${io.Platform.pathSeparator}armed';
+      final acceptedPath =
+          '${tempDir.path}${io.Platform.pathSeparator}accepted';
+      final revokedPath =
+          '${tempDir.path}${io.Platform.pathSeparator}revoked';
+      io.File(armedPath).createSync();
+      io.File(acceptedPath).createSync();
+
+      final outcome = await pollForRevokeOrArm(
+        armedMarkerPath: armedPath,
+        acceptedMarkerPath: acceptedPath,
+        revokedMarkerPath: revokedPath,
+        deadline: DateTime.now().add(const Duration(milliseconds: 30)),
+        pollInterval: const Duration(milliseconds: 5),
+        now: DateTime.now,
+      );
+
+      expect(outcome, RevokeOrArmOutcome.armed);
+      // The accepted marker is untouched: the armed check short-circuits
+      // before any revoke rename is even attempted.
+      expect(io.File(acceptedPath).existsSync(), isTrue);
+      expect(io.File(revokedPath).existsSync(), isFalse);
+    });
+
+    test(
+      'wins a clean revoke when the accepted marker still exists and the '
+      'armed marker never appears',
+      () async {
+        final armedPath = '${tempDir.path}${io.Platform.pathSeparator}armed';
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}accepted';
+        final revokedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}revoked';
+        io.File(acceptedPath).createSync();
+
+        final outcome = await pollForRevokeOrArm(
+          armedMarkerPath: armedPath,
+          acceptedMarkerPath: acceptedPath,
+          revokedMarkerPath: revokedPath,
+          deadline: DateTime.now().add(const Duration(milliseconds: 30)),
+          pollInterval: const Duration(milliseconds: 5),
+          now: DateTime.now,
+        );
+
+        expect(outcome, RevokeOrArmOutcome.revoked);
+        expect(io.File(revokedPath).existsSync(), isTrue);
+      },
+    );
+
+    test(
+      'resolves as armed, not merely as a lost revoke, when the accepted '
+      'marker is already gone because the worker\'s own rename won it first',
+      () async {
+        final armedPath = '${tempDir.path}${io.Platform.pathSeparator}armed';
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}accepted';
+        final revokedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}revoked';
+        // No accepted marker at all: the only rename it could have lost to
+        // is the worker's own arm rename.
+
+        final outcome = await pollForRevokeOrArm(
+          armedMarkerPath: armedPath,
+          acceptedMarkerPath: acceptedPath,
+          revokedMarkerPath: revokedPath,
+          deadline: DateTime.now().add(const Duration(milliseconds: 30)),
+          pollInterval: const Duration(milliseconds: 5),
+          now: DateTime.now,
+        );
+
+        expect(outcome, RevokeOrArmOutcome.armed);
+        expect(io.File(revokedPath).existsSync(), isFalse);
+      },
+    );
+
+    // Round 8 finding 1's central fix: an unexpected revoke-rename failure
+    // (a sharing violation being the concrete case reported) must not be
+    // reported as a lost race on its first occurrence; the worker could
+    // still win moments later. This proves the retry actually happens, and
+    // that a claim arriving only after the failure clears still resolves
+    // correctly, mirroring pollForClaim's own equivalent test.
+    test(
+      'retries an unexpected revoke-rename failure instead of giving up on '
+      'the first attempt, and still resolves once the failure clears',
+      () async {
+        final armedPath = '${tempDir.path}${io.Platform.pathSeparator}armed';
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}accepted';
+        final revokedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}revoked';
+        io.File(acceptedPath).createSync();
+        final lock = io.File(acceptedPath).openSync(mode: io.FileMode.write);
+
+        final future = pollForRevokeOrArm(
+          armedMarkerPath: armedPath,
+          acceptedMarkerPath: acceptedPath,
+          revokedMarkerPath: revokedPath,
+          deadline: DateTime.now().add(const Duration(seconds: 2)),
+          pollInterval: const Duration(milliseconds: 20),
+          now: DateTime.now,
+        );
+
+        // Held just long enough to provoke at least one failed attempt
+        // before releasing it, well inside the deadline above.
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        lock.closeSync();
+
+        final outcome = await future;
+        expect(outcome, RevokeOrArmOutcome.revoked);
+        expect(io.File(revokedPath).existsSync(), isTrue);
+      },
+      skip: io.Platform.isWindows
+          ? false
+          : 'provokes a real Windows sharing violation',
+    );
+
+    // The mirror of the retry test above: the worker's own arm rename wins
+    // while the CLI's revoke attempts are still failing unexpectedly. Every
+    // iteration checks the armed marker first, so this must notice that win
+    // on the very next check after the lock clears, rather than attempting,
+    // and losing, one more revoke rename first.
+    test(
+      'notices the worker winning mid-retry, checking the armed marker '
+      'again before attempting another revoke rename',
+      () async {
+        final armedPath = '${tempDir.path}${io.Platform.pathSeparator}armed';
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}accepted';
+        final revokedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}revoked';
+        io.File(acceptedPath).createSync();
+        final lock = io.File(acceptedPath).openSync(mode: io.FileMode.write);
+
+        final future = pollForRevokeOrArm(
+          armedMarkerPath: armedPath,
+          acceptedMarkerPath: acceptedPath,
+          revokedMarkerPath: revokedPath,
+          deadline: DateTime.now().add(const Duration(seconds: 2)),
+          pollInterval: const Duration(milliseconds: 20),
+          now: DateTime.now,
+        );
+
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        // Releases the lock and immediately performs the worker's own
+        // winning rename synchronously, with no await between the two: on
+        // a single isolate this runs to completion before any pending
+        // timer (including pollForRevokeOrArm's own next retry, scheduled
+        // through Future.delayed) gets a chance to fire, so this
+        // deterministically wins the rename rather than racing it. The
+        // rename itself must happen after the lock is released, not
+        // before: while it is held, a real sharing violation blocks any
+        // rename of the file, including this one, not only a competing
+        // one.
+        lock.closeSync();
+        io.File(acceptedPath).renameSync(armedPath);
+
+        final outcome = await future;
+        expect(outcome, RevokeOrArmOutcome.armed);
+        expect(io.File(revokedPath).existsSync(), isFalse);
+      },
+      skip: io.Platform.isWindows
+          ? false
+          : 'provokes a real Windows sharing violation',
+    );
+
+    // Round 8 finding 1: when the failure never clears before the deadline,
+    // neither side is known to have won; this must resolve as unknown
+    // rather than folding it into an ordinary revoked claim.
+    test(
+      'resolves as unknown once its own deadline passes while the revoke '
+      'rename keeps failing unexpectedly the whole time',
+      () async {
+        final armedPath = '${tempDir.path}${io.Platform.pathSeparator}armed';
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}accepted';
+        final revokedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}revoked';
+        io.File(acceptedPath).createSync();
+        final lock = io.File(acceptedPath).openSync(mode: io.FileMode.write);
+
+        try {
+          final outcome = await pollForRevokeOrArm(
+            armedMarkerPath: armedPath,
+            acceptedMarkerPath: acceptedPath,
+            revokedMarkerPath: revokedPath,
+            deadline: DateTime.now().add(const Duration(milliseconds: 100)),
+            pollInterval: const Duration(milliseconds: 20),
+            now: DateTime.now,
+          );
+
+          expect(outcome, RevokeOrArmOutcome.unknown);
+          expect(io.File(revokedPath).existsSync(), isFalse);
+          expect(io.File(armedPath).existsSync(), isFalse);
+        } finally {
+          lock.closeSync();
+        }
+      },
+      skip: io.Platform.isWindows
+          ? false
+          : 'provokes a real Windows sharing violation',
+    );
+  });
+
   // Round 7 finding 1: a dead worker's marker still produced success. The
   // worker created its ready marker and then crashed (or was killed)
   // before ever reaching the accepted marker; the CLI still renamed ready
@@ -841,10 +1072,21 @@ void main() {
         );
         expect(armed, isFalse);
 
-        final revoked = tryRevokeAcceptedMarker(acceptedPath, revokedPath);
+        // Round 8: IoCliProcessLauncher no longer decides the Phase 2 race
+        // with a single bare tryRevokeAcceptedMarker attempt once pollForArm
+        // gives up; it resolves it through pollForRevokeOrArm instead, which
+        // this composes here the same way startCleanupWorker itself does.
+        final outcome = await pollForRevokeOrArm(
+          armedMarkerPath: armedPath,
+          acceptedMarkerPath: acceptedPath,
+          revokedMarkerPath: revokedPath,
+          deadline: DateTime.now().add(const Duration(milliseconds: 30)),
+          pollInterval: const Duration(milliseconds: 5),
+          now: DateTime.now,
+        );
         expect(
-          revoked,
-          isTrue,
+          outcome,
+          RevokeOrArmOutcome.revoked,
           reason:
               'nothing was left to contest the revoke, so it wins, exactly '
               'the signal IoCliProcessLauncher.startCleanupWorker uses to '
@@ -1698,17 +1940,29 @@ Future<void> main(List<String> args) async {
     // behind if the parent (a suspended CLI, or simply a long-lived host)
     // was still alive past that mark. The fix removed the cap entirely: an
     // armed worker now waits on the parent handle with no timeout at all.
-    // A real 5 minute parent is too slow to prove that in a test, so this
-    // uses a parent that outlives a much shorter stand-in for the old cap
-    // instead, and checks the worker is still waiting, not gone, well past
-    // it.
+    // See "the removed unbounded-wait cap actually mattered" below for
+    // Round 8 finding 4's replacement of this scenario's original,
+    // non-diagnostic test.
+
+    // Round 8 finding 1: a single failed revoke attempt used to be reported
+    // as an ordinary CliCleanupWorkerStartFailure straight away, removing
+    // the private directory in the process, even though the worker could
+    // still win the arm race the moment the failure cleared. This provokes
+    // that exact interleaving through the real launcher: a real sharing
+    // violation on the accepted marker, held across both
+    // IoCliProcessLauncher's own ack and revoke deadlines, forces a genuine
+    // CliCleanupOutcomeUnknown; then, once the lock clears, the worker
+    // (never having given up on its own) goes on to win the arm race and
+    // actually delete the target, proving the private directory was
+    // correctly left in place rather than removed out from under it.
     test(
-      'an armed worker keeps waiting on its parent past any short interval '
-      'that used to be enough to make it give up, proving there is no cap '
-      'on how long it will wait',
+      'reports CliCleanupOutcomeUnknown, and leaves the private directory '
+      'in place, when a real sharing violation on the accepted marker '
+      'outlasts both the ack and revoke deadlines, and the worker goes on '
+      'to arm and delete the target once the violation clears',
       () async {
         final tempDir = io.Directory.systemTemp.createTempSync(
-          'cleanup_worker_no_cap_test_',
+          'cleanup_worker_outcome_unknown_test_',
         );
         addTearDown(() {
           if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
@@ -1717,46 +1971,447 @@ Future<void> main(List<String> args) async {
             '${tempDir.path}${io.Platform.pathSeparator}victim.txt';
         io.File(targetPath).writeAsStringSync('gone soon');
 
-        // Stands in for the old, removed 5 minute cap: a parent that
-        // outlives this by a comfortable margin, with a checkpoint in
-        // between, is enough to prove the worker never gives up on its
-        // own.
+        final before = _existingCleanupPrivateDirs();
+
+        final parent = await io.Process.start('powershell', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Start-Sleep -Seconds 60',
+        ]);
+
+        final launcher = IoCliProcessLauncher(
+          ackTimeout: const Duration(milliseconds: 300),
+          revokeTimeout: const Duration(milliseconds: 300),
+        );
+
+        io.RandomAccessFile? lock;
+        try {
+          final resultFuture = launcher.startCleanupWorker({
+            'parentPid': parent.pid,
+            'paths': [targetPath],
+          });
+
+          // Phase A: finds the private directory the launcher just
+          // created. This does not race the worker at all: the worker
+          // creates the ready marker, and so the directory, well before
+          // anyone can claim or arm anything, so a poll on
+          // cleanupWorkerReadyPollInterval's own cadence is both cheap
+          // (listSync() over the whole system temp directory is a
+          // synchronous, blocking call, and polling it too tightly starves
+          // the event loop the launcher's own futures need to make
+          // progress on) and in no hurry.
+          final findDeadline = DateTime.now().add(const Duration(seconds: 20));
+          String? privateDirPath;
+          while (DateTime.now().isBefore(findDeadline)) {
+            final created = _existingCleanupPrivateDirs().difference(before);
+            if (created.isNotEmpty) {
+              privateDirPath = created.first;
+              break;
+            }
+            await Future<void>.delayed(cleanupWorkerReadyPollInterval);
+          }
+          expect(
+            privateDirPath,
+            isNotNull,
+            reason: 'the CLI must have started the worker well within 20s',
+          );
+          final acceptedPath =
+              '$privateDirPath${io.Platform.pathSeparator}'
+              '$cleanupWorkerAcceptedMarkerFileName';
+
+          // Phase B: this does race the worker, which begins trying to
+          // rename the accepted marker to the armed one the moment it
+          // exists, on its own fixed 50ms-sleep cadence inside the script.
+          // A tight, cheap existsSync() poll on this one known path (no
+          // directory listing) reacts far faster than that, so it reliably
+          // wins the lock below before the worker's own next attempt.
+          final claimDeadline = DateTime.now().add(const Duration(seconds: 20));
+          while (!io.File(acceptedPath).existsSync() &&
+              DateTime.now().isBefore(claimDeadline)) {
+            await Future<void>.delayed(const Duration(milliseconds: 1));
+          }
+          expect(
+            io.File(acceptedPath).existsSync(),
+            isTrue,
+            reason: 'the CLI must have won Phase 1 well within 20s',
+          );
+
+          // Locks the accepted marker before the worker's own arm rename,
+          // or the CLI's later revoke rename, can complete: both now fail
+          // with a real sharing violation until this is released.
+          lock = io.File(acceptedPath).openSync(mode: io.FileMode.write);
+
+          await expectLater(
+            resultFuture,
+            throwsA(isA<CliCleanupOutcomeUnknown>()),
+          );
+
+          expect(
+            _existingCleanupPrivateDirs().difference(before),
+            isNotEmpty,
+            reason:
+                'CliCleanupOutcomeUnknown must leave the private directory '
+                'in place: the worker may still be alive and using it',
+          );
+
+          lock.closeSync();
+          lock = null;
+
+          // The worker was never told to give up: once the violation
+          // clears, it wins its own arm rename and, once the parent exits,
+          // actually deletes the target and removes its own directory.
+          parent.kill();
+          await parent.exitCode;
+
+          final deleteDeadline = DateTime.now().add(
+            const Duration(seconds: 20),
+          );
+          while ((io.File(targetPath).existsSync() ||
+                  _existingCleanupPrivateDirs().difference(before).isNotEmpty) &&
+              DateTime.now().isBefore(deleteDeadline)) {
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+          }
+          expect(io.File(targetPath).existsSync(), isFalse);
+          expect(_existingCleanupPrivateDirs(), before);
+        } finally {
+          lock?.closeSync();
+          try {
+            parent.kill();
+          } on Object {
+            // Already gone; nothing left to clean up.
+          }
+        }
+      },
+      skip: io.Platform.isWindows
+          ? false
+          : 'provokes a real Windows sharing violation through the real '
+              'launcher',
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+  });
+
+  // Round 8 finding 2: the worker's only two ways to stop are its own
+  // successful rename (a legitimate win, or a legitimate "source not found"
+  // loss) or observing that the accepted marker itself is gone; never a
+  // deadline it gives up at while a claimable marker still exists. These
+  // exercise both renames (abandon and arm) through the real, unmodified
+  // script directly, holding a real sharing violation on the marker each
+  // one targets well past where the removed cap, or any shorter interval,
+  // would have made the old code give up, then releasing it and confirming
+  // the worker still completes the transition rather than having exited
+  // long before.
+  group('the cleanup worker never gives up while a claimable marker exists', () {
+    late io.Directory tempDir;
+
+    setUp(() {
+      tempDir = io.Directory.systemTemp.createTempSync(
+        'worker_no_give_up_test_',
+      );
+    });
+
+    tearDown(() {
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+
+    test(
+      'the arm rename keeps retrying a real sharing violation on the '
+      'accepted marker well past a short stand-in for the old cap, and '
+      'still succeeds once it clears',
+      () async {
+        final readyPath = '${tempDir.path}${io.Platform.pathSeparator}ready';
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}accepted';
+        final armedPath = '${tempDir.path}${io.Platform.pathSeparator}armed';
+        final targetPath =
+            '${tempDir.path}${io.Platform.pathSeparator}victim.txt';
+        io.File(targetPath).writeAsStringSync('gone soon');
         const oldCapStandIn = Duration(seconds: 5);
 
         final parent = await io.Process.start('powershell', [
           '-NoProfile',
           '-NonInteractive',
           '-Command',
-          'Start-Sleep -Seconds 9',
+          'Start-Sleep -Seconds 60',
         ]);
 
+        final nowUnixMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+        final worker = await _startWorkerProcess({
+          'parentPid': parent.pid,
+          'paths': [targetPath],
+          'markerDeadlineUnixMs': nowUnixMs + 30000,
+          'claimDeadlineUnixMs': nowUnixMs + 30000,
+        }, readyPath);
+
+        io.RandomAccessFile? lock;
         try {
-          const launcher = IoCliProcessLauncher();
-          await launcher.startCleanupWorker({
-            'parentPid': parent.pid,
-            'paths': [targetPath],
-          });
+          final readyDeadline = DateTime.now().add(
+            const Duration(seconds: 20),
+          );
+          while (!io.File(readyPath).existsSync() &&
+              DateTime.now().isBefore(readyDeadline)) {
+            await Future<void>.delayed(const Duration(milliseconds: 5));
+          }
+          expect(io.File(readyPath).existsSync(), isTrue);
+
+          // This test's own claim: the exact rename
+          // IoCliProcessLauncher.startCleanupWorker itself performs.
+          // Locking the accepted marker in the very next line, before the
+          // worker's own 50ms poll can even notice it exists, leaves no
+          // race window.
+          expect(tryClaimReadyMarker(readyPath, acceptedPath), isTrue);
+          lock = io.File(acceptedPath).openSync(mode: io.FileMode.write);
 
           await Future<void>.delayed(
             oldCapStandIn + const Duration(seconds: 2),
           );
           expect(
-            io.File(targetPath).existsSync(),
+            await _isStillRunning(worker),
             isTrue,
             reason:
-                'the parent is still alive well past the old cap, so an '
-                'armed worker with no timeout must still be waiting, not '
-                'gone',
+                'a worker retrying an unexpected arm-rename failure with '
+                'no cap of its own must still be alive well past any short '
+                'interval that used to be enough to make it give up',
           );
+          expect(io.File(armedPath).existsSync(), isFalse);
 
-          await parent.exitCode;
+          lock.closeSync();
+          lock = null;
 
-          final deadline = DateTime.now().add(const Duration(seconds: 20));
-          while (io.File(targetPath).existsSync() &&
-              DateTime.now().isBefore(deadline)) {
-            await Future<void>.delayed(const Duration(milliseconds: 200));
+          final armedDeadline = DateTime.now().add(
+            const Duration(seconds: 10),
+          );
+          while (!io.File(armedPath).existsSync() &&
+              DateTime.now().isBefore(armedDeadline)) {
+            await Future<void>.delayed(const Duration(milliseconds: 50));
           }
+          expect(io.File(armedPath).existsSync(), isTrue);
+
+          parent.kill();
+          await parent.exitCode;
+          final exitCode = await worker.exitCode;
+          expect(exitCode, 0);
           expect(io.File(targetPath).existsSync(), isFalse);
+        } finally {
+          lock?.closeSync();
+          try {
+            parent.kill();
+          } on Object {
+            // Already gone; nothing left to clean up.
+          }
+          try {
+            worker.kill();
+          } on Object {
+            // Already gone; nothing left to clean up.
+          }
+        }
+      },
+      skip: io.Platform.isWindows
+          ? false
+          : 'provokes a real Windows sharing violation through the real '
+              'worker script',
+      timeout: const Timeout(Duration(seconds: 40)),
+    );
+
+    test(
+      'the abandon rename keeps retrying a real sharing violation on the '
+      'ready marker well past a short stand-in for the old cap, and still '
+      'succeeds once it clears',
+      () async {
+        final readyPath = '${tempDir.path}${io.Platform.pathSeparator}ready';
+        final abandonedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}abandoned';
+        const oldCapStandIn = Duration(seconds: 5);
+
+        final parent = await io.Process.start('powershell', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Start-Sleep -Seconds 60',
+        ]);
+
+        final nowUnixMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+        // The claim deadline is set generously ahead so it only passes,
+        // and the worker only attempts its first abandon rename, well
+        // after this test has already had time to detect the ready marker
+        // and lock it: otherwise the worker could reach that first attempt
+        // in the same instant it creates the marker, before this test
+        // could ever react.
+        final worker = await _startWorkerProcess({
+          'parentPid': parent.pid,
+          'paths': <String>[],
+          'markerDeadlineUnixMs': nowUnixMs + 30000,
+          'claimDeadlineUnixMs': nowUnixMs + 3000,
+        }, readyPath);
+
+        io.RandomAccessFile? lock;
+        try {
+          final readyDeadline = DateTime.now().add(
+            const Duration(seconds: 20),
+          );
+          while (!io.File(readyPath).existsSync() &&
+              DateTime.now().isBefore(readyDeadline)) {
+            await Future<void>.delayed(const Duration(milliseconds: 5));
+          }
+          expect(io.File(readyPath).existsSync(), isTrue);
+
+          lock = io.File(readyPath).openSync(mode: io.FileMode.write);
+
+          // Held well past the claim deadline (3s from launch) plus the
+          // old cap stand-in, so the worker's own retried abandon rename
+          // has every opportunity to give up if it still could.
+          await Future<void>.delayed(
+            oldCapStandIn + const Duration(seconds: 3),
+          );
+          expect(
+            await _isStillRunning(worker),
+            isTrue,
+            reason:
+                'a worker retrying an unexpected abandon-rename failure '
+                'with no cap of its own must still be alive well past both '
+                'its own claim deadline and any short interval that used '
+                'to be enough to make it give up',
+          );
+          expect(io.File(abandonedPath).existsSync(), isFalse);
+
+          lock.closeSync();
+          lock = null;
+
+          final exitCode = await worker.exitCode;
+          expect(exitCode, 0);
+          expect(io.File(abandonedPath).existsSync(), isTrue);
+        } finally {
+          lock?.closeSync();
+          try {
+            parent.kill();
+          } on Object {
+            // Already gone; nothing left to clean up.
+          }
+          try {
+            worker.kill();
+          } on Object {
+            // Already gone; nothing left to clean up.
+          }
+        }
+      },
+      skip: io.Platform.isWindows
+          ? false
+          : 'provokes a real Windows sharing violation through the real '
+              'worker script',
+      timeout: const Timeout(Duration(seconds: 40)),
+    );
+  });
+
+  // Round 8 finding 4: the previous version of this test only ever
+  // exercised the real, always-unbounded script, so a reintroduced cap
+  // would have passed it just as easily as no cap at all (the
+  // "oldCapStandIn" it used only sized how long the test itself waited,
+  // never anything the script's own behaviour was driven by). It proved
+  // nothing about a cap actually being absent. This gives the contrast that
+  // was missing: a deliberately bounded stand-in, built by substituting the
+  // real script's own unbounded $parent.WaitForExit() call for a short,
+  // self-marking bounded one, is shown to actually give up on a still-alive
+  // parent once its own cap elapses, before contrasting it with the real
+  // script staying alive well past that same mark on an equally-alive
+  // parent.
+  group('the removed unbounded-wait cap actually mattered', () {
+    late io.Directory tempDir;
+
+    setUp(() {
+      tempDir = io.Directory.systemTemp.createTempSync('legacy_cap_test_');
+    });
+
+    tearDown(() {
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+
+    test(
+      'a legacy-capped stand-in of the real script, built by substituting '
+      'its own unbounded wait for a short bounded one, gives up on a '
+      'still-alive parent once its own cap elapses',
+      () async {
+        const legacyCapMs = 300;
+        final gaveUpPath =
+            '${tempDir.path}${io.Platform.pathSeparator}gave-up';
+        final legacyScript = cleanupWorkerBootstrapScript.replaceFirst(
+          r'$parent.WaitForExit()',
+          '''
+if (-not \$parent.WaitForExit($legacyCapMs)) {
+    [System.IO.File]::WriteAllText((Join-Path \$PrivateDir 'gave-up'), '')
+    exit 1
+}
+''',
+        );
+        expect(
+          legacyScript,
+          isNot(cleanupWorkerBootstrapScript),
+          reason: 'the substitution must actually have matched something',
+        );
+
+        final readyPath = '${tempDir.path}${io.Platform.pathSeparator}ready';
+        final targetPath =
+            '${tempDir.path}${io.Platform.pathSeparator}victim.txt';
+        io.File(targetPath).writeAsStringSync('gone soon');
+
+        final parent = await io.Process.start('powershell', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Start-Sleep -Seconds 5',
+        ]);
+
+        final nowUnixMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+        final worker = await _startWorkerProcess(
+          {
+            'parentPid': parent.pid,
+            'paths': [targetPath],
+            'markerDeadlineUnixMs': nowUnixMs + 30000,
+            'claimDeadlineUnixMs': nowUnixMs + 30000,
+          },
+          readyPath,
+          encodedScript: _encodeScriptForPowerShell(legacyScript),
+        );
+
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}'
+            '$cleanupWorkerAcceptedMarkerFileName';
+
+        try {
+          final readyDeadline = DateTime.now().add(
+            const Duration(seconds: 20),
+          );
+          while (!io.File(readyPath).existsSync() &&
+              DateTime.now().isBefore(readyDeadline)) {
+            await Future<void>.delayed(cleanupWorkerReadyPollInterval);
+          }
+          expect(io.File(readyPath).existsSync(), isTrue);
+          // Simulates the CLI's own Phase 1 claim, which this direct
+          // launch bypasses: without it the worker would simply wait out
+          // its own (generously far off) claim deadline and abandon,
+          // instead of ever reaching the arm rename and bounded wait this
+          // test means to exercise.
+          expect(tryClaimReadyMarker(readyPath, acceptedPath), isTrue);
+
+          final exitCode = await worker.exitCode.timeout(
+            const Duration(seconds: 20),
+          );
+          expect(
+            exitCode,
+            1,
+            reason: 'the legacy-capped stand-in must give up, not succeed',
+          );
+          expect(
+            io.File(gaveUpPath).existsSync(),
+            isTrue,
+            reason:
+                'proves it gave up specifically through the bounded-wait '
+                'branch, not some unrelated failure',
+          );
+          expect(
+            io.File(targetPath).existsSync(),
+            isTrue,
+            reason: 'a worker that gave up must delete nothing',
+          );
         } finally {
           try {
             parent.kill();
@@ -1767,10 +2422,150 @@ Future<void> main(List<String> args) async {
       },
       skip: io.Platform.isWindows
           ? false
-          : 'launches a real Windows PowerShell cleanup worker',
+          : 'launches a real Windows PowerShell process',
+      timeout: const Timeout(Duration(seconds: 40)),
+    );
+
+    test(
+      'the real, unmodified script has no such cap: it keeps waiting on '
+      'the same still-alive parent well past where the stand-in above '
+      'already gave up, and only deletes once the parent actually exits',
+      () async {
+        const legacyCapMs = 300;
+        final readyPath = '${tempDir.path}${io.Platform.pathSeparator}ready';
+        final targetPath =
+            '${tempDir.path}${io.Platform.pathSeparator}victim.txt';
+        io.File(targetPath).writeAsStringSync('gone soon');
+
+        final parent = await io.Process.start('powershell', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Start-Sleep -Seconds 9',
+        ]);
+
+        final nowUnixMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+        final worker = await _startWorkerProcess({
+          'parentPid': parent.pid,
+          'paths': [targetPath],
+          'markerDeadlineUnixMs': nowUnixMs + 30000,
+          'claimDeadlineUnixMs': nowUnixMs + 30000,
+        }, readyPath);
+
+        final acceptedPath =
+            '${tempDir.path}${io.Platform.pathSeparator}'
+            '$cleanupWorkerAcceptedMarkerFileName';
+
+        try {
+          final readyDeadline = DateTime.now().add(
+            const Duration(seconds: 20),
+          );
+          while (!io.File(readyPath).existsSync() &&
+              DateTime.now().isBefore(readyDeadline)) {
+            await Future<void>.delayed(cleanupWorkerReadyPollInterval);
+          }
+          expect(io.File(readyPath).existsSync(), isTrue);
+          // Simulates the CLI's own Phase 1 claim, the same way the
+          // stand-in test above does, so the real script also reaches its
+          // arm rename and its own (unbounded) wait rather than abandoning
+          // once its own claim deadline passes.
+          expect(tryClaimReadyMarker(readyPath, acceptedPath), isTrue);
+
+          await Future<void>.delayed(
+            const Duration(milliseconds: legacyCapMs * 4),
+          );
+          expect(
+            await _isStillRunning(worker),
+            isTrue,
+            reason:
+                'the real script must still be waiting well past the same '
+                'cap the legacy stand-in already gave up at above',
+          );
+          expect(io.File(targetPath).existsSync(), isTrue);
+
+          await parent.exitCode;
+          final exitCode = await worker.exitCode.timeout(
+            const Duration(seconds: 20),
+          );
+          expect(exitCode, 0);
+          expect(io.File(targetPath).existsSync(), isFalse);
+        } finally {
+          try {
+            parent.kill();
+          } on Object {
+            // Already gone; nothing left to clean up.
+          }
+          try {
+            worker.kill();
+          } on Object {
+            // Already gone; nothing left to clean up.
+          }
+        }
+      },
+      skip: io.Platform.isWindows
+          ? false
+          : 'launches a real Windows PowerShell process',
       timeout: const Timeout(Duration(seconds: 40)),
     );
   });
+}
+
+/// Starts a real, non-detached PowerShell process running [encodedScript]
+/// with [payload] and [readyMarkerPath] wired the same way
+/// [IoCliProcessLauncher.startCleanupWorker] itself wires them, but launched
+/// directly (no `cmd.exe` `start` hand-off) so a test keeps a live handle to
+/// the real worker process and can observe its actual exit, not merely a
+/// launcher's. [encodedScript] defaults to the real, unmodified
+/// [cleanupWorkerEncodedBootstrapScript]; passing a different one exercises
+/// a deliberately modified stand-in against the same real payload wiring.
+/// Bypassing the launcher class here is deliberate: these tests are about
+/// the worker script's own retry behaviour, not about the CLI-side launch
+/// and job-object escape mechanics, which are covered elsewhere.
+Future<io.Process> _startWorkerProcess(
+  Map<String, Object?> payload,
+  String readyMarkerPath, {
+  String? encodedScript,
+}) {
+  final environment = io.Platform.environment;
+  final powershellPath = powershellExecutablePath(environment);
+  final workerEnvironment = Map<String, String>.from(environment)
+    ..[cleanupWorkerPayloadEnvVar] = jsonEncode(payload)
+    ..[cleanupWorkerReadyMarkerPathEnvVar] = readyMarkerPath;
+  return io.Process.start(
+    powershellPath,
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      encodedScript ?? cleanupWorkerEncodedBootstrapScript,
+    ],
+    environment: workerEnvironment,
+    mode: io.ProcessStartMode.normal,
+  );
+}
+
+/// Whether [process] is still running, checked without ever pausing on a
+/// fixed sleep: [io.Process.exitCode] returns the same future on every
+/// call, so racing it against a short timer either resolves through the
+/// process having actually exited, or through the timer, meaning the
+/// process is still alive.
+Future<bool> _isStillRunning(io.Process process) => Future.any([
+  process.exitCode.then((_) => false),
+  Future<bool>.delayed(const Duration(milliseconds: 100), () => true),
+]);
+
+/// Base64-encodes [script] as UTF-16LE, the same encoding
+/// [cleanupWorkerEncodedBootstrapScript] uses for the real script, so a test
+/// can hand PowerShell's own `-EncodedCommand` a deliberately modified
+/// stand-in through [_startWorkerProcess]. Kept local to this test:
+/// production's own encoding helper is private to the production file.
+String _encodeScriptForPowerShell(String script) {
+  final bytes = <int>[];
+  for (final unit in script.codeUnits) {
+    bytes.add(unit & 0xFF);
+    bytes.add((unit >> 8) & 0xFF);
+  }
+  return base64.encode(bytes);
 }
 
 /// A real [IoCliProcessLauncher] whose [deletePrivateDirectory] seam always
