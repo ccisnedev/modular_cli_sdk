@@ -722,7 +722,18 @@ class ModuleBuilder {
     required bool showsContractOnRejection,
   }) {
     cliOutput.writeError(error);
-    if (showsContractOnRejection &&
+    // Forwarded generically, right after the error is recorded, in the
+    // same synchronous continuation InvocationOutcome's own ordering
+    // requires (see CommandException.extraFields/extraLines): a domain
+    // error (doctor's own "checks" array, for instance) attaches its extra
+    // envelope data to itself, since by the time anything here runs, it has
+    // already left the thrower's own stack frame.
+    if (error.extraFields != null) {
+      recordInvocationExtraJson(error.extraFields!);
+    }
+    if (error.extraLines != null) {
+      recordInvocationExtraText(error.extraLines!);
+    } else if (showsContractOnRejection &&
         error.exitCode == ExitCode.validationFailed) {
       recordInvocationExtraText(HelpRenderer(_catalog).renderCommand(entry));
     }

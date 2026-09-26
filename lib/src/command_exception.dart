@@ -32,8 +32,29 @@ class CommandException implements Exception {
   /// Extra structured fields the error carries beyond [id], [message] and
   /// [exitCode]: a validation failure's `parameter`, or a domain error's own
   /// fields (a calculatrix parse error's `token` and `position`, for
-  /// instance). Present in the JSON envelope only when set.
+  /// instance). Present in the JSON envelope only when set, nested under
+  /// `"details"`.
   final Map<String, dynamic>? details;
+
+  /// Fields a domain error contributes at the top level of the rendered
+  /// `"error"` object, alongside [id]/[message]/[exitCode]/[details], not
+  /// nested under either of them (`doctor`'s own `"checks"` array, for
+  /// instance).
+  ///
+  /// Distinct from `InvocationOutcome.extraJson`: that is the rendering
+  /// layer's own carrier, filled in from this field by
+  /// `ModuleBuilder._reject` right after the error is recorded, in the same
+  /// synchronous continuation ordering `InvocationOutcome` requires. A
+  /// thrower sets [extraFields] here, on the exception itself, never on the
+  /// outcome directly, since a thrown exception has already left the
+  /// thrower's own stack frame by the time anything could record it.
+  final Map<String, dynamic>? extraFields;
+
+  /// Text a domain error contributes after the rendered error line in text
+  /// mode, exactly as [extraFields] does for JSON mode, and forwarded the
+  /// same way, through `ModuleBuilder._reject` into
+  /// `InvocationOutcome.extraText`.
+  final String? extraLines;
 
   static final _kebabCase = RegExp(r'^[a-z0-9]+(-[a-z0-9]+)*$');
 
@@ -42,6 +63,8 @@ class CommandException implements Exception {
     required this.message,
     required this.exitCode,
     this.details,
+    this.extraFields,
+    this.extraLines,
   }) {
     if (!_kebabCase.hasMatch(id)) {
       throw ArgumentError(
