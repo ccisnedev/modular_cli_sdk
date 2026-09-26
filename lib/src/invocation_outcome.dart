@@ -209,8 +209,33 @@ final Object _currentFrameKey = Object();
 /// [body] returns; the parent's own outcome is untouched by anything
 /// recorded inside the child, and is exactly as this call left it once
 /// control returns to it.
+///
+/// Round-11 review finding 1: binding [_invocationOutcomeKey] alone used to
+/// leave [_currentFrameKey] out of this call's own [zoneValues], so a nested
+/// call made from inside an already-active [InvocationOutcome.runAttempt]
+/// (a handler reached through a [ModularCli.use] middleware's guarded
+/// `next()`, say) still resolved [_currentFrameKey] to whatever the
+/// enclosing zone had bound: not some frame of the nested invocation's own
+/// kind, the very same [_OutcomeFrame] object the outer attempt was
+/// watching, belonging to an entirely different [InvocationOutcome]. The
+/// nested invocation's own recordings then landed straight in that shared
+/// frame, so the outer attempt read back an error it never recorded, one
+/// that belonged to a separate, already-finished invocation that had
+/// already rendered it once, into its own, separate sinks. Binding
+/// [_currentFrameKey] to this new outcome's own base frame here, in the
+/// same [runZoned] call, means every invocation zone, nested or not,
+/// establishes its own frame binding that shadows whatever a parent's own
+/// attempt happens to have bound, exactly as thoroughly as
+/// [_invocationOutcomeKey] itself already did.
 Future<T> runWithInvocationOutcome<T>(Future<T> Function() body) {
-  return runZoned(body, zoneValues: {_invocationOutcomeKey: InvocationOutcome()});
+  final outcome = InvocationOutcome();
+  return runZoned(
+    body,
+    zoneValues: {
+      _invocationOutcomeKey: outcome,
+      _currentFrameKey: outcome._baseFrame,
+    },
+  );
 }
 
 /// The current invocation's [InvocationOutcome].

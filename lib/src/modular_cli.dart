@@ -1056,6 +1056,25 @@ class ModularCli {
       return (contract: catalogContract ?? shortcutContract, ambiguous: false);
     }
 
+    // Round-11 review finding 2: an unknown command names a word the
+    // catalog never registered at all; it is never "the beginning of a
+    // real route this invocation was one flag away from honouring", unlike
+    // every other kind this method still resolves below. Round-10 review
+    // finding 2's own fix asks [CommandCatalog.allForName] for the empty
+    // prefix exactly like any other, so a bare root route (no literal
+    // words, only positionals, or none at all) now resolves as the sole
+    // candidate for any rejection whose own consumed prefix happens to be
+    // empty too, this one included, attaching that route's own contract to
+    // an error that has nothing to do with it. Declared here, per
+    // [CliRejection.kind], explicitly, before any candidate is even
+    // collected, rather than an ad-hoc check further down: every other kind
+    // still means the invocation reached partway into a real route, so it
+    // alone keeps consulting the candidate list below, root route
+    // included.
+    if (rejection.kind == CliRejectionKind.unknownCommand) {
+      return (contract: null, ambiguous: false);
+    }
+
     final consumedKey = rejection.consumed.join(' ');
     final candidates = <CommandContract>[
       ..._catalog.allForName(consumedKey),
