@@ -15,6 +15,37 @@ class CliCleanupWorkerStartFailure implements Exception {
   String toString() => message;
 }
 
+/// Thrown by [IoCliProcessLauncher.startCleanupWorker] when, past
+/// [cleanupWorkerRevokeTimeout]'s own deadline, it still cannot tell which
+/// side of the Phase 2 single-winner race won: every attempt
+/// [pollForRevokeOrArm] made to rename the accepted marker to
+/// [cleanupWorkerRevokedMarkerFileName] kept failing unexpectedly, and the
+/// worker's own competing rename to [cleanupWorkerArmedMarkerFileName] was
+/// never observed to have won either.
+///
+/// Deliberately a distinct type from [CliCleanupWorkerStartFailure]: that
+/// type means the caller knows the worker lost the race, so the renamed
+/// executable it left behind is genuinely orphaned and safe to remove by
+/// hand. This one means the caller genuinely does not know: the worker may
+/// still be alive, may still win the race the moment whatever is blocking
+/// the rename clears, and may still delete the target paths later. Telling
+/// these two apart, rather than folding an unresolved race into an ordinary
+/// failure, is exactly Round 8 finding 1's fix: the earlier code reported
+/// [CliCleanupWorkerStartFailure], and removed the worker's private
+/// directory, on a single failed revoke attempt, which could be wrong the
+/// moment the failure was transient. [IoCliProcessLauncher.startCleanupWorker]
+/// deliberately leaves the private directory in place when this is thrown
+/// instead of removing it, for the same reason: removing it while the
+/// worker might still be using it would be its own new race.
+class CliCleanupOutcomeUnknown implements Exception {
+  const CliCleanupOutcomeUnknown(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// How long [CliProcessLauncher.startCleanupWorker] waits for the worker it
 /// launches to create its ready-marker file before giving up and throwing
 /// [CliCleanupWorkerStartFailure]. The worker creates that file only after it
@@ -25,23 +56,42 @@ const Duration cleanupWorkerStartupTimeout = Duration(seconds: 10);
 
 /// How much longer, past [IoCliProcessLauncher]'s own claim deadline
 /// (`claimDeadlineUnixMs`, the same instant [cleanupWorkerAbandonedMarkerFileName]
-/// is judged against), it goes on waiting to observe the worker's own
-/// Phase 2 arm marker ([cleanupWorkerArmedMarkerFileName]) before
-/// concluding the worker will never arm and revoking its own claim instead
-/// by renaming the accepted marker to [cleanupWorkerRevokedMarkerFileName].
-/// Carried to the worker as `ackDeadlineUnixMs`, the same absolute instant
-/// computed from this duration added to the claim deadline, so both sides
-/// agree on it: past it, the worker's own retries of an unexpected rename
-/// failure (see [cleanupWorkerBootstrapScript]) give up and record
-/// [cleanupWorkerFailedMarkerFileName] rather than retrying forever, and
-/// [IoCliProcessLauncher] attempts its own competing rename rather than
-/// waiting forever for a worker that may already be dead. This closes the
-/// race where a worker crashes, or is killed, between creating its ready
-/// marker and ever reaching the accepted marker it would otherwise have
-/// armed: nothing ever arms it, so this deadline, not a bare successful
-/// Phase 1 claim, is what decides whether [IoCliProcessLauncher] may report
-/// success.
+/// is judged against), [IoCliProcessLauncher] goes on waiting to observe the
+/// worker's own Phase 2 arm marker ([cleanupWorkerArmedMarkerFileName])
+/// before concluding the worker may never arm on its own and starting to
+/// contest the claim itself, by attempting its own rename of the accepted
+/// marker to [cleanupWorkerRevokedMarkerFileName] (see [pollForRevokeOrArm]).
+/// This closes the race where a worker crashes, or is killed, between
+/// creating its ready marker and ever reaching the accepted marker it would
+/// otherwise have armed: nothing ever arms it, so this deadline, not a bare
+/// successful Phase 1 claim, is what decides when [IoCliProcessLauncher]
+/// stops merely watching and starts deciding.
+///
+/// Past this point alone, [IoCliProcessLauncher] does not yet report
+/// failure: see [cleanupWorkerRevokeTimeout] for how much longer it keeps
+/// trying to decide the race itself before giving up on deciding it at all.
 const Duration cleanupWorkerAckTimeout = Duration(seconds: 5);
+
+/// How much longer, past [cleanupWorkerAckTimeout]'s own deadline,
+/// [IoCliProcessLauncher] keeps retrying an unexpected failure renaming the
+/// accepted marker to [cleanupWorkerRevokedMarkerFileName] (see
+/// [pollForRevokeOrArm]) before giving up on deciding the Phase 2 race at
+/// all and throwing [CliCleanupOutcomeUnknown] instead of either a success
+/// or [CliCleanupWorkerStartFailure].
+///
+/// Round 8 finding 1: a single failed revoke attempt used to be reported as
+/// an ordinary [CliCleanupWorkerStartFailure] straight away, removing the
+/// private directory in the process, even though the failure (a sharing
+/// violation being the concrete case observed in practice) could clear
+/// moments later and let the worker's own arm rename win instead, going on
+/// to delete the real target after [IoCliProcessLauncher] had already
+/// reported failure and removed the directory out from under it. Retrying
+/// first, for this long, closes that: only once retrying itself has run out
+/// of time with the race still undecided does [IoCliProcessLauncher] report
+/// that it genuinely does not know which side won, and, in that one case,
+/// leave the private directory in place rather than remove it, since the
+/// worker may still be using it.
+const Duration cleanupWorkerRevokeTimeout = Duration(seconds: 5);
 
 /// How much earlier than [IoCliProcessLauncher]'s own startup timeout the
 /// cleanup worker's own deadline for creating its ready marker falls. The
@@ -117,17 +167,6 @@ const String cleanupWorkerArmedMarkerFileName = 'armed';
 /// marker, inside the same private directory.
 const String cleanupWorkerRevokedMarkerFileName = 'revoked';
 
-/// The name of the marker file the cleanup worker's own bootstrap script
-/// creates, best effort, when an unexpected failure (anything other than
-/// the source of a rename simply no longer existing) keeps it from ever
-/// completing either its abandon rename or its arm rename before
-/// [cleanupWorkerAckTimeout]'s deadline. Named so an operator inspecting a
-/// leftover private directory by hand can tell this case apart from an
-/// ordinary abandoned or revoked claim. Never read back by
-/// [IoCliProcessLauncher] itself: by the time it could exist, this class has
-/// already given up and reported [CliCleanupWorkerStartFailure].
-const String cleanupWorkerFailedMarkerFileName = 'failed';
-
 /// The cleanup worker's bootstrap script, fixed and never interpolated:
 /// every piece of run-specific data (which process to wait for, which paths
 /// to delete, how long to wait) travels through the environment variable
@@ -180,27 +219,38 @@ const String cleanupWorkerFailedMarkerFileName = 'failed';
 /// found" failure, infers) that the accepted marker exists, races to arm
 /// deletion itself by renaming it to [cleanupWorkerArmedMarkerFileName],
 /// again with `[System.IO.File]::Move`. [IoCliProcessLauncher] only
-/// reports success once it has actually observed that rename's result,
-/// never merely from winning Phase 1: past its own `ackDeadlineUnixMs`
-/// deadline without observing it, it instead renames the accepted marker
-/// to [cleanupWorkerRevokedMarkerFileName] itself; if that rename wins,
-/// the worker (whether dead or merely slow) never armed in time and
-/// [IoCliProcessLauncher] reports failure; if it loses because the worker's
-/// own rename already won, [IoCliProcessLauncher] reports success even
-/// though its own revoke attempt failed. A worker that loses its own arm
-/// rename because the accepted marker is already gone (the CLI's revoke
-/// won first) exits without deleting anything.
+/// reports success once it has actually observed that rename's result, or
+/// resolved the race some other way through [pollForRevokeOrArm], never
+/// merely from winning Phase 1: see that function's own doc comment, and
+/// [cleanupWorkerAckTimeout]'s and [cleanupWorkerRevokeTimeout]'s, for how
+/// [IoCliProcessLauncher] decides between success, [CliCleanupWorkerStartFailure]
+/// and [CliCleanupOutcomeUnknown] once it stops merely watching. A worker
+/// that loses its own arm rename because the accepted marker is already
+/// gone (the CLI's revoke won first) exits without deleting anything.
 ///
 /// Neither rename attempt below, the abandon one or the arm one, ever
 /// swallows a failure that is not simply the source no longer existing: a
 /// failure of that kind (a sharing violation being the concrete case
 /// observed in practice) is retried on the same poll interval used
-/// elsewhere in this script, for as long as `ackDeadlineUnixMs` allows,
-/// rather than treated as an ordinary lost race; a worker that gave up
-/// silently here would leave a still-claimable marker behind for a later,
-/// wrong claimant. Only once that deadline passes without the retried
-/// rename ever succeeding does the worker record
-/// [cleanupWorkerFailedMarkerFileName], best effort, and exit.
+/// elsewhere in this script, with no cap of its own, exactly like the
+/// unbounded parent wait below.
+///
+/// Round 8 finding 2: the worker's only two ways to stop are its own
+/// successful rename (a legitimate win, or a legitimate "source not found"
+/// loss) or observing that the accepted marker itself is gone; never a
+/// deadline it gives up at while a claimable marker (the ready marker or
+/// the accepted marker) still exists. Giving up while one of those still
+/// exists is exactly what used to leave it there for a later, wrong
+/// claimant. Deciding whether the worker ever wins is left entirely to
+/// [IoCliProcessLauncher]'s own side of the race instead, at
+/// [cleanupWorkerAckTimeout]'s and [cleanupWorkerRevokeTimeout]'s deadlines
+/// (see [pollForRevokeOrArm]).
+///
+/// Round 8 finding 3: the script no longer records anything about a
+/// retried failure either, since there is no longer a moment it gives up
+/// at to record one from. See [IoCliProcessLauncher]'s own class doc
+/// comment for what it means that, once armed, the worker has no one left
+/// to report a later failure to.
 ///
 /// Only once armed does the worker wait for the parent to exit, with no
 /// time limit at all (`$parent.WaitForExit()`, not the bounded overload):
@@ -223,13 +273,11 @@ $parentPid = [int]$data.parentPid
 $paths = @($data.paths)
 $markerDeadlineUnixMs = [int64]$data.markerDeadlineUnixMs
 $claimDeadlineUnixMs = [int64]$data.claimDeadlineUnixMs
-$ackDeadlineUnixMs = [int64]$data.ackDeadlineUnixMs
 $ReadyMarkerPath = $env:CLI_CLEANUP_READY_PATH
 $PrivateDir = Split-Path -Parent $ReadyMarkerPath
 $AcceptedMarkerPath = Join-Path $PrivateDir 'accepted'
 $AbandonedMarkerPath = Join-Path $PrivateDir 'abandoned'
 $ArmedMarkerPath = Join-Path $PrivateDir 'armed'
-$FailedMarkerPath = Join-Path $PrivateDir 'failed'
 
 function Complete-Rename($From, $To) {
     while ($true) {
@@ -239,16 +287,6 @@ function Complete-Rename($From, $To) {
         } catch [System.IO.FileNotFoundException] {
             return $false
         } catch {
-            $nowUnixMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-            if ($nowUnixMs -gt $ackDeadlineUnixMs) {
-                try {
-                    $s = [System.IO.File]::Open($FailedMarkerPath, [System.IO.FileMode]::Create)
-                    $s.Close()
-                } catch {
-                    exit 1
-                }
-                exit 1
-            }
             Start-Sleep -Milliseconds 50
         }
     }
@@ -474,6 +512,88 @@ Future<bool> pollForArm({
   }
 }
 
+/// The three possible outcomes of [pollForRevokeOrArm]: exactly one side of
+/// the Phase 2 single-winner race resolved ([armed] or [revoked]), or
+/// neither did before its own deadline passed while the rename it depends on
+/// kept failing unexpectedly the whole time ([unknown]).
+enum RevokeOrArmOutcome {
+  /// The worker's own rename of the accepted marker to
+  /// [cleanupWorkerArmedMarkerFileName] won, whether observed directly or
+  /// inferred from [tryRevokeAcceptedMarker] itself losing because the
+  /// accepted marker was already gone.
+  armed,
+
+  /// [IoCliProcessLauncher]'s own rename of the accepted marker to
+  /// [cleanupWorkerRevokedMarkerFileName] won: the worker never armed in
+  /// time.
+  revoked,
+
+  /// Neither side's rename is known to have won: every attempt at
+  /// [IoCliProcessLauncher]'s own revoke rename kept failing unexpectedly
+  /// (never a legitimate "source not found" loss) until [pollForRevokeOrArm]'s
+  /// own deadline passed with the race still undecided.
+  unknown,
+}
+
+/// Resolves the Phase 2 race once [pollForArm] has already given up waiting
+/// for the worker to arm on its own. From here, [IoCliProcessLauncher] has
+/// to decide the race itself, by repeatedly attempting its own competing
+/// rename of [acceptedMarkerPath] to [revokedMarkerPath] with
+/// [tryRevokeAcceptedMarker], while never reporting failure while the worker
+/// could still win instead.
+///
+/// Every iteration checks [armedMarkerPath] first, since the worker's own
+/// rename could have won at any moment, including while an earlier revoke
+/// attempt here was itself failing unexpectedly; only once that check comes
+/// up empty does this attempt the revoke rename. A clean win of that rename
+/// resolves the race as [RevokeOrArmOutcome.revoked]; a clean loss (the
+/// accepted marker already gone) resolves it as [RevokeOrArmOutcome.armed],
+/// since the only other rename that source could have lost to is the
+/// worker's own.
+///
+/// Round 8 finding 1: an unexpected failure (a sharing violation being the
+/// concrete case observed in practice) is retried on [pollInterval], the
+/// same as every other unexpected rename failure in this protocol, rather
+/// than surfaced immediately. Surfacing it right away, the way a single bare
+/// attempt used to, is exactly the bug this closes: the worker can still win
+/// the arm race while that failure is transient, so a caller that gave up
+/// the moment its own attempt failed could report failure for a claim the
+/// worker was about to, or already had, made good on. Only once [deadline]
+/// passes with the race still unresolved, the rename having failed
+/// unexpectedly on every attempt, does this give up and return
+/// [RevokeOrArmOutcome.unknown]: at that point neither side is known to have
+/// won, and the caller must not treat that as an ordinary revoked claim, or
+/// remove anything the worker might still need.
+///
+/// [now] and [pollInterval] are both injectable so a test can exercise every
+/// outcome deterministically rather than depending on real wall-clock
+/// timing.
+Future<RevokeOrArmOutcome> pollForRevokeOrArm({
+  required String armedMarkerPath,
+  required String acceptedMarkerPath,
+  required String revokedMarkerPath,
+  required DateTime deadline,
+  required Duration pollInterval,
+  required DateTime Function() now,
+}) async {
+  while (true) {
+    if (io.File(armedMarkerPath).existsSync()) {
+      return RevokeOrArmOutcome.armed;
+    }
+    try {
+      if (tryRevokeAcceptedMarker(acceptedMarkerPath, revokedMarkerPath)) {
+        return RevokeOrArmOutcome.revoked;
+      }
+      return RevokeOrArmOutcome.armed;
+    } on io.FileSystemException {
+      if (!now().isBefore(deadline)) {
+        return RevokeOrArmOutcome.unknown;
+      }
+      await Future<void>.delayed(pollInterval);
+    }
+  }
+}
+
 /// The UTF-16LE byte encoding of [s]'s UTF-16 code units. [s] is always
 /// [cleanupWorkerBootstrapScript] here, which is fixed ASCII text with no
 /// character outside the Basic Multilingual Plane, so encoding each
@@ -619,12 +739,16 @@ abstract class CliProcessLauncher {
   ///
   /// Throws [CliCleanupWorkerStartFailure] when the worker cannot be started
   /// at all, does not confirm readiness in time, never wins the Phase 1
-  /// claim (having abandoned it, or the claim deadline having passed), or
-  /// wins Phase 1 but never arms deletion before this call's own ack
-  /// deadline, whether because the worker crashed before ever observing
-  /// the accepted marker or because it was simply too slow. A worker that
-  /// arms and then fails on its own later (after this process has already
-  /// exited, with nobody left to observe it) is not this method's concern.
+  /// claim (having abandoned it, or the claim deadline having passed), or,
+  /// once this call has itself won the Phase 2 revoke race, the worker never
+  /// armed in time either. Throws [CliCleanupOutcomeUnknown] instead when
+  /// neither side of the Phase 2 race can be resolved before that call's own
+  /// deadline: unlike [CliCleanupWorkerStartFailure], that case leaves the
+  /// worker's private directory in place rather than remove it, since the
+  /// worker may still be alive and may still delete the given paths later.
+  /// A worker that arms and then fails on its own later (after this process
+  /// has already exited, with nobody left to observe it) is not this
+  /// method's concern.
   Future<void> startCleanupWorker(Map<String, Object?> payload);
 }
 
@@ -681,7 +805,7 @@ abstract class CliProcessLauncher {
 ///
 /// Who removes that directory depends on which side wins the two-phase
 /// single-winner claim (see [tryClaimReadyMarker], [pollForClaim],
-/// [pollForArm], [tryRevokeAcceptedMarker] and [cleanupWorkerBootstrapScript]):
+/// [pollForArm], [pollForRevokeOrArm] and [cleanupWorkerBootstrapScript]):
 /// when this class's own Phase 1 claim never succeeds, when it succeeds but
 /// this class's own Phase 2 revoke then wins instead (the worker never
 /// armed in time, whether crashed or merely slow), this class removes the
@@ -693,6 +817,21 @@ abstract class CliProcessLauncher {
 /// worker's own, still-pending, attempt to arm against the accepted marker,
 /// and a directory gone before the worker ever gets to make that attempt is
 /// indistinguishable, to the worker, from never having been claimed at all.
+/// When the Phase 2 race cannot be resolved either way before
+/// [cleanupWorkerRevokeTimeout]'s own deadline (see [CliCleanupOutcomeUnknown]),
+/// this class deliberately leaves the directory in place too, for the same
+/// reason: the worker might still be alive and still need it.
+///
+/// A deletion failure the worker hits on its own, after it has won Phase 2
+/// and armed (a locked target file, most concretely), has no process left
+/// to report it to by the time it happens: whichever process started this
+/// one has typically already exited, which is the entire reason a detached
+/// worker exists in the first place. That is not a gap this class, or the
+/// worker's own bootstrap script, tries to close by adding another
+/// diagnostic channel (a marker file nobody reads, for instance, which is
+/// exactly what Round 8 finding 3 removed): it is accepted as the known,
+/// unavoidable cost of deleting a file unattended after the process that
+/// asked for it is gone.
 class IoCliProcessLauncher implements CliProcessLauncher {
   /// [startupTimeout] and [markerDeadlineSafetyMargin] override
   /// [cleanupWorkerStartupTimeout] and
@@ -701,15 +840,27 @@ class IoCliProcessLauncher implements CliProcessLauncher {
   /// marker past fall a handful of milliseconds after launch, deterministic
   /// ally provoking the case a real, slow worker start could otherwise only
   /// hit by chance.
+  ///
+  /// [ackTimeout] and [revokeTimeout] override [cleanupWorkerAckTimeout] and
+  /// [cleanupWorkerRevokeTimeout] the same way, for the same reason: a test
+  /// exercising the Phase 2 race through a real worker and real fault
+  /// injection needs both short enough to run in a reasonable time, rather
+  /// than waiting out the real, production-sized defaults.
   const IoCliProcessLauncher({
     Duration startupTimeout = cleanupWorkerStartupTimeout,
     Duration markerDeadlineSafetyMargin =
         cleanupWorkerMarkerDeadlineSafetyMargin,
+    Duration ackTimeout = cleanupWorkerAckTimeout,
+    Duration revokeTimeout = cleanupWorkerRevokeTimeout,
   }) : _startupTimeout = startupTimeout,
-       _markerDeadlineSafetyMargin = markerDeadlineSafetyMargin;
+       _markerDeadlineSafetyMargin = markerDeadlineSafetyMargin,
+       _ackTimeout = ackTimeout,
+       _revokeTimeout = revokeTimeout;
 
   final Duration _startupTimeout;
   final Duration _markerDeadlineSafetyMargin;
+  final Duration _ackTimeout;
+  final Duration _revokeTimeout;
 
   @override
   int get currentPid => io.pid;
@@ -747,28 +898,33 @@ class IoCliProcessLauncher implements CliProcessLauncher {
 
       final startedAt = DateTime.now();
       // A single origin for every deadline below: the worker's own
-      // marker-creation deadline, claim deadline and ack deadline, all
-      // carried through the payload as Unix epoch milliseconds (UTC, so
-      // both processes compare them against the same origin regardless of
-      // local time zone), and this class's own poll deadlines further
-      // down. The marker-creation deadline is kept a fixed safety margin
-      // ahead of this class's Phase 1 poll deadline so its poll interval
-      // always has time to observe a marker the worker created in time;
-      // the claim deadline matches this class's own Phase 1 poll deadline
-      // exactly, since the claim itself, not either side's clock, is what
-      // decides who wins once a marker exists; the ack deadline matches
-      // this class's own Phase 2 poll deadline the same way.
+      // marker-creation deadline and claim deadline, carried through the
+      // payload as Unix epoch milliseconds (UTC, so both processes compare
+      // them against the same origin regardless of local time zone), and
+      // this class's own poll deadlines further down. The marker-creation
+      // deadline is kept a fixed safety margin ahead of this class's Phase 1
+      // poll deadline so its poll interval always has time to observe a
+      // marker the worker created in time; the claim deadline matches this
+      // class's own Phase 1 poll deadline exactly, since the claim itself,
+      // not either side's clock, is what decides who wins once a marker
+      // exists.
+      //
+      // Round 8 finding 2: the ack deadline below is no longer carried to
+      // the worker at all (there is no more `ackDeadlineUnixMs` in the
+      // payload); the worker never gives up on a retried rename any more, so
+      // it has no use for it. Deciding whether the worker ever arms in time
+      // is left entirely to this class's own side of the race, at this ack
+      // deadline and, past it, [_revokeTimeout]'s own deadline (see
+      // [pollForRevokeOrArm]).
       final markerDeadlineUnixMs =
           startedAt.toUtc().millisecondsSinceEpoch +
           (_startupTimeout - _markerDeadlineSafetyMargin).inMilliseconds;
       final cliDeadline = startedAt.add(_startupTimeout);
       final claimDeadlineUnixMs = cliDeadline.toUtc().millisecondsSinceEpoch;
-      final ackDeadline = cliDeadline.add(cleanupWorkerAckTimeout);
-      final ackDeadlineUnixMs = ackDeadline.toUtc().millisecondsSinceEpoch;
+      final ackDeadline = cliDeadline.add(_ackTimeout);
       final effectivePayload = Map<String, Object?>.from(payload)
         ..['markerDeadlineUnixMs'] = markerDeadlineUnixMs
-        ..['claimDeadlineUnixMs'] = claimDeadlineUnixMs
-        ..['ackDeadlineUnixMs'] = ackDeadlineUnixMs;
+        ..['claimDeadlineUnixMs'] = claimDeadlineUnixMs;
 
       final workerEnvironment = Map<String, String>.from(environment)
         ..[cleanupWorkerPayloadEnvVar] = jsonEncode(effectivePayload)
@@ -830,22 +986,40 @@ class IoCliProcessLauncher implements CliProcessLauncher {
         now: DateTime.now,
       );
       if (!armed) {
-        final revoked = tryRevokeAcceptedMarker(
-          acceptedMarkerPath,
-          revokedMarkerPath,
+        final revokeDeadline = ackDeadline.add(_revokeTimeout);
+        final outcome = await pollForRevokeOrArm(
+          armedMarkerPath: armedMarkerPath,
+          acceptedMarkerPath: acceptedMarkerPath,
+          revokedMarkerPath: revokedMarkerPath,
+          deadline: revokeDeadline,
+          pollInterval: cleanupWorkerReadyPollInterval,
+          now: DateTime.now,
         );
-        if (revoked) {
-          throw CliCleanupWorkerStartFailure(
-            'The cleanup worker won the initial claim over its ready '
-            'marker but never armed deletion within '
-            '${cleanupWorkerAckTimeout.inSeconds}s afterwards, so its '
-            'claim has been revoked.',
-          );
+        switch (outcome) {
+          case RevokeOrArmOutcome.revoked:
+            throw CliCleanupWorkerStartFailure(
+              'The cleanup worker won the initial claim over its ready '
+              'marker but never armed deletion within '
+              '${_ackTimeout.inSeconds}s afterwards, so its claim has '
+              'been revoked.',
+            );
+          case RevokeOrArmOutcome.unknown:
+            throw CliCleanupOutcomeUnknown(
+              'Could not determine whether the cleanup worker armed '
+              'deletion or this process revoked its claim first: '
+              'renaming the marker at $acceptedMarkerPath to '
+              '$revokedMarkerPath kept failing unexpectedly for '
+              '${_revokeTimeout.inSeconds}s without resolving either '
+              'way. The cleanup worker may still be alive and may still '
+              'delete the given paths later; its private directory at '
+              '${privateDir.path} has been left in place rather than '
+              'removed.',
+            );
+          case RevokeOrArmOutcome.armed:
+            // Falls through to report success below, the same as an
+            // armed marker pollForArm itself had observed directly.
+            break;
         }
-        // Lost the revoke race: the worker's own rename to the armed
-        // marker won between the last poll above and this attempt. Falls
-        // through to report success below, the same as an armed marker
-        // pollForArm itself had observed directly.
       }
 
       // The worker now owns deleting the given paths, and its own private
@@ -853,6 +1027,13 @@ class IoCliProcessLauncher implements CliProcessLauncher {
       // needs, or may touch, that directory; see the class doc comment for
       // why removing it here would race the worker's own use of it.
       return;
+    } on CliCleanupOutcomeUnknown {
+      // Deliberately rethrown before the shared cleanup-and-report path
+      // below: that path always removes the private directory, and doing
+      // so here, while the worker might still be alive and using it, would
+      // be its own new race. See CliCleanupOutcomeUnknown's own doc
+      // comment.
+      rethrow;
     } on CliCleanupWorkerStartFailure catch (e) {
       startFailure = e;
     } on io.FileSystemException catch (e) {

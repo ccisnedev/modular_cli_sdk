@@ -82,6 +82,7 @@ export 'src/plugins/installation/cli_platform.dart'
     show CliPlatform, IoCliPlatform;
 export 'src/plugins/installation/cli_process_launcher.dart'
     show
+        CliCleanupOutcomeUnknown,
         CliCleanupWorkerStartFailure,
         CliProcessLauncher,
         IoCliProcessLauncher,
@@ -91,6 +92,7 @@ export 'src/plugins/installation/cli_process_launcher.dart'
         cleanupWorkerPayloadEnvVar,
         cleanupWorkerReadyMarkerPathEnvVar,
         cleanupWorkerReadyPollInterval,
+        cleanupWorkerRevokeTimeout,
         cleanupWorkerStartupTimeout,
         cmdExecutablePath,
         powershellExecutablePath;

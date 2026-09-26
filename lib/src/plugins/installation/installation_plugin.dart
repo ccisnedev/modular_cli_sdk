@@ -1065,7 +1065,10 @@ class UninstallCommand
 /// Starting the cleanup worker is not allowed to fail silently: if
 /// [CliProcessLauncher.startCleanupWorker] throws, this step fails with
 /// `cleanup-start-failed` naming the renamed file, rather than reporting a
-/// success that leaves a `.old` file behind forever.
+/// success that leaves a `.old` file behind forever. A distinct
+/// [CliCleanupOutcomeUnknown] instead maps to `cleanup-outcome-unknown`:
+/// the worker may still be alive and may still delete the renamed file
+/// later, so the message says not to delete it by hand.
 class SelfDeleteExecutableStep implements Step {
   SelfDeleteExecutableStep({
     required this.fileSystem,
@@ -1103,6 +1106,16 @@ class SelfDeleteExecutableStep implements Step {
         'parentPid': pid,
         'paths': [renamedPath],
       });
+    } on CliCleanupOutcomeUnknown catch (e) {
+      throw CliInstallStepFailure(
+        'cleanup-outcome-unknown',
+        '$path was moved to $renamedPath but it could not be determined '
+            'whether the cleanup worker armed deletion of it or this '
+            'process revoked that worker first: $e. The cleanup worker may '
+            'still be running and may still delete $renamedPath later; do '
+            'not delete it by hand unless the worker is confirmed to no '
+            'longer be running.',
+      );
     } on Object catch (e) {
       throw CliInstallStepFailure(
         'cleanup-start-failed',
