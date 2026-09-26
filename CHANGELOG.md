@@ -270,9 +270,7 @@ rejected. No bug or missing API was found in it while building this one.
   already recorded. Both boundaries a retry can call more than once,
   `ModularCli.use()`'s own wrapper and `ModuleBuilder._mount()`'s handler,
   now clear the recorded outcome at the start of every dispatch attempt, so
-  a superseded attempt's error cannot outlive it; `run()` also now asserts
-  that a rendered error's own `exitCode` matches the process exit code it is
-  about to return, failing loudly instead of ever rendering a mismatched one
+  a superseded attempt's error cannot outlive it
 - **A name-only catalog route match no longer silently overrides a deeper
   shortcut the invocation positionally matches further.** An ordinary route
   (`s`, no positionals) and a shortcut (`s <id> <sub>`) can share the same
@@ -281,10 +279,54 @@ rejected. No bug or missing API was found in it while building this one.
   route's contract won even when the invocation was actually reaching for
   the deeper shortcut, letting a badly typed value on the shortcut's own
   option pass validation under the catalog route's more permissive one. The
-  applicable contract is now chosen by comparing how many positionals each
-  candidate declares: the deeper one wins, and a tie between a catalog route
-  and a shortcut at the same depth is reported as the router's own
-  rejection, the same as any other ambiguous case, rather than guessed
+  applicable contract is now chosen from the router's own rejection, by
+  name, not by guessing from how many positionals each candidate declares
+  (a comparison that itself picked a winner even when the router made no
+  actual routing progress toward one candidate over the other, see below);
+  a catalog route and a shortcut that both remain viable at the same
+  rejected positional are reported as the router's own rejection, the same
+  as any other ambiguous case, rather than guessed
+- **`run()` no longer throws `StateError` when a middleware legitimately
+  remaps a nonzero result to a different exit code.** A handler's own
+  thrown `CommandException` can carry one exit code while an outer
+  middleware, having awaited `next(req)`, deliberately returns a different
+  one of its own (a `notFound` turned into a `genericError` further up the
+  chain, say); `run()` previously treated that mismatch as an invariant
+  violation. The process exit code returned through the pipeline is now
+  authoritative: the rendered envelope keeps the recorded error's own `id`,
+  `message` and any extras, but its own `exitCode` field is stamped with the
+  exit code `run()` is actually about to return, whatever the recorded
+  error's own `exitCode` was
+- **A middleware's own error, recorded before it calls `next(req)`, no
+  longer gets erased by the reset that starts the downstream dispatch it
+  calls into.** The per-attempt reset a retry needs (see above) reset the
+  same recorded-outcome slot a middleware itself had just written to,
+  before `next` even ran, so a middleware that records its own error,
+  awaits `next(req)`, and returns nonzero rendered nothing at all whenever
+  the downstream attempt recorded no error of its own. The recorded outcome
+  is now a stack of frames, one per nested dispatch level: entering
+  `next()` pushes a fresh frame for that attempt, and returning from it
+  folds the frame back, overwriting the enclosing level's own error only
+  when the downstream attempt actually recorded one of its own, and
+  restoring the enclosing middleware's own pre-`next()` baseline otherwise.
+  A retry that calls `next()` more than once keeps this correct across every
+  attempt: only the true baseline, captured once before the first attempt,
+  is ever restored, never a previous, already-superseded attempt's own
+  merged-in error
+- **An unresolved rejection's applicable contract is now chosen only from
+  actual routing progress.** The positional-depth comparison above (a
+  catalog route's and a shortcut's total positional counts) could still
+  pick a winner even when the router itself never got far enough to prefer
+  one candidate over the other: a catalog route `s <id> *` and a shortcut
+  `s <id> <sub> [<tail>]` both declare a positional named `id`, so
+  `s --json --a bad --help` (missing `<id>` entirely) resolved to the
+  shortcut's contract purely because it has more positionals overall, and
+  rendered a successful `--help` answer under the wrong one. Resolution now
+  matches candidates by the exact positional name the router's own
+  rejection names as missing (sound because `cli_router` itself refuses to
+  register two routes that disagree on the name of a positional they share
+  a trie slot with); when more than one candidate still declares that name,
+  the router's own rejection is kept unchanged, never resolved to a guess
 
 ### Notes
 

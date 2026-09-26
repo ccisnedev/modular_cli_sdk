@@ -320,17 +320,61 @@ class ModularCli {
   /// one, an inner one otherwise, so "last recorded wins" is exactly
   /// "the outermost thrown wins".
   ///
-  /// Round-7 review finding 1: [beginInvocationAttempt] runs first, before
-  /// [middleware] itself is even built, so a retrying middleware's second
-  /// call to `next` starts this boundary's own recorded-error slot clean;
-  /// whatever a superseded first attempt recorded here cannot survive into
-  /// the attempt that actually determines the exit code [run] renders.
+  /// Round-8 review finding 2: [middleware] is built around a guarded
+  /// `next`, not [CliHandler] `next` itself, so every actual call it makes
+  /// to `next(req)` (once, never, or more than once on a retry) runs
+  /// inside its own fresh [InvocationOutcome] frame
+  /// ([InvocationOutcome.pushFrame], [InvocationOutcome.popFrame]).
+  ///
+  /// This middleware's own baseline, whatever it recorded (directly, e.g.
+  /// via `output.writeError`) before its *first* call to `next()`, or
+  /// nothing, is captured exactly once, lazily, the first time the guarded
+  /// `next` runs. Every call after that reuses the very same baseline,
+  /// never a later one: a downstream attempt that records nothing of its
+  /// own restores the outcome to that original baseline, not to whatever a
+  /// previous, now-superseded attempt at this same dispatch level already
+  /// merged in. Without capturing it once up front this way, a retry
+  /// (calling `next` twice) whose first attempt fails and second attempt
+  /// succeeds silently would leave the first attempt's error behind: its
+  /// own pop would have already overwritten this middleware's baseline
+  /// with it, and merely "preserving whatever is currently there" on the
+  /// second, empty pop would preserve that stale value instead of clearing
+  /// it. A downstream attempt that does record its own error still
+  /// overwrites the outcome, exactly as before, so the invocation's actual
+  /// final attempt is always what ends up recorded.
   ModularCli use(CliMiddleware middleware) {
     _root.use((next) {
       return (req) async {
-        beginInvocationAttempt();
+        final outcome = currentInvocationOutcome();
+        CommandException? baseError;
+        var baseJsonMode = false;
+        String? baseExtraText;
+        Map<String, dynamic>? baseExtraJson;
+        var baselineCaptured = false;
+
+        Future<int> guardedNext(CliRequest guardedReq) async {
+          if (!baselineCaptured) {
+            baseError = outcome.error;
+            baseJsonMode = outcome.jsonMode;
+            baseExtraText = outcome.extraText;
+            baseExtraJson = outcome.extraJson;
+            baselineCaptured = true;
+          }
+          outcome.pushFrame();
+          try {
+            return await next(guardedReq);
+          } finally {
+            if (!outcome.popFrame()) {
+              outcome.error = baseError;
+              outcome.jsonMode = baseJsonMode;
+              outcome.extraText = baseExtraText;
+              outcome.extraJson = baseExtraJson;
+            }
+          }
+        }
+
         try {
-          final wrapped = middleware(next);
+          final wrapped = middleware(guardedNext);
           return await wrapped(req);
         } on CommandException catch (e) {
           recordInvocationError(e, jsonMode: req.flagBool('json'));
@@ -389,24 +433,17 @@ class ModularCli {
       if (exitCode != ExitCode.ok) {
         final outcome = currentInvocationOutcome();
         if (outcome.error != null) {
-          // Round-7 review finding 1's own invariant: what is about to be
-          // rendered must correspond to the process exit code this call is
-          // about to return. beginInvocationAttempt() clearing a superseded
-          // attempt's recorded error at every retry boundary is what makes
-          // this hold in practice; if it were ever violated, rendering a
-          // mismatched exit code silently would be exactly the kind of
-          // silent pick this SDK's error rendering must not do, so this
-          // fails loudly instead of ever rendering it.
-          if (outcome.error!.exitCode != exitCode) {
-            throw StateError(
-              'Invocation outcome mismatch: run() is about to return exit '
-              'code $exitCode but the recorded error carries exit code '
-              '${outcome.error!.exitCode} (id: ${outcome.error!.id}). '
-              'What is rendered must always correspond to the final '
-              'dispatch attempt.',
-            );
-          }
-          _renderRecordedError(outcome, err);
+          // Round-8 review finding 1: the process exit code this call is
+          // about to return is authoritative, not the recorded error's own
+          // exitCode. A middleware may legitimately remap a handler's
+          // result (a notFound turned into a genericError further up the
+          // chain, say) after recording that handler's own CommandException
+          // via next()'s nonzero return; the two exit codes then differ by
+          // design, not by bug, so this must render, never reject the
+          // mismatch. _renderRecordedError keeps the recorded id, message
+          // and extras, but stamps the envelope's own exitCode field with
+          // exitCode, the one actually being returned.
+          _renderRecordedError(outcome, err, exitCode);
         }
       }
       return exitCode;
@@ -714,10 +751,25 @@ class ModularCli {
   /// (round-6 review findings 1 through 3). Called by [run], and only when
   /// the invocation's final exit code is nonzero and an error was actually
   /// recorded, never on a recovered or retried-into-success invocation.
-  void _renderRecordedError(InvocationOutcome outcome, io.IOSink err) {
+  ///
+  /// [processExitCode] overrides the rendered envelope's own `exitCode`
+  /// field (round-8 review finding 1): the recorded error's own `exitCode`
+  /// may differ from it when a middleware legitimately remaps the final
+  /// result after recording it, and what is shown must match what the
+  /// process actually returns, not a superseded intermediate value. `id`,
+  /// `message`, `details` and any extras stay exactly as recorded.
+  void _renderRecordedError(
+    InvocationOutcome outcome,
+    io.IOSink err,
+    int processExitCode,
+  ) {
     final error = outcome.error!;
     if (outcome.jsonMode) {
-      final json = {...error.toJson(), ...?outcome.extraJson};
+      final json = {
+        ...error.toJson(),
+        ...?outcome.extraJson,
+        'exitCode': processExitCode,
+      };
       err.writeln(jsonEncode({'error': json}));
       return;
     }
@@ -841,21 +893,33 @@ class ModularCli {
   /// shallower, unrelated route's contract silently overrode the deeper
   /// shortcut the invocation was actually reaching for.
   ///
-  /// The fix is to compare how many positionals each candidate declares:
-  /// `cli_router` only reports [CliRejectionKind.incomplete] or
-  /// [CliRejectionKind.missingArgument] this far down its own trie when some
-  /// route continues past what was consumed, so whichever candidate goes
-  /// deeper is the one still viable, and the shallower one cannot be what
-  /// the invocation is reaching for. A tie, both candidates declaring the
-  /// same number of positionals, is genuinely ambiguous: nothing here can
-  /// decide which one the caller meant, so this reports that the same way
-  /// [_shortcutContractFor]'s own ambiguous case already does (round-6
-  /// review finding 6), the router's own rejection, rather than guessing.
+  /// The fix relies on actual routing progress, never a candidate's static
+  /// total arity (round-8 review finding 3: comparing total positional
+  /// counts picked a winner even when the router had not actually
+  /// progressed past either candidate, e.g. both still reaching for the
+  /// very same first positional). `cli_router`'s own trie enforces one name
+  /// per shared positional slot: two routes continuing the same slot under
+  /// different names is a build-time [ArgumentError] (see `_Trie.register`
+  /// in `cli_router`), so [CliRejectionKind.missingArgument]'s message,
+  /// `'missing a value for <name>'`, names the exact slot the invocation is
+  /// still stuck on. A candidate that does not declare a positional under
+  /// that name has already fallen out of the running by definition; a
+  /// candidate that does is still viable. Exactly one still-viable
+  /// candidate resolves unambiguously; zero or more than one (including
+  /// both candidates still reaching for the same slot) is genuinely
+  /// ambiguous, and this reports that the same way [_shortcutContractFor]'s
+  /// own ambiguous case already does (round-6 review finding 6): the
+  /// router's own rejection, rather than guessing.
+  ///
+  /// [CliRejectionKind.incomplete] carries no such positional name (the
+  /// router itself has nothing pending at that node), so there is no
+  /// routing-progress signal to resolve from; this is treated the same as
+  /// an unparseable message, ambiguous.
   ///
   /// [CliRejection.route] being non-null names one exact route `cli_router`
   /// itself resolved to: unambiguous by construction (a second registration
   /// under the same exact pattern is a build-time error, round-6 review
-  /// finding 4), so no depth comparison applies there.
+  /// finding 4), so none of this applies there.
   ({CommandContract? contract, bool ambiguous}) _applicableContractFor(
     CliRejection rejection,
   ) {
@@ -872,17 +936,43 @@ class ModularCli {
       return (contract: catalogContract ?? shortcutContract, ambiguous: false);
     }
 
-    final catalogDepth = catalogContract.positionals.length;
-    final shortcutDepth = shortcutContract.positionals.length;
-    if (catalogDepth == shortcutDepth) {
+    final missingName = _missingPositionalName(rejection);
+    if (missingName == null) return (contract: null, ambiguous: true);
+
+    final catalogStillViable = _declaresPositional(
+      catalogContract,
+      missingName,
+    );
+    final shortcutStillViable = _declaresPositional(
+      shortcutContract,
+      missingName,
+    );
+    if (catalogStillViable == shortcutStillViable) {
       return (contract: null, ambiguous: true);
     }
     return (
-      contract:
-          shortcutDepth > catalogDepth ? shortcutContract : catalogContract,
+      contract: catalogStillViable ? catalogContract : shortcutContract,
       ambiguous: false,
     );
   }
+
+  static final RegExp _missingPositionalPattern = RegExp(
+    r'^missing a value for <(.+)>$',
+  );
+
+  /// The positional name `cli_router` reports as missing in
+  /// [CliRejection.message], for [CliRejectionKind.missingArgument] only;
+  /// see `finishHere()` in `cli_router`'s own resolver for the exact string
+  /// this parses back out.
+  String? _missingPositionalName(CliRejection rejection) {
+    if (rejection.kind != CliRejectionKind.missingArgument) return null;
+    final message = rejection.message;
+    if (message == null) return null;
+    return _missingPositionalPattern.firstMatch(message)?.group(1);
+  }
+
+  bool _declaresPositional(CommandContract contract, String name) =>
+      contract.positionals.any((p) => p.name == name);
 
   /// Every registered route that continues [attempted].
   ///

@@ -615,17 +615,16 @@ class ModuleBuilder {
     required bool globals,
   }) {
     Future<int> handler(CliRequest req) async {
-      // Round-7 review finding 1: this is the boundary a retrying
-      // middleware actually calls more than once (ModularCli.use()'s own
-      // wrapper never lets a CommandException past it, so a middleware
-      // retries from this handler's plain int result, not a caught
-      // exception). Starting each dispatch attempt with a clean recorded-
-      // error slot means a superseded attempt's error, if any, cannot
-      // outlive it: only what this attempt itself goes on to record, if
-      // anything, is left for ModularCli.run() to read back once dispatch
-      // finishes.
-      beginInvocationAttempt();
-
+      // Round-8 review finding 2: this handler no longer resets the
+      // recorded-error slot itself. Whenever it runs behind a middleware
+      // (ModularCli.use()), that middleware's own guarded `next()` already
+      // pushed a fresh InvocationOutcome frame right before calling into
+      // here, so this handler always starts clean regardless of any
+      // retry; with no middleware at all, it runs in the base frame
+      // ModularCli.run()'s own runWithInvocationOutcome() call created
+      // fresh for this dispatch. Either way, a superseded retry's error
+      // cannot outlive it: only what this attempt itself goes on to
+      // record, if anything, is left for the frame above to read back.
       final isJsonMode = req.flagBool('json');
       final isQuiet = req.flagBool('quiet');
 

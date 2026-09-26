@@ -2,6 +2,16 @@ import 'dart:async';
 
 import 'command_exception.dart';
 
+/// One dispatch level's own recorded outcome: what [InvocationOutcome]
+/// keeps a stack of, one frame per nested `next()` call (round-8 review
+/// finding 2).
+class _OutcomeFrame {
+  CommandException? error;
+  bool jsonMode = false;
+  String? extraText;
+  Map<String, dynamic>? extraJson;
+}
+
 /// The invocation-local record of "what error, if any, should this
 /// [run] call render", carried through a [Zone] rather than kept on
 /// [ModularCli] as an instance field.
@@ -24,29 +34,84 @@ import 'command_exception.dart';
 /// and a middleware boundary all call [recordInvocationError] instead, and
 /// [ModularCli.run] is the only place that ever turns the outcome into
 /// actual output, exactly once, after the fact.
+///
+/// Round-8 review finding 2: a single flat record per invocation meant the
+/// only way to keep a retried dispatch attempt from inheriting a superseded
+/// attempt's error was to reset it at the start of every attempt
+/// (`beginInvocationAttempt`, round-7's own fix) but that reset could not
+/// tell "a superseded downstream attempt" apart from "the enclosing
+/// middleware's own error, recorded before it even called `next()`", and
+/// erased both alike. [InvocationOutcome] is now a stack of frames, one per
+/// nested dispatch level: [pushFrame], called right before a middleware's
+/// wrapped `next` actually runs, starts that downstream attempt with a
+/// clean frame of its own; [popFrame], called once that attempt returns,
+/// folds it back into the frame below, overwriting the enclosing level's
+/// own recorded error only when the downstream frame actually recorded one
+/// itself, and leaving the enclosing level's own error untouched otherwise.
+/// [error], [jsonMode], [extraText] and [extraJson] always read and write
+/// the current top frame, so every existing call site keeps working
+/// unchanged.
 class InvocationOutcome {
+  final List<_OutcomeFrame> _frames = [_OutcomeFrame()];
+
+  _OutcomeFrame get _top => _frames.last;
+
   /// The most recently recorded error, or `null` when nothing has been
-  /// recorded yet (or a later recording overwrote it, see
-  /// [recordInvocationError]).
-  CommandException? error;
+  /// recorded yet at this dispatch level (or a later recording overwrote
+  /// it, see [recordInvocationError]).
+  CommandException? get error => _top.error;
+  set error(CommandException? value) => _top.error = value;
 
   /// The output mode the request that recorded [error] was running under.
   /// Meaningless while [error] is `null`.
-  bool jsonMode = false;
+  bool get jsonMode => _top.jsonMode;
+  set jsonMode(bool value) => _top.jsonMode = value;
 
   /// Extra text-mode-only text to render after [error] (a shortcut or
   /// route's own contract, offered as the "you were one flag away"
   /// context [ModuleBuilder] adds in text mode). Always cleared when a new
   /// error is recorded, so it can never end up attached to a different
   /// error than the one it was recorded for.
-  String? extraText;
+  String? get extraText => _top.extraText;
+  set extraText(String? value) => _top.extraText = value;
 
   /// Extra JSON-mode-only fields merged into the rendered `"error"`
   /// object, alongside [CommandException.toJson]'s own
   /// `id`/`message`/`exitCode`/`details` (a rejection's own `contract`,
   /// for instance). Always cleared when a new error is recorded, for the
   /// same reason [extraText] is.
-  Map<String, dynamic>? extraJson;
+  Map<String, dynamic>? get extraJson => _top.extraJson;
+  set extraJson(Map<String, dynamic>? value) => _top.extraJson = value;
+
+  /// Starts a fresh, empty frame for a downstream dispatch attempt about to
+  /// run (a middleware's wrapped `next()` call): see [popFrame].
+  void pushFrame() => _frames.add(_OutcomeFrame());
+
+  /// Ends the frame the matching [pushFrame] started, and reports whether
+  /// it recorded an error of its own. When it did, the frame below (now
+  /// the top of the stack again) is overwritten with its `error`,
+  /// `jsonMode`, `extraText` and `extraJson`. When it did not, the frame
+  /// below is left completely untouched by this call: what "preserved"
+  /// means in that case is a call-site decision, not this class's (see
+  /// [ModularCli.use], which restores its own pre-`next()` baseline rather
+  /// than leaving behind whatever a previous, superseded attempt at the
+  /// same dispatch level already merged in).
+  bool popFrame() {
+    if (_frames.length < 2) {
+      throw StateError(
+        'popFrame() called with no matching pushFrame(): the outcome '
+        'frame stack must never drop below its base frame.',
+      );
+    }
+    final finished = _frames.removeLast();
+    if (finished.error == null) return false;
+    _top
+      ..error = finished.error
+      ..jsonMode = finished.jsonMode
+      ..extraText = finished.extraText
+      ..extraJson = finished.extraJson;
+    return true;
+  }
 }
 
 /// Zone key for the current invocation's [InvocationOutcome]. Private so
@@ -133,28 +198,4 @@ void recordInvocationExtraText(String text) {
 /// reason [recordInvocationExtraText] must be.
 void recordInvocationExtraJson(Map<String, dynamic> fields) {
   currentInvocationOutcome().extraJson = fields;
-}
-
-/// Clears the current invocation's recorded outcome: called at the start of
-/// every dispatch attempt that can itself be retried, so a fresh attempt
-/// never inherits an error a superseded attempt left behind.
-///
-/// Round-7 review finding 1: a middleware that retries by calling `next`
-/// more than once decides to retry from a plain, already-converted exit
-/// code, never from a caught exception (ModuleBuilder._mount()'s own
-/// boundary never lets a CommandException propagate past it). If the first
-/// attempt threw, its error is recorded by that boundary; if the retried,
-/// final attempt then succeeds outright, nothing overwrites that recorded
-/// error, and ModularCli.run() would render it even though the exit code it
-/// returns is the final attempt's own, unrelated one. Calling this at the
-/// start of each dispatch attempt, both in ModuleBuilder._mount()'s
-/// handler and in ModularCli.use()'s own wrapper, means a superseded
-/// attempt's error cannot outlive that attempt: only what the final
-/// attempt itself records, if anything, is left for run() to read back.
-void beginInvocationAttempt() {
-  final outcome = currentInvocationOutcome();
-  outcome.error = null;
-  outcome.jsonMode = false;
-  outcome.extraText = null;
-  outcome.extraJson = null;
 }
