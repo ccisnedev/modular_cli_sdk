@@ -1506,11 +1506,13 @@ void main() {
         final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
 
         final out = MemorySink();
-        final code = await cli.run(['doctor'], stdout: out);
+        final err = MemorySink();
+        final code = await cli.run(['doctor'], stdout: out, stderr: err);
 
         expect(code, ExitCode.configError);
-        expect(out.output, contains('could not check'));
-        expect(out.output, isNot(contains('was not found on PATH')));
+        expect(out.output, isEmpty);
+        expect(err.output, contains('could not check'));
+        expect(err.output, isNot(contains('was not found on PATH')));
       },
     );
 
@@ -1527,10 +1529,12 @@ void main() {
         final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
 
         final out = MemorySink();
-        final code = await cli.run(['doctor'], stdout: out);
+        final err = MemorySink();
+        final code = await cli.run(['doctor'], stdout: out, stderr: err);
 
         expect(code, ExitCode.configError);
-        expect(out.output, contains('could not check'));
+        expect(out.output, isEmpty);
+        expect(err.output, contains('could not check'));
       },
     );
 
@@ -1564,10 +1568,12 @@ void main() {
         final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
 
         final out = MemorySink();
-        final code = await cli.run(['doctor'], stdout: out);
+        final err = MemorySink();
+        final code = await cli.run(['doctor'], stdout: out, stderr: err);
 
         expect(code, ExitCode.configError);
-        expect(out.output, contains('hard link'));
+        expect(out.output, isEmpty);
+        expect(err.output, contains('hard link'));
       },
     );
 
@@ -1587,10 +1593,12 @@ void main() {
         final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
 
         final out = MemorySink();
-        final code = await cli.run(['doctor'], stdout: out);
+        final err = MemorySink();
+        final code = await cli.run(['doctor'], stdout: out, stderr: err);
 
         expect(code, ExitCode.configError);
-        expect(out.output, contains('could not check'));
+        expect(out.output, isEmpty);
+        expect(err.output, contains('could not check'));
       },
     );
 
