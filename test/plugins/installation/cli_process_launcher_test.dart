@@ -137,6 +137,35 @@ Future<io.Process> _startReleasableParent(String releaseMarkerPath) =>
           'Start-Sleep -Milliseconds 50 }',
     ]);
 
+/// The deadline [_claimReadyMarkerForTest] gives its own retrying claim.
+const _claimReadyMarkerForTestDeadline = Duration(seconds: 5);
+
+/// The poll interval [_claimReadyMarkerForTest] retries on.
+const _claimReadyMarkerForTestPollInterval = Duration(milliseconds: 20);
+
+/// Simulates the CLI's own Phase 1 claim of a ready marker a real worker
+/// process just created, through [pollForClaim], the same retrying call
+/// [IoCliProcessLauncher.startCleanupWorker] itself makes, rather than the
+/// bare, single-attempt [tryClaimReadyMarker].
+///
+/// A worker's ready marker is a file another process only just created,
+/// exactly the situation [tryClaimReadyMarker]'s own doc comment already
+/// names as able to briefly see a real, unexpected Windows sharing
+/// violation (observed in practice from a freshly created file getting a
+/// transient extra handle, such as from real-time antivirus scanning). A
+/// single unretried attempt asserted to succeed made a test flaky on
+/// exactly that transient condition; this rides it out on the same bounded
+/// retry production code already relies on, rather than assuming the very
+/// first attempt always wins.
+Future<bool> _claimReadyMarkerForTest(String readyPath, String acceptedPath) =>
+    pollForClaim(
+      readyMarkerPath: readyPath,
+      acceptedMarkerPath: acceptedPath,
+      deadline: DateTime.now().add(_claimReadyMarkerForTestDeadline),
+      pollInterval: _claimReadyMarkerForTestPollInterval,
+      now: DateTime.now,
+    );
+
 void main() {
   group('cleanupWorkerBootstrapScript', () {
     // Fixed and never interpolated: every piece of run-specific data is
@@ -2148,9 +2177,12 @@ Future<void> main(List<String> args) async {
             }
             expect(io.File(readyPath).existsSync(), isTrue);
 
-            // This test's own claim: the exact rename
+            // This test's own claim: the exact retrying claim
             // IoCliProcessLauncher.startCleanupWorker itself performs.
-            expect(tryClaimReadyMarker(readyPath, acceptedPath), isTrue);
+            expect(
+              await _claimReadyMarkerForTest(readyPath, acceptedPath),
+              isTrue,
+            );
             lock = io.File(acceptedPath).openSync(mode: io.FileMode.write);
 
             // Round 9 finding 2: the worker (running _armBarrierEncodedScript,
@@ -2394,7 +2426,10 @@ if (-not \$parent.WaitForExit($legacyCapMs)) {
           // its own (generously far off) claim deadline and abandon,
           // instead of ever reaching the arm rename and bounded wait this
           // test means to exercise.
-          expect(tryClaimReadyMarker(readyPath, acceptedPath), isTrue);
+          expect(
+            await _claimReadyMarkerForTest(readyPath, acceptedPath),
+            isTrue,
+          );
 
           final exitCode = await worker.exitCode.timeout(
             const Duration(seconds: 20),
@@ -2483,7 +2518,10 @@ if (-not \$parent.WaitForExit($legacyCapMs)) {
           // stand-in test above does, so the real script also reaches its
           // arm rename and its own (unbounded) wait rather than abandoning
           // once its own claim deadline passes.
-          expect(tryClaimReadyMarker(readyPath, acceptedPath), isTrue);
+          expect(
+            await _claimReadyMarkerForTest(readyPath, acceptedPath),
+            isTrue,
+          );
 
           await Future<void>.delayed(
             const Duration(milliseconds: legacyCapMs * 4),
