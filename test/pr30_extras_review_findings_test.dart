@@ -23,6 +23,18 @@
 // with an ArgumentError at construction time, deriving the reserved set
 // from toJson() itself rather than a hand-written list, so it cannot drift
 // out of sync with what toJson() actually emits.
+//
+// Codex review of 53aeb3f (finding 2's own fix) found a further issue
+// (command_exception.dart:91): the constructor kept the caller's own
+// mutable map as extraFields, validated once at construction time. A caller
+// that constructs with extraFields: fields and later mutates fields (for
+// example fields['id'] = null; fields['message'] = [];) corrupts the
+// envelope after validation already passed, since extraFields still points
+// at that same, now-tampered, map. Fixed by copying extraFields into an
+// unmodifiable map at construction time (Map.unmodifiable of the caller's
+// map), validating that copy, and exposing only the copy: mutating the
+// original afterwards no longer reaches it, and mutating the exposed
+// extraFields map itself throws UnsupportedError.
 
 import 'dart:convert';
 
@@ -365,6 +377,48 @@ void main() {
           },
         ),
         returnsNormally,
+      );
+    });
+  });
+
+  group('finding 3 (review of 53aeb3f): extraFields is a defensive, '
+      'unmodifiable copy, so neither the caller\'s original map nor the '
+      'exposed field can corrupt the envelope after construction-time '
+      'validation already passed', () {
+    test(
+      "mutating the caller's original map after construction does not "
+      'change exception.extraFields',
+      () {
+        final fields = <String, dynamic>{'checks': 'ok'};
+        final error = CommandException(
+          id: 'x',
+          message: 'm',
+          exitCode: 1,
+          extraFields: fields,
+        );
+
+        fields['id'] = null;
+        fields['message'] = <Object?>[];
+
+        expect(error.extraFields, {'checks': 'ok'});
+      },
+    );
+
+    test('exception.extraFields itself is unmodifiable', () {
+      final error = CommandException(
+        id: 'x',
+        message: 'm',
+        exitCode: 1,
+        extraFields: {'checks': 'ok'},
+      );
+
+      expect(
+        () => error.extraFields!['checks'] = 'tampered',
+        throwsUnsupportedError,
+      );
+      expect(
+        () => error.extraFields!['new'] = 'value',
+        throwsUnsupportedError,
       );
     });
   });
