@@ -2,9 +2,14 @@ import 'dart:async';
 
 import 'command_exception.dart';
 
-/// One dispatch level's own recorded outcome: what [InvocationOutcome]
-/// keeps a stack of, one frame per nested `next()` call (round-8 review
-/// finding 2).
+/// One dispatch level's own recorded outcome. Round-10 review finding 1
+/// replaces the round-8 fix's shared, mutable frame stack (one push per
+/// nested `next()` call, one pop to fold it back) with frames addressed
+/// through a [Zone] instead: a frame is now just a plain value object, and
+/// which one is "current" is decided by which zone the currently running
+/// code was scheduled from, not by a stack pointer that any nested call can
+/// move out from under a still-suspended caller. See [InvocationOutcome] for
+/// why that distinction matters.
 class _OutcomeFrame {
   CommandException? error;
   bool jsonMode = false;
@@ -16,6 +21,17 @@ class _OutcomeFrame {
   /// this frame yet.
   int recordedAt = 0;
 }
+
+/// A snapshot of one [_OutcomeFrame], handed back across the boundary
+/// [InvocationOutcome.runAttempt] returns through: callers outside this
+/// library see this record, never the private frame object itself.
+typedef RecordedOutcome = ({
+  CommandException error,
+  bool jsonMode,
+  String? extraText,
+  Map<String, dynamic>? extraJson,
+  int recordedAt,
+});
 
 /// The invocation-local record of "what error, if any, should this
 /// [run] call render", carried through a [Zone] rather than kept on
@@ -46,108 +62,140 @@ class _OutcomeFrame {
 /// (`beginInvocationAttempt`, round-7's own fix) but that reset could not
 /// tell "a superseded downstream attempt" apart from "the enclosing
 /// middleware's own error, recorded before it even called `next()`", and
-/// erased both alike. [InvocationOutcome] is now a stack of frames, one per
-/// nested dispatch level: [pushFrame], called right before a middleware's
-/// wrapped `next` actually runs, starts that downstream attempt with a
-/// clean frame of its own; [popFrame], called once that attempt returns,
-/// folds it back into the frame below, overwriting the enclosing level's
-/// own recorded error only when the downstream frame actually recorded one
-/// itself, and leaving the enclosing level's own error untouched otherwise.
-/// [error], [jsonMode], [extraText] and [extraJson] always read and write
-/// the current top frame, so every existing call site keeps working
-/// unchanged.
+/// erased both alike. A stack of frames, one per nested dispatch level,
+/// fixed that (round-8 through round-9's own fixes, superseded below).
+///
+/// Round-10 review finding 1: that frame stack was still one shared,
+/// mutable object, addressed by a "topmost frame" pointer that a nested
+/// `next()` call moved by calling [pushFrame] synchronously, before its own
+/// first `await`. A middleware that starts `pending = next(req)` without
+/// awaiting it yet, then records its own error in that same synchronous
+/// continuation (a legitimate, supported pattern: recording does not
+/// require awaiting first), was recording into whatever the topmost frame
+/// happened to be at that instant, the freshly pushed downstream frame,
+/// not its own. A later silent retry then folded that downstream frame
+/// away as "nothing recorded this attempt", discarding the middleware's own
+/// recording along with it: no envelope at all.
+///
+/// The fix drops the shared stack entirely. There is no "topmost frame"
+/// lookup left anywhere in this file: [error], [jsonMode], [extraText],
+/// [extraJson] and [recordedAt] all resolve "the current frame" through
+/// [Zone.current], and the only code that ever introduces a new frame is
+/// [runAttempt], called once per `next()` attempt, which runs its body
+/// inside a freshly zoned frame reachable for that attempt's whole dynamic
+/// extent, including every `await` inside it and every further nested
+/// middleware or handler it goes on to call. Code that is not running
+/// inside some attempt's zone (a middleware's own continuation, before its
+/// first `next()` call, between two of them, after the last one, or purely
+/// concurrently while one is still pending) resolves to whichever frame was
+/// already ambient before that attempt started: its own enclosing level's
+/// frame, exactly the one its caller will read once it returns. A
+/// concurrent recording from the middleware's own code and one from a
+/// pending attempt can therefore never collide: each lands in its own,
+/// separately addressed slot, and [runAttempt]'s caller decides which one
+/// to keep by comparing [RecordedOutcome.recordedAt], the same "later
+/// sequence number wins" rule [ModularCli.use] already applied before this
+/// fix, now applied to two slots that can no longer be confused with one
+/// another no matter how the two attempts interleave.
 class InvocationOutcome {
-  final List<_OutcomeFrame> _frames = [_OutcomeFrame()];
-
-  _OutcomeFrame get _top => _frames.last;
+  final _OutcomeFrame _baseFrame = _OutcomeFrame();
 
   /// Monotonically increasing across the whole invocation, bumped once per
   /// [recordInvocationError] call, whichever frame it lands on: the one
-  /// thing a flat "last write wins" outcome cannot tell apart is *which* of
-  /// two recordings, made at different dispatch levels and folded back up
-  /// through possibly several [popFrame] calls, actually happened more
-  /// recently. This counter is what [ModularCli.use] compares its own two
-  /// slots, `own` and `downstream`, by (round-9 review finding 1).
+  /// thing that lets two recordings, made in two different frames that
+  /// never see each other, still be compared by "which happened more
+  /// recently". This is what [ModularCli.use] compares its own recording
+  /// against a completed attempt's by (round-9 review finding 1, still true
+  /// after round-10's fix).
   int _versionCounter = 0;
+
+  /// The frame current code resolves to: whatever [runAttempt] most
+  /// recently bound in the zone this call is running in, or [_baseFrame]
+  /// when nothing has (code running directly inside the zone
+  /// [runWithInvocationOutcome] established, with no attempt in progress).
+  _OutcomeFrame get _frame =>
+      (Zone.current[_currentFrameKey] as _OutcomeFrame?) ?? _baseFrame;
 
   /// The most recently recorded error, or `null` when nothing has been
   /// recorded yet at this dispatch level (or a later recording overwrote
   /// it, see [recordInvocationError]).
-  CommandException? get error => _top.error;
-  set error(CommandException? value) => _top.error = value;
+  CommandException? get error => _frame.error;
+  set error(CommandException? value) => _frame.error = value;
 
   /// The output mode the request that recorded [error] was running under.
   /// Meaningless while [error] is `null`.
-  bool get jsonMode => _top.jsonMode;
-  set jsonMode(bool value) => _top.jsonMode = value;
+  bool get jsonMode => _frame.jsonMode;
+  set jsonMode(bool value) => _frame.jsonMode = value;
 
   /// Extra text-mode-only text to render after [error] (a shortcut or
   /// route's own contract, offered as the "you were one flag away"
   /// context [ModuleBuilder] adds in text mode). Always cleared when a new
   /// error is recorded, so it can never end up attached to a different
   /// error than the one it was recorded for.
-  String? get extraText => _top.extraText;
-  set extraText(String? value) => _top.extraText = value;
+  String? get extraText => _frame.extraText;
+  set extraText(String? value) => _frame.extraText = value;
 
   /// Extra JSON-mode-only fields merged into the rendered `"error"`
   /// object, alongside [CommandException.toJson]'s own
   /// `id`/`message`/`exitCode`/`details` (a rejection's own `contract`,
   /// for instance). Always cleared when a new error is recorded, for the
   /// same reason [extraText] is.
-  Map<String, dynamic>? get extraJson => _top.extraJson;
-  set extraJson(Map<String, dynamic>? value) => _top.extraJson = value;
+  Map<String, dynamic>? get extraJson => _frame.extraJson;
+  set extraJson(Map<String, dynamic>? value) => _frame.extraJson = value;
 
-  /// The sequence number [error] was last recorded at, at the current top
-  /// frame: 0 when nothing has been recorded into this frame (an empty base
-  /// frame, or a frame a [popFrame] found nothing to fold in). A caller
-  /// that keeps its own snapshot of [error] alongside the value this
-  /// returned at the time it copied it can later tell whether a newer
-  /// recording has since happened elsewhere, without having to compare the
-  /// [CommandException] values themselves (round-9 review finding 1).
-  int get recordedAt => _top.recordedAt;
+  /// The sequence number [error] was last recorded at, at the current
+  /// frame: 0 when nothing has been recorded into it. A caller that keeps
+  /// its own snapshot of [error] alongside the value this returned at the
+  /// time it copied it can later tell whether a newer recording has since
+  /// happened elsewhere, without having to compare the [CommandException]
+  /// values themselves (round-9 review finding 1).
+  int get recordedAt => _frame.recordedAt;
+  set recordedAt(int value) => _frame.recordedAt = value;
 
-  /// Sets the current top frame's recorded sequence number directly,
-  /// without bumping [_versionCounter]: used to fold a previously computed
-  /// winner (whichever of two slots [ModularCli.use] decided was more
-  /// recent) back into the outcome, keeping its original sequence number so
-  /// an enclosing middleware's own comparison stays correct.
-  set recordedAt(int value) => _top.recordedAt = value;
-
-  /// Starts a fresh, empty frame for a downstream dispatch attempt about to
-  /// run (a middleware's wrapped `next()` call): see [popFrame].
-  void pushFrame() => _frames.add(_OutcomeFrame());
-
-  /// Ends the frame the matching [pushFrame] started, and reports whether
-  /// it recorded an error of its own. When it did, the frame below (now
-  /// the top of the stack again) is overwritten with its `error`,
-  /// `jsonMode`, `extraText` and `extraJson`. When it did not, the frame
-  /// below is left completely untouched by this call: what "preserved"
-  /// means in that case is a call-site decision, not this class's (see
-  /// [ModularCli.use], which restores its own pre-`next()` baseline rather
-  /// than leaving behind whatever a previous, superseded attempt at the
-  /// same dispatch level already merged in).
-  bool popFrame() {
-    if (_frames.length < 2) {
-      throw StateError(
-        'popFrame() called with no matching pushFrame(): the outcome '
-        'frame stack must never drop below its base frame.',
+  /// Runs [body] as one middleware `next()` attempt, isolated in a frame of
+  /// its own for that attempt's whole dynamic extent (round-10 review
+  /// finding 1): a recording made anywhere inside [body], directly or
+  /// through any further nested middleware or handler it calls, lands in
+  /// that frame, addressed through the [Zone] [body] runs in, never in
+  /// whatever frame happens to be current outside it. [onSettled] is called
+  /// exactly once, whether [body] returns or throws, with a snapshot of
+  /// that frame (`null` when nothing was recorded into it) so the caller
+  /// can decide what to do with it; nothing is folded anywhere
+  /// automatically, unlike the round-8 through round-9 [popFrame] this
+  /// replaces.
+  Future<T> runAttempt<T>(
+    Future<T> Function() body, {
+    required void Function(RecordedOutcome? recorded) onSettled,
+  }) async {
+    final frame = _OutcomeFrame();
+    try {
+      return await runZoned(body, zoneValues: {_currentFrameKey: frame});
+    } finally {
+      final recordedError = frame.error;
+      onSettled(
+        recordedError == null
+            ? null
+            : (
+                error: recordedError,
+                jsonMode: frame.jsonMode,
+                extraText: frame.extraText,
+                extraJson: frame.extraJson,
+                recordedAt: frame.recordedAt,
+              ),
       );
     }
-    final finished = _frames.removeLast();
-    if (finished.error == null) return false;
-    _top
-      ..error = finished.error
-      ..jsonMode = finished.jsonMode
-      ..extraText = finished.extraText
-      ..extraJson = finished.extraJson
-      ..recordedAt = finished.recordedAt;
-    return true;
   }
 }
 
 /// Zone key for the current invocation's [InvocationOutcome]. Private so
 /// nothing outside this library can read or forge a zone value under it.
 final Object _invocationOutcomeKey = Object();
+
+/// Zone key for the frame current code should read and write, bound only by
+/// [InvocationOutcome.runAttempt] (round-10 review finding 1). Absent
+/// outside any attempt, in which case [InvocationOutcome._frame] falls back
+/// to the invocation's base frame.
+final Object _currentFrameKey = Object();
 
 /// Runs [body] inside a fresh [Zone] carrying its own, new
 /// [InvocationOutcome], reachable through [currentInvocationOutcome] for the
@@ -198,13 +246,12 @@ InvocationOutcome currentInvocationOutcome() {
 /// exit code is nonzero and, only then, renders whichever error was
 /// recorded last.
 ///
-/// "Last recorded wins" is exactly "the outermost one wins": nested
-/// middleware boundaries unwind innermost first, so an inner failure
-/// recorded here and later escalated by an outer boundary is overwritten
-/// by the outer's own call before [ModularCli.run] ever reads it, and an
-/// inner failure an outer boundary instead recovers from (returning 0) is
-/// simply never read at all, since [ModularCli.run] only renders when the
-/// final exit code is nonzero.
+/// Writes into whichever frame [Zone.current] resolves to (round-10 review
+/// finding 1): code running inside a [InvocationOutcome.runAttempt] call
+/// records into that attempt's own frame; code running outside any of them
+/// records into whatever frame was already ambient there, so a middleware's
+/// own recording and a pending attempt's downstream recording can never
+/// land in the same slot regardless of which one happens first.
 void recordInvocationError(CommandException error, {required bool jsonMode}) {
   final outcome = currentInvocationOutcome();
   outcome.error = error;

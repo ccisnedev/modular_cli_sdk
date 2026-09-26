@@ -621,9 +621,10 @@ class ModuleBuilder {
       // Round-8 review finding 2: this handler no longer resets the
       // recorded-error slot itself. Whenever it runs behind a middleware
       // (ModularCli.use()), that middleware's own guarded `next()` already
-      // pushed a fresh InvocationOutcome frame right before calling into
-      // here, so this handler always starts clean regardless of any
-      // retry; with no middleware at all, it runs in the base frame
+      // runs it inside a fresh InvocationOutcome frame of its own
+      // (InvocationOutcome.runAttempt, round-10 review finding 1's own
+      // zone-based fix), so this handler always starts clean regardless of
+      // any retry; with no middleware at all, it runs in the base frame
       // ModularCli.run()'s own runWithInvocationOutcome() call created
       // fresh for this dispatch. Either way, a superseded retry's error
       // cannot outlive it: only what this attempt itself goes on to
