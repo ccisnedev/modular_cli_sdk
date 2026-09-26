@@ -488,15 +488,12 @@ class ModularCli {
   /// text) the request that recorded it was running under.
   Future<int> run(List<String> args, {io.IOSink? stdout, io.IOSink? stderr}) {
     return runWithInvocationOutcome(() async {
-      // Read before [_registerHelpCommand] runs, deliberately: that call
-      // always ensures *some* `help` command exists by the time dispatch
-      // happens below (a developer's own, or the SDK's own auto-registered
-      // default when none exists), so this is the only point left where a
-      // CLI that registered its own `help` can still be told apart from
-      // one relying purely on the SDK's default (round-12 review
-      // finding 2).
-      final hasCustomHelp = _catalog.forName('help') != null;
-      _registerHelpCommand();
+      // Round-13 review findings 1 and 2: [_resolveHelpProvenance] is
+      // memoized, resolved once no matter how many times [run] itself is
+      // called. See its own doc comment for why re-deriving this per call,
+      // straight off [_catalog], was wrong on both counts round 12 left in
+      // place.
+      final helpProvenance = _resolveHelpProvenance();
       final out = stdout ?? io.stdout;
       final err = stderr ?? io.stderr;
 
@@ -527,17 +524,20 @@ class ModularCli {
       // The fix is a real, three-way, declared order: a root route or
       // root shortcut, when either is registered, answers the bare
       // invocation exactly as any other invocation of it would (dispatch
-      // continues below, `args` unchanged); otherwise a `help` command
-      // registered before this call answers it instead (dispatch
+      // continues below, `args` unchanged); otherwise a `help` command,
+      // developer route or developer shortcut alike, registered before
+      // this call ever ran (round-13: [_HelpProvenance.developerRoute] or
+      // [_HelpProvenance.developerShortcut]) answers it instead (dispatch
       // continues below with `['help']`, the very same word the router
       // would resolve to for anyone typing it themselves); and only when
-      // neither exists at all does this fall back to printing the
-      // built-in catalog directly, exactly as before.
+      // neither exists at all ([_HelpProvenance.builtin]) does this fall
+      // back to printing the built-in catalog directly, exactly as
+      // before.
       final hasRootRegistration =
           _catalog.forRoute('') != null ||
           _shortcutContractsByExactRoute.containsKey('');
       final dispatchArgs = args.isEmpty && !hasRootRegistration
-          ? (hasCustomHelp ? const ['help'] : null)
+          ? (helpProvenance == _HelpProvenance.builtin ? null : const ['help'])
           : args;
 
       if (dispatchArgs == null) {
@@ -572,22 +572,74 @@ class ModularCli {
     });
   }
 
-  /// Help must be reachable out of the box, unless the developer wrote their
-  /// own `help`, in which case theirs is the CLI's help, everywhere.
+  /// Where this CLI's own `help` command comes from: a developer's own
+  /// ordinary route, a developer's own shortcut, or the SDK's own
+  /// built-in default. An enum, not a boolean inferred from the catalog
+  /// (round-13 review findings 1 and 2): re-deriving "is `help` a
+  /// developer's own" straight off [_catalog] on every [run] call cannot
+  /// tell a developer's own route apart from the built-in default once
+  /// that default has itself been registered into the very same catalog,
+  /// and cannot see a developer's own shortcut at all, since a shortcut is
+  /// deliberately never given a catalog entry (see
+  /// [_shortcutContractsByExactRoute]'s own doc comment).
+  _HelpProvenance? _helpProvenance;
+
+  /// Resolves [_helpProvenance], registering the SDK's own built-in
+  /// `help` command the first, and only, time neither a developer route
+  /// nor a developer shortcut named `help` already exists. Memoized:
+  /// every call after the first returns the very same value, however many
+  /// times [run] itself is called and however many routes the built-in
+  /// registration eventually adds to the catalog.
+  ///
+  /// Round-13 review finding 1: a shortcut named `help`
+  /// (`shortcut('help', target: 'manual', ...)`) is mounted straight onto
+  /// the router (see [ModuleBuilder.shortcut]), occupying the exact trie
+  /// position the built-in `help *` registration below would also claim,
+  /// but, by design, it is never given a [_catalog] entry, so the old
+  /// catalog-only check (`_catalog.forName('help') != null`) could never
+  /// see it: it registered the built-in default over it regardless, and
+  /// the very first [run] call threw once the router refused the
+  /// resulting conflicting registration. Checking
+  /// [_shortcutContractsByExactRoute] too closes that gap.
+  ///
+  /// Round-13 review finding 2: the old check ran again on every [run]
+  /// call, reading straight off [_catalog], which the built-in
+  /// registration itself mutates the first time it runs; from the second
+  /// [run] call on, the check found its own earlier registration and
+  /// mistook it for a developer's own route, taking a different dispatch
+  /// path (through the router, and whatever middleware sits in front of
+  /// it) than the very first call did (straight to the built-in catalog
+  /// printer, no middleware at all) for the exact same bare invocation on
+  /// the exact same instance, silently flipping success into failure
+  /// whenever a middleware in front of the router happened to fail.
+  /// Resolving once, and caching what was resolved before either
+  /// registration can influence a later check, keeps every call's answer
+  /// identical.
   ///
   /// It is a query: it reads the catalog and answers. Registered with a
   /// trailing wildcard so a focus (`help math add`) is collected as [rest]
   /// rather than having to be a declared positional.
-  void _registerHelpCommand() {
-    if (_catalog.forName('help') != null) return;
+  _HelpProvenance _resolveHelpProvenance() {
+    final cached = _helpProvenance;
+    if (cached != null) return cached;
 
-    query<HelpInput, HelpOutput>(
-      'help *',
-      (req) => HelpQuery(HelpInput(_catalog, focus: req.rest)),
-      globals: true,
-      contract: CliContract.none,
-      description: 'Show the commands this CLI accepts',
-    );
+    final _HelpProvenance resolved;
+    if (_catalog.forName('help') != null) {
+      resolved = _HelpProvenance.developerRoute;
+    } else if (_shortcutContractsByExactRoute.containsKey('help')) {
+      resolved = _HelpProvenance.developerShortcut;
+    } else {
+      resolved = _HelpProvenance.builtin;
+      query<HelpInput, HelpOutput>(
+        'help *',
+        (req) => HelpQuery(HelpInput(_catalog, focus: req.rest)),
+        globals: true,
+        contract: CliContract.none,
+        description: 'Show the commands this CLI accepts',
+      );
+    }
+    _helpProvenance = resolved;
+    return resolved;
   }
 
   // ── Help precedence on a rejected invocation ──────────────────────────────
@@ -1215,4 +1267,20 @@ class ModularCli {
     }
     sink.writeln(HelpRenderer(_catalog).renderCatalog());
   }
+}
+
+/// Where a [ModularCli]'s own `help` command comes from, resolved exactly
+/// once by [ModularCli._resolveHelpProvenance]. See that method's own doc
+/// comment for round-13 review findings 1 and 2, which this replaces a
+/// per-[ModularCli.run]-call boolean check with.
+enum _HelpProvenance {
+  /// A developer registered an ordinary route named `help` themselves.
+  developerRoute,
+
+  /// A developer registered a shortcut named `help` themselves.
+  developerShortcut,
+
+  /// Neither exists: the SDK's own built-in default was registered
+  /// instead, the one time this resolved.
+  builtin,
 }
