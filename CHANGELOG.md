@@ -341,6 +341,41 @@ rejected. No bug or missing API was found in it while building this one.
   register two routes that disagree on the name of a positional they share
   a trie slot with); when more than one candidate still declares that name,
   the router's own rejection is kept unchanged, never resolved to a guess
+- **A middleware's own recorded error and its latest downstream attempt's
+  outcome are now two independent slots, not one shared value.** A
+  middleware that awaits a first `next()` attempt, records its own error
+  after that attempt fails, then awaits a second, silent retry, previously
+  lost its own recording: the retry's clean baseline overwrote it even
+  though nothing new was ever recorded during the retry itself. Each
+  middleware wrapper now tracks its own recording and its latest completed
+  downstream attempt separately, each stamped with a monotonically
+  increasing sequence number bumped on every recording anywhere in the
+  invocation, and renders whichever of the two is strictly more recent
+  after every attempt and once the middleware itself returns
+- **Calling `next()` again before a middleware's previous `next()` call has
+  completed is now a `StateError` naming the middleware's route, not a
+  silent race.** Two overlapping downstream attempts from the same
+  middleware invocation shared one frame stack with no way to tell which
+  attempt a given push or pop belonged to; this is a programming error, not
+  a retry pattern this SDK supports, so it is now rejected outright rather
+  than merged through a heuristic. Frames stay correctly isolated across
+  separate, unrelated `run()` calls made concurrently, as before
+- **`--help` resolution for an unresolved rejection now considers every
+  registered candidate sharing a name, not just the first one found, and
+  decides ambiguity only after filtering by the missing positional.** Two
+  distinct routes can share the exact same words-only name when one is a
+  strict prefix of the other's positionals (`s` and `s <id> <sub>` are both
+  named `s`); the catalog lookup `_applicableContractFor` used previously
+  returned only the first one registered, and a shortcut lookup sharing the
+  same prefix separately declared more than one candidate ambiguous before
+  ever checking whether only one of them still declares the positional the
+  rejection is actually missing. Both catalog and shortcut candidates
+  sharing a name or prefix are now collected into one list first; zero or
+  more than one candidate left after filtering by the missing positional's
+  name is reported as the router's own rejection, exactly one resolves.
+  `--help` on a rejection resolved this way to a single shortcut now
+  renders that shortcut's own contract, not a fallback catalog listing, the
+  same as an ordinary resolved route already does
 
 ### Notes
 

@@ -96,7 +96,8 @@ class ModuleBuilder {
   /// every other [ModuleBuilder] this SDK builds, so [ModularCli] can find
   /// exactly one shortcut's contract for a rejection that names a specific
   /// route, even though a shortcut is deliberately given no [_catalog]
-  /// entry of its own. See [ModularCli._shortcutContractFor].
+  /// entry of its own. See [ModularCli] (`_applicableContractFor`'s
+  /// [CliRejection.route]-named branch reads this map directly).
   ///
   /// A second shortcut registering under the same mounted router pattern
   /// as one already here is a registration error (round-6 review finding
@@ -114,7 +115,8 @@ class ModuleBuilder {
   /// `cli_router` never resolved a specific route at all. Several
   /// shortcuts can share a literal prefix (`s` and `s <id>` are both
   /// prefixed `s`), so this maps to every candidate registered under it,
-  /// not to one; [ModularCli._shortcutContractFor] reports back whether
+  /// not to one; [ModularCli] (`_applicableContractFor`) folds these
+  /// candidates in alongside the catalog's own and reports back whether
   /// exactly one candidate matched or several did, rather than an earlier
   /// design's single shared map silently letting the later registration
   /// overwrite the earlier one (round-6 review finding 4).
@@ -363,8 +365,9 @@ class ModuleBuilder {
     // the positional one's own prefix key were the same string).
     // [_shortcutContractsByPrefix] is not that kind of map: several
     // shortcuts legitimately share one literal prefix, so it collects
-    // every candidate under it, and [ModularCli._shortcutContractFor]
-    // decides, at lookup time, whether that is one candidate or several.
+    // every candidate under it, and [ModularCli] (`_applicableContractFor`)
+    // decides, at lookup time, whether that is one candidate or several,
+    // together with the catalog's own candidates under the same name.
     final mountedRouterPattern = _joinMounted(
       moduleName,
       routePattern.routerPattern,

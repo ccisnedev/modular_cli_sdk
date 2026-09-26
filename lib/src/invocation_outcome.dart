@@ -10,6 +10,11 @@ class _OutcomeFrame {
   bool jsonMode = false;
   String? extraText;
   Map<String, dynamic>? extraJson;
+
+  /// The sequence number [error] was recorded at (see
+  /// [InvocationOutcome.recordedAt]), 0 when nothing has been recorded into
+  /// this frame yet.
+  int recordedAt = 0;
 }
 
 /// The invocation-local record of "what error, if any, should this
@@ -56,6 +61,15 @@ class InvocationOutcome {
 
   _OutcomeFrame get _top => _frames.last;
 
+  /// Monotonically increasing across the whole invocation, bumped once per
+  /// [recordInvocationError] call, whichever frame it lands on: the one
+  /// thing a flat "last write wins" outcome cannot tell apart is *which* of
+  /// two recordings, made at different dispatch levels and folded back up
+  /// through possibly several [popFrame] calls, actually happened more
+  /// recently. This counter is what [ModularCli.use] compares its own two
+  /// slots, `own` and `downstream`, by (round-9 review finding 1).
+  int _versionCounter = 0;
+
   /// The most recently recorded error, or `null` when nothing has been
   /// recorded yet at this dispatch level (or a later recording overwrote
   /// it, see [recordInvocationError]).
@@ -83,6 +97,22 @@ class InvocationOutcome {
   Map<String, dynamic>? get extraJson => _top.extraJson;
   set extraJson(Map<String, dynamic>? value) => _top.extraJson = value;
 
+  /// The sequence number [error] was last recorded at, at the current top
+  /// frame: 0 when nothing has been recorded into this frame (an empty base
+  /// frame, or a frame a [popFrame] found nothing to fold in). A caller
+  /// that keeps its own snapshot of [error] alongside the value this
+  /// returned at the time it copied it can later tell whether a newer
+  /// recording has since happened elsewhere, without having to compare the
+  /// [CommandException] values themselves (round-9 review finding 1).
+  int get recordedAt => _top.recordedAt;
+
+  /// Sets the current top frame's recorded sequence number directly,
+  /// without bumping [_versionCounter]: used to fold a previously computed
+  /// winner (whichever of two slots [ModularCli.use] decided was more
+  /// recent) back into the outcome, keeping its original sequence number so
+  /// an enclosing middleware's own comparison stays correct.
+  set recordedAt(int value) => _top.recordedAt = value;
+
   /// Starts a fresh, empty frame for a downstream dispatch attempt about to
   /// run (a middleware's wrapped `next()` call): see [popFrame].
   void pushFrame() => _frames.add(_OutcomeFrame());
@@ -109,7 +139,8 @@ class InvocationOutcome {
       ..error = finished.error
       ..jsonMode = finished.jsonMode
       ..extraText = finished.extraText
-      ..extraJson = finished.extraJson;
+      ..extraJson = finished.extraJson
+      ..recordedAt = finished.recordedAt;
     return true;
   }
 }
@@ -180,6 +211,7 @@ void recordInvocationError(CommandException error, {required bool jsonMode}) {
   outcome.jsonMode = jsonMode;
   outcome.extraText = null;
   outcome.extraJson = null;
+  outcome.recordedAt = ++outcome._versionCounter;
 }
 
 /// Attaches [text] to the error most recently recorded by

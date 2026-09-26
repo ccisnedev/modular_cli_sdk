@@ -128,6 +128,17 @@ class CommandCatalog {
     return null;
   }
 
+  /// Every command registered under [name], in registration order: unlike
+  /// [forName], which answers a human's "how is `x` used" with the single
+  /// best match, this exposes every one, since two distinct routes can
+  /// share the exact same words-only name and differ only in how many
+  /// positionals follow it (`s` and `s <id> <sub>` are both named `s`,
+  /// positionals stripped). Callers that must not silently pick one of
+  /// several such routes use this instead of [forName] (round-9 review
+  /// findings 3 and 4).
+  List<CommandContract> allForName(String name) =>
+      _contracts.where((c) => c.name == name).toList();
+
   /// Every command registered under a module.
   List<CommandContract> forModule(String module) =>
       _contracts.where((c) => c.module == module).toList();

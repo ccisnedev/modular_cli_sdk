@@ -106,17 +106,21 @@ class ModularCli {
   /// [CliRejection.consumed] reports when `cli_router` never resolved a
   /// specific route at all. Several shortcuts can share one literal prefix
   /// (`s` and `s <id>` are both prefixed `s`), so this maps to every
-  /// candidate registered under it, and [_shortcutContractFor] reports
+  /// candidate registered under it, and [_applicableContractFor] reports
   /// back whether exactly one candidate matched or several did, rather
   /// than picking one arbitrarily (round-6 review finding 4) or letting
   /// `--help` win silently on an ambiguous partial match (round-6 review
   /// finding 6). See [ModuleBuilder.shortcut] for how both maps are kept
   /// in sync, including the empty-prefix fix (round-6 review finding 5).
   ///
-  /// Neither map is ever consulted by [_emitFocusedHelp] or
-  /// [_emitRejectionError]: a shortcut's own contract still never shows up
-  /// in help or a JSON error's `contract` field, exactly as documented on
-  /// [shortcut] itself.
+  /// [_emitRejectionError] never consults either map directly: a shortcut's
+  /// own contract still never shows up in a JSON error's `contract` field.
+  /// [_emitFocusedHelp] is different since round-9 review finding 4: it
+  /// renders whichever contract [_applicableContractFor] already resolved
+  /// through these maps, a shortcut's own included, once resolution settled
+  /// on exactly one candidate; only when nothing resolved (or resolution
+  /// stayed genuinely ambiguous) does it fall back to looking outside these
+  /// maps entirely, exactly as documented on [shortcut] itself.
   final Map<String, List<CommandContract>> _shortcutContractsByPrefix = {};
 
   /// Every registered route with its declared contract — the single source help
@@ -218,12 +222,16 @@ class ModularCli {
   /// never resolves, so no route handler ever runs), the focused help
   /// `--help` and a JSON error's `contract` field would otherwise fall
   /// back to is looked up from [CommandCatalog] alone, which a shortcut is
-  /// never in, so neither is available there; a caller is directed to
-  /// [target]'s own help instead (round-5 review finding 3: this is a
-  /// statement about that rejected-invocation fallback specifically, not
-  /// about a *resolved* shortcut invocation's own `--help`, which, like
-  /// any other resolved route, still answers with its own contract,
-  /// options and all; nothing in issue #27 says otherwise).
+  /// never in, so neither is available there by default; a caller is
+  /// directed to [target]'s own help instead (round-5 review finding 3).
+  /// This default still holds whenever resolution itself cannot settle on
+  /// this one shortcut: no route information reaches it at all, or more
+  /// than one candidate remains genuinely ambiguous. When resolution does
+  /// settle on exactly this shortcut, though (round-9 review finding 4),
+  /// `--help` answers with its own contract after all, the same as a
+  /// *resolved* shortcut invocation's own `--help` already does, like any
+  /// other resolved route, with its own contract, options and all; nothing
+  /// in issue #27 says otherwise.
   ///
   /// [contract] declares only options and constraints: a shortcut's
   /// positionals are taken from [target]'s own positional declarations,
@@ -326,58 +334,149 @@ class ModularCli {
   /// inside its own fresh [InvocationOutcome] frame
   /// ([InvocationOutcome.pushFrame], [InvocationOutcome.popFrame]).
   ///
-  /// This middleware's own baseline, whatever it recorded (directly, e.g.
-  /// via `output.writeError`) before its *first* call to `next()`, or
-  /// nothing, is captured exactly once, lazily, the first time the guarded
-  /// `next` runs. Every call after that reuses the very same baseline,
-  /// never a later one: a downstream attempt that records nothing of its
-  /// own restores the outcome to that original baseline, not to whatever a
-  /// previous, now-superseded attempt at this same dispatch level already
-  /// merged in. Without capturing it once up front this way, a retry
-  /// (calling `next` twice) whose first attempt fails and second attempt
-  /// succeeds silently would leave the first attempt's error behind: its
-  /// own pop would have already overwritten this middleware's baseline
-  /// with it, and merely "preserving whatever is currently there" on the
-  /// second, empty pop would preserve that stale value instead of clearing
-  /// it. A downstream attempt that does record its own error still
-  /// overwrites the outcome, exactly as before, so the invocation's actual
-  /// final attempt is always what ends up recorded.
+  /// Round-9 review finding 1: a single "baseline", captured once and
+  /// restored on every silent attempt, cannot tell apart two things this
+  /// middleware invocation can each record on its own timeline: what this
+  /// middleware records directly (`own`, e.g. via `output.writeError`, at
+  /// any point in its own code, before its first `next()` call, between two
+  /// of them, or after its last one) and the outcome of its latest
+  /// completed `next()` attempt (`downstream`, replaced by every new
+  /// attempt and cleared by a silent one). A baseline captured lazily on
+  /// the first `next()` call is blind to an `own` recording made *after*
+  /// that point, so a later silent retry wrongly restores the pre-attempt-1
+  /// baseline over it. The fix keeps `own` and `downstream` as two
+  /// completely independent slots and renders whichever was recorded more
+  /// recently, by [InvocationOutcome.recordedAt] (a sequence number bumped
+  /// once per [recordInvocationError] call across the whole invocation,
+  /// surviving [InvocationOutcome.popFrame] folds unchanged): a slot that
+  /// has never recorded anything (sequence number 0) never outranks the
+  /// other, no matter how long ago the other last changed.
+  ///
+  /// `captureOwn` runs right before every `next()` attempt and once more
+  /// after the whole wrapped handler returns (or throws): each time, it
+  /// checks whether [InvocationOutcome.recordedAt] has moved since the last
+  /// time this middleware looked, which can only mean this middleware's own
+  /// code recorded something directly (a nested `next()` attempt's own
+  /// recording is always already accounted for by `applyWinner`, below,
+  /// immediately after that attempt completes, which also advances the
+  /// sequence number this middleware has "seen").
+  ///
+  /// `applyWinner` writes the more recent of the two slots back into the
+  /// outcome (and its own [InvocationOutcome.recordedAt], so an enclosing
+  /// middleware's own comparison stays correct), or clears it to nothing
+  /// when neither slot has ever recorded anything, but only once this
+  /// middleware has actually engaged with `next()` at least once or
+  /// recorded an `own` error itself: a middleware that never calls `next()`
+  /// and never records anything of its own leaves whatever was already in
+  /// the outcome (from before this middleware ran) completely untouched.
+  ///
+  /// Round-9 review finding 2: calling `next()` again while a previous
+  /// `next()` call from this same middleware invocation has not yet
+  /// completed is a programming error, not a retry: it corrupts the shared
+  /// frame stack, since the two overlapping attempts would push and pop
+  /// against each other rather than each other's own isolated frame. This
+  /// throws a [StateError] naming the route, synchronously, before doing
+  /// anything else, rather than attempting to merge the two. Frames stay
+  /// isolated across separate, unrelated [run] calls exactly as before:
+  /// `inFlight` is a fresh local variable for every dispatch of this
+  /// middleware, one per request, reached only through this one closure.
   ModularCli use(CliMiddleware middleware) {
     _root.use((next) {
       return (req) async {
         final outcome = currentInvocationOutcome();
-        CommandException? baseError;
-        var baseJsonMode = false;
-        String? baseExtraText;
-        Map<String, dynamic>? baseExtraJson;
-        var baselineCaptured = false;
+
+        CommandException? ownError;
+        var ownJsonMode = false;
+        String? ownExtraText;
+        Map<String, dynamic>? ownExtraJson;
+        var ownSeq = 0;
+
+        CommandException? downError;
+        var downJsonMode = false;
+        String? downExtraText;
+        Map<String, dynamic>? downExtraJson;
+        var downSeq = 0;
+
+        var lastSeenSeq = outcome.recordedAt;
+        var everCalledNext = false;
+        var inFlight = false;
+
+        void captureOwn() {
+          final seq = outcome.recordedAt;
+          if (seq != 0 && seq != lastSeenSeq) {
+            ownError = outcome.error;
+            ownJsonMode = outcome.jsonMode;
+            ownExtraText = outcome.extraText;
+            ownExtraJson = outcome.extraJson;
+            ownSeq = seq;
+          }
+          lastSeenSeq = seq;
+        }
+
+        void applyWinner() {
+          if (ownSeq == 0 && downSeq == 0 && !everCalledNext) return;
+          final useOwn = downSeq == 0 || (ownSeq != 0 && ownSeq > downSeq);
+          if (useOwn) {
+            outcome.error = ownError;
+            outcome.jsonMode = ownJsonMode;
+            outcome.extraText = ownExtraText;
+            outcome.extraJson = ownExtraJson;
+            outcome.recordedAt = ownSeq;
+          } else {
+            outcome.error = downError;
+            outcome.jsonMode = downJsonMode;
+            outcome.extraText = downExtraText;
+            outcome.extraJson = downExtraJson;
+            outcome.recordedAt = downSeq;
+          }
+        }
 
         Future<int> guardedNext(CliRequest guardedReq) async {
-          if (!baselineCaptured) {
-            baseError = outcome.error;
-            baseJsonMode = outcome.jsonMode;
-            baseExtraText = outcome.extraText;
-            baseExtraJson = outcome.extraJson;
-            baselineCaptured = true;
+          if (inFlight) {
+            throw StateError(
+              "next() was called again for route '${req.route.pattern}' "
+              "before this middleware's previous next() call for the same "
+              'route had completed: overlapping next() calls from the same '
+              'middleware invocation are not supported, retry them one '
+              'after another instead.',
+            );
           }
+          inFlight = true;
+          everCalledNext = true;
+          captureOwn();
           outcome.pushFrame();
           try {
             return await next(guardedReq);
           } finally {
-            if (!outcome.popFrame()) {
-              outcome.error = baseError;
-              outcome.jsonMode = baseJsonMode;
-              outcome.extraText = baseExtraText;
-              outcome.extraJson = baseExtraJson;
+            if (outcome.popFrame()) {
+              downError = outcome.error;
+              downJsonMode = outcome.jsonMode;
+              downExtraText = outcome.extraText;
+              downExtraJson = outcome.extraJson;
+              downSeq = outcome.recordedAt;
+            } else {
+              downError = null;
+              downJsonMode = false;
+              downExtraText = null;
+              downExtraJson = null;
+              downSeq = 0;
             }
+            lastSeenSeq = downSeq;
+            applyWinner();
+            inFlight = false;
           }
         }
 
         try {
           final wrapped = middleware(guardedNext);
-          return await wrapped(req);
+          final result = await wrapped(req);
+          captureOwn();
+          applyWinner();
+          return result;
         } on CommandException catch (e) {
           recordInvocationError(e, jsonMode: req.flagBool('json'));
+          captureOwn();
+          applyWinner();
           return e.exitCode;
         }
       };
@@ -572,10 +671,15 @@ class ModularCli {
       // A shortcut route has no catalog entry (by design: see [shortcut]'s
       // doc comment), so _contractFor() alone cannot see it, and this
       // check would otherwise be silently skipped for one.
-      // _shortcutContractFor() is consulted only here, as a fallback:
-      // _emitFocusedHelp() below still resolves help from _contractFor()
-      // alone, so a shortcut's own contract still never appears in help or
-      // a JSON error's `contract` field (round-4 review finding 1).
+      // _applicableContractFor() considers a shortcut's own contract here,
+      // and, since round-9 review finding 4, this same resolved contract is
+      // what _emitFocusedHelp() below actually renders: once resolution has
+      // picked exactly one candidate (a shortcut among them, possibly), its
+      // own help is the honest answer to "what does --help mean here",
+      // superseding round-4 review finding 1's older rule of never showing
+      // a shortcut's own contract, which only ever applied to the still
+      // genuinely ambiguous or unresolved cases (round-6 review finding 6),
+      // never to a case resolution has already disambiguated.
       //
       // Several shortcuts can share the literal prefix a rejection reports
       // (round-6 review finding 4): when they do, there is no one contract
@@ -597,21 +701,34 @@ class ModularCli {
           return e.exitCode;
         }
       }
-      return _emitFocusedHelp(rejection, out, jsonMode: jsonMode);
+      return _emitFocusedHelp(
+        rejection,
+        out,
+        jsonMode: jsonMode,
+        resolvedContract: contract,
+      );
     }
     return _emitRejectionError(rejection, jsonMode: jsonMode);
   }
 
-  /// Help for a rejection `--help` won: the most specific thing the router
-  /// could still identify (the command itself, then the module it belongs
-  /// to), then, when neither is known, the full catalog (narrowed to
-  /// completions of what was typed, exactly as the plain error path does).
+  /// Help for a rejection `--help` won: [resolvedContract], when
+  /// non-null, is what [_handleRejection] already resolved through
+  /// [_applicableContractFor] (a shortcut's own contract, possibly, once
+  /// round-9 review finding 4 disambiguated it down to exactly one
+  /// candidate), and is rendered as-is, no further lookup needed. Only
+  /// when it is null (nothing resolved, or [CliRejection.route] itself was
+  /// null with the rejection kind not even reaching resolution) does this
+  /// fall back to the most specific thing the router could still identify
+  /// on its own (the command itself, then the module it belongs to), then,
+  /// when neither is known, the full catalog (narrowed to completions of
+  /// what was typed, exactly as the plain error path does).
   int _emitFocusedHelp(
     CliRejection rejection,
     io.IOSink out, {
     required bool jsonMode,
+    CommandContract? resolvedContract,
   }) {
-    final contract = _contractFor(rejection);
+    final contract = resolvedContract ?? _contractFor(rejection);
     if (contract != null) {
       _writeHelp(
         out,
@@ -828,58 +945,12 @@ class ModularCli {
     return _catalog.forName(rejection.consumed.join(' '));
   }
 
-  /// The same lookup as [_contractFor], over [_shortcutContractsByExactRoute]
-  /// and [_shortcutContractsByPrefix] instead of [_catalog]: a shortcut's
-  /// own contract, keyed by both identities a [CliRejection] can report,
-  /// `route.pattern` and, when no specific route resolved, the literal
-  /// words already `consumed`, mount prefix included either way (round-5
-  /// review finding 1; [ModuleBuilder.shortcut] registers both keys). Used
-  /// only to validate a supplied option value before deciding whether
-  /// `--help` wins (round-4 review finding 1), never to choose what a
-  /// rejection's help or JSON `contract` field shows, which stays keyed off
-  /// [_catalog] alone, through [_contractFor].
-  ///
-  /// `route.pattern` names one specific route, so it is looked up in the
-  /// exact map alone: no ambiguity is possible there, by construction (a
-  /// second registration under the same mounted router pattern is a
-  /// build-time [ArgumentError], round-6 review finding 4).
-  ///
-  /// The literal-words fallback, by contrast, can have several shortcuts
-  /// registered under the very same prefix (`s` and `s <id>` both prefix to
-  /// `s`): [ambiguous] reports that case explicitly, rather than this
-  /// method picking one of the candidates arbitrarily or falling back to
-  /// `null` the way an empty result would (round-6 review findings 4
-  /// and 6). Unlike the old single-map lookup, an empty `consumed` (a
-  /// shortcut with no literal words at all, root or mounted) is not
-  /// special-cased away here: [ModuleBuilder._joinMounted] always produces
-  /// a key `cli_router` itself would report back, including the empty
-  /// string, so it must stay reachable (round-6 review finding 5).
-  ({CommandContract? contract, bool ambiguous}) _shortcutContractFor(
-    CliRejection rejection,
-  ) {
-    final route = rejection.route;
-    if (route != null) {
-      return (
-        contract: _shortcutContractsByExactRoute[route.pattern],
-        ambiguous: false,
-      );
-    }
-    final candidates = _shortcutContractsByPrefix[rejection.consumed.join(' ')];
-    if (candidates == null || candidates.isEmpty) {
-      return (contract: null, ambiguous: false);
-    }
-    if (candidates.length == 1) {
-      return (contract: candidates.single, ambiguous: false);
-    }
-    return (contract: null, ambiguous: true);
-  }
-
   /// The contract a rejection's own literal-words prefix should actually be
   /// validated and consulted against, when both an ordinary catalog route
   /// and a shortcut can answer to that same prefix at different positional
   /// depths (round-7 review finding 2).
   ///
-  /// [_contractFor] and [_shortcutContractFor]'s own literal-words fallback
+  /// [_contractFor] and the shortcut lookup's own literal-words fallback
   /// each match [CliRejection.consumed] on name alone, with no notion of how
   /// much further the invocation itself is still trying to go: an ordinary
   /// route `s`, no positionals, and a shortcut `s <id> <sub>` both answer to
@@ -904,8 +975,8 @@ class ModularCli {
   /// candidate that does is still viable. Exactly one still-viable
   /// candidate resolves unambiguously; zero or more than one (including
   /// both candidates still reaching for the same slot) is genuinely
-  /// ambiguous, and this reports that the same way [_shortcutContractFor]'s
-  /// own ambiguous case already does (round-6 review finding 6): the
+  /// ambiguous, and this reports that the same way the old shortcut lookup's
+  /// own ambiguous case already did (round-6 review finding 6): the
   /// router's own rejection, rather than guessing.
   ///
   /// [CliRejectionKind.incomplete] carries no such positional name
@@ -918,40 +989,61 @@ class ModularCli {
   /// itself resolved to: unambiguous by construction (a second registration
   /// under the same exact pattern is a build-time error, round-6 review
   /// finding 4), so none of this applies there.
+  ///
+  /// Round-9 review findings 3 and 4: when [CliRejection.route] is null,
+  /// this no longer asks [_contractFor] and the old shortcut-only lookup for
+  /// one answer each and compares those two. [_contractFor] looks up the
+  /// catalog by name and, like [CommandCatalog.forName], returns only the
+  /// first entry it finds, even when two distinct registered routes share
+  /// the exact same words-only name (`s` and `s <id> <sub>` are both named
+  /// `s`): the other one, possibly the only one still viable at the missing
+  /// positional, was never even considered. The old shortcut-only lookup had
+  /// the opposite problem: it declared more than one shortcut sharing a
+  /// prefix ambiguous immediately, before ever checking whether only one of
+  /// them still declares the missing positional.
+  ///
+  /// The fix collects every candidate first, every catalog entry sharing
+  /// the consumed words as its name ([CommandCatalog.allForName], not
+  /// [CommandCatalog.forName]) and every shortcut sharing the same literal
+  /// prefix, into one list, and only then decides: zero candidates is
+  /// nothing to answer with; exactly one is the unambiguous answer; more
+  /// than one is filtered by [CliRejection.argument], the exact positional
+  /// name the router itself is still stuck on
+  /// ([_declaresPositional]): a candidate that does not declare it has
+  /// already fallen out of the running. Exactly one survivor after that
+  /// filter resolves; zero or more than one (including no
+  /// [CliRejection.argument] to filter by at all, [CliRejectionKind.incomplete]'s
+  /// case) is genuinely ambiguous, reported the same way the old
+  /// shortcut-only lookup's own ambiguous case already was.
   ({CommandContract? contract, bool ambiguous}) _applicableContractFor(
     CliRejection rejection,
   ) {
-    final shortcutLookup = _shortcutContractFor(rejection);
-    if (shortcutLookup.ambiguous) return (contract: null, ambiguous: true);
-
-    final catalogContract = _contractFor(rejection);
-    final shortcutContract = shortcutLookup.contract;
-
-    if (rejection.route != null) {
+    final route = rejection.route;
+    if (route != null) {
+      final catalogContract = _catalog.forRoute(route.pattern);
+      final shortcutContract = _shortcutContractsByExactRoute[route.pattern];
       return (contract: catalogContract ?? shortcutContract, ambiguous: false);
     }
-    if (catalogContract == null || shortcutContract == null) {
-      return (contract: catalogContract ?? shortcutContract, ambiguous: false);
+
+    final consumedKey = rejection.consumed.join(' ');
+    final candidates = <CommandContract>[
+      if (rejection.consumed.isNotEmpty) ..._catalog.allForName(consumedKey),
+      ...?_shortcutContractsByPrefix[consumedKey],
+    ];
+
+    if (candidates.isEmpty) return (contract: null, ambiguous: false);
+    if (candidates.length == 1) {
+      return (contract: candidates.single, ambiguous: false);
     }
 
     final missingName = rejection.argument;
     if (missingName == null) return (contract: null, ambiguous: true);
 
-    final catalogStillViable = _declaresPositional(
-      catalogContract,
-      missingName,
-    );
-    final shortcutStillViable = _declaresPositional(
-      shortcutContract,
-      missingName,
-    );
-    if (catalogStillViable == shortcutStillViable) {
-      return (contract: null, ambiguous: true);
-    }
-    return (
-      contract: catalogStillViable ? catalogContract : shortcutContract,
-      ambiguous: false,
-    );
+    final viable = candidates
+        .where((c) => _declaresPositional(c, missingName))
+        .toList();
+    if (viable.length == 1) return (contract: viable.single, ambiguous: false);
+    return (contract: null, ambiguous: true);
   }
 
   bool _declaresPositional(CommandContract contract, String name) =>
