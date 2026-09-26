@@ -142,6 +142,27 @@ class RuntimeCliPluginHost implements CliPluginHost {
   }
 
   @override
-  List<T> contributions<T>(String extensionPointId) =>
-      (_contributions[extensionPointId] ?? const []).cast<T>();
+  List<T> contributions<T>(String extensionPointId) {
+    final declaredType = _extensionPointTypes[extensionPointId];
+    if (declaredType == null) {
+      throw CliPluginError(
+        'PLUGIN_EXTENSION_POINT_UNDECLARED',
+        'Plugin "${currentPluginId ?? '?'}" read contributions for '
+            'extension point "$extensionPointId", which no plugin declared.',
+        pluginId: currentPluginId,
+        resourceId: extensionPointId,
+      );
+    }
+    if (declaredType != T) {
+      throw CliPluginError(
+        'PLUGIN_EXTENSION_POINT_TYPE_MISMATCH',
+        'Plugin "${currentPluginId ?? '?'}" read contributions for '
+            'extension point "$extensionPointId" as $T, which was declared '
+            'for $declaredType.',
+        pluginId: currentPluginId,
+        resourceId: extensionPointId,
+      );
+    }
+    return List<T>.unmodifiable(_contributions[extensionPointId] ?? const []);
+  }
 }

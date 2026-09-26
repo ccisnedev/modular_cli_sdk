@@ -136,6 +136,18 @@ abstract class CliPluginHost {
 
   /// Every value contributed to the extension point [id], in the order the
   /// contributing plugins were set up.
+  ///
+  /// Throws [CliPluginError] (`PLUGIN_EXTENSION_POINT_UNDECLARED`) when [id]
+  /// was never declared, and (`PLUGIN_EXTENSION_POINT_TYPE_MISMATCH`) when
+  /// [T] does not match the type [id] was declared with, exactly as
+  /// [contribute] itself is checked: a caller cannot read back a wider or
+  /// unrelated type and reach a mutable, uncast-checked view of the real
+  /// backing list that way.
+  ///
+  /// The returned list is a defensive, unmodifiable snapshot, never the
+  /// live list every [contribute] call writes into: clearing, adding to or
+  /// removing from it throws [UnsupportedError] rather than corrupting or
+  /// erasing what another plugin contributed.
   List<T> contributions<T>(String extensionPointId);
 }
 
