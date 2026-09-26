@@ -411,6 +411,86 @@ A `help` command you register yourself always wins over the built-in one.
 
 ---
 
+## Plugins
+
+A `CliPlugin` registers routes the way `main()` does, but is written by
+someone who is not your CLI: a shared package that wants to add `version`,
+`doctor`, or an installer to whatever CLI depends on it, without that CLI
+hand-wiring the routes itself.
+
+```dart
+final cli = ModularCli(name: 'mycli', version: '1.4.0')
+  ..plugin(const VersionPlugin(version: '1.4.0'))
+  ..plugin(const DoctorPlugin())
+  ..plugin(InstallationPlugin(
+    config: CliInstallationConfig(
+      repository: 'you/mycli',
+      tagPrefix: 'cli-v',       // your app's own `v*` tags are left alone
+      executable: 'mycli',
+      alias: 'mc',
+      assets: {'linux': 'mycli-linux', 'macos': 'mycli-macos', 'windows': 'mycli-windows.exe'},
+    ),
+  ));
+
+final code = await cli.run(args); // buildPlugins() runs once, before routing
+```
+
+**A plugin declares what it needs, not where it must sit.** Its
+`CliPluginManifest` names an `id`, a `version`, the `hostApiVersion` it was
+built against, and which other plugin ids it `requires`. Plugins are ordered
+by that dependency graph before any `setup()` runs: `InstallationPlugin`
+contributes checks to `DoctorPlugin`'s extension point regardless of which
+one you called `.plugin()` on first, as long as it declares
+`requires: ['modular_cli.doctor']`.
+
+**The whole set builds, or none of it does.** A missing dependency, a cycle,
+two plugins sharing an `id`, or a `hostApiVersion` this host's plugin API does
+not satisfy is a `CliPluginError` thrown before any plugin's `setup()` runs,
+there is no state where half the plugins registered their routes and the rest
+did not.
+
+**Extension points are typed.** A plugin that wants other plugins to extend it
+calls `host.declareExtensionPoint<CliDoctorCheck>('doctor.checks')` once; a
+contributor calls `host.contribute<CliDoctorCheck>('doctor.checks', check)`.
+Contributing to an id nobody declared, or contributing the wrong type, is a
+build-time `CliPluginError`, not a silently-dropped value.
+
+### The three standard plugins
+
+| Plugin | Registers | Needs |
+| --- | --- | --- |
+| `VersionPlugin(version:)` | `version` | `ModularCli(name:, version:)`; must match |
+| `DoctorPlugin` | `doctor`, and the `doctor.checks` extension point | (none) |
+| `InstallationPlugin` | `upgrade`, `uninstall`; contributes 3 checks to `doctor.checks` | `DoctorPlugin`, a `CliInstallationConfig` |
+
+`doctor` runs every contributed `CliDoctorCheck` and reports them together. A
+run where nothing errored (warnings are fine) reports `{"checks": [...]}` on
+stdout and exits `ExitCode.ok`. A run where at least one check errored
+reports the single error shape instead, on stderr: `{"error": {"id":
+"doctor-check-failed", "message": "<n> check(s) failed: <names>",
+"exitCode": 78, "checks": [...]}}`, the `checks` array being every check's
+result, in run order, exactly as the success shape would have shown it, not
+only the failed ones. Text mode writes the same check lines, then the error
+line, both on stderr, nothing on stdout. `InstallationPlugin`'s three checks
+are `binary` (is `executable` on `PATH`), `alias` (does `alias`, if present,
+resolve to the same binary) and `release` (is a newer tagged release
+available), the first two error when wrong, the third only ever warns,
+including when the lookup itself fails.
+
+`upgrade` and `uninstall` are ordinary `Command`s: `--plan` shows what would
+happen, `--apply` (with approval, or `--autoapprove`) does it, and a step that
+fails stops the run at that step with nothing rolled back, the same contract
+every command in this SDK already has. Looking up the release happens before
+either flag is branched on, so a failed lookup reports
+`release-lookup-failed` and exits `1` under `--plan` too, not only `--apply`.
+
+Every network, filesystem and platform access `InstallationPlugin` makes goes
+through an injectable interface (`CliReleaseSource`, `CliDownloader`,
+`CliFileSystem`, `CliPlatform`), each with a real (`Http*`/`Io*`) default:
+pass your own in tests, and nothing downloads or touches a real install path.
+
+---
+
 ## Features
 
 - `Query<I, O>` — reads and answers; pure business logic, no I/O concerns
@@ -425,6 +505,8 @@ A `help` command you register yourself always wins over the built-in one.
 - A router-level rejection (unknown command, missing required option, and so on) is reported through the same JSON error envelope as a `CommandException`: `{"error": {"id", "message", "exitCode", ...}}`, with `contract` and `details` present only when they apply (see [Error handling](#error-handling))
 - `ModularCli` + `ModuleBuilder` — module registration and routing
 - Root routes — register without a module prefix via `cli.query()` / `cli.command()`
+- `CliPlugin` / `ModularCli.plugin()`: a package registers routes and extension-point contributions into a host CLI, ordered by declared dependencies and validated as a whole before any of it runs
+- Three standard plugins: `VersionPlugin`, `DoctorPlugin`, `InstallationPlugin` (`upgrade` / `uninstall` against tagged GitHub releases)
 - `--json` global flag — machine-readable JSON output
 - `--quiet` global flag — suppress informational messages
 - TTY detection — automatic format selection
@@ -518,6 +600,25 @@ A middleware registered through `ModularCli.use()` runs inside its own error
 boundary: a `CommandException` it throws is caught there and turned into this
 same envelope, honoring the resolved request's `--json` mode, instead of
 escaping `run()` as an uncaught exception.
+
+### InstallationPlugin error ids
+
+`upgrade` and `uninstall` report one of the ids below through `UpgradeOutput.errorId` /
+`UninstallOutput.errorId` (and as `"error"` under `--json`) whenever a step fails.
+Each row is what actually happens in `installation_plugin.dart`, not an aspiration.
+
+| id | reported when |
+| --- | --- |
+| `release-lookup-failed` | the release source could not be queried, a release's tag does not parse as semver once the tag prefix is stripped, no release with the configured tag prefix exists, or the latest release has no asset for the current platform |
+| `executable-check-failed` | resolving `config.executable` or `config.alias` on PATH itself threw, before it could even be determined whether either is present; or, after writing the downloaded executable, checking whether it actually ended up executable could not be answered at all (the checker itself failed to start, or exited with a code other than the one that means "not executable") |
+| `file-access-denied` | `config.executable` is not on PATH, a resolved PATH entry could not be canonicalized to an install target, or moving the running executable aside for `uninstall` failed |
+| `alias-hard-link-unsupported` | `config.alias` resolves to a hard link to the executable rather than a symlink, a shape this plugin will not create or rewrite |
+| `download-failed` | the release asset could not be downloaded, or an `--apply` run failed at a point where no `CliInstallStepFailure` was thrown (the default id for an otherwise-untyped step failure) |
+| `install-target-changed` | immediately before writing the downloaded binary, re-resolving `config.executable` no longer matches the target `--apply`'s own plan showed: it fell off PATH, now resolves elsewhere, or is no longer a plain file |
+| `cleanup-start-failed` | `uninstall` renamed the running executable aside successfully, but the worker process that deletes it once this process exits could not be started, did not confirm it was ready in time, never won the phase 1 claim over its own ready marker (it abandoned the claim, or the claim deadline passed first), or, having won that claim, never armed deletion before this process's own ack deadline passed, and this process's own revoke rename of the now-unclaimed accepted marker then succeeded cleanly. Arming is a second single-winner rename: the worker renames its accepted marker to armed only after seeing this process claim it, and this process reports `scheduled` only once it has observed that armed marker itself, through `pollForArm`. If the ack deadline passes first with no armed marker observed, this process attempts that revoke rename; a worker that loses it finds the revoked marker and exits without touching the target paths, so a claim alone is never enough to report success. The renamed file is left behind and named in the message so it can be removed by hand. Whenever this process's own attempt to remove the worker's now-unclaimed private temporary directory also fails, that failure is folded into the same message rather than reported separately. Once the worker does win the arming rename, removing the target paths and that directory becomes its own responsibility, not this process's, so a cleanup failure after arming is never reported this way. If the revoke rename instead keeps failing unexpectedly rather than resolving cleanly either way, `cleanup-outcome-unknown` is reported instead of this id; see that row |
+| `cleanup-outcome-unknown` | `uninstall` renamed the running executable aside successfully and this process's own claim over the worker's ready marker succeeded, but once the worker failed to arm deletion within the ack deadline, this process's own attempt to revoke that claim (renaming the accepted marker to revoked) kept failing with an unexpected error, such as a real sharing violation on the accepted marker, on every retry for the whole of a further, separate revoke deadline, without ever resolving into either an observed armed marker or a clean revoke. This is reported as its own distinct id rather than folded into `cleanup-start-failed`, because which side actually won is genuinely unknown: the worker may still be alive, may still win the arming rename once the failure clears, and may still delete the renamed file later. The message names the renamed file and the accepted marker path, and says not to delete the file by hand unless the worker is confirmed to no longer be running. Unlike every other id in this table, this one leaves the worker's private temporary directory in place rather than removing it: removing it here, while the worker might still be alive and using it, would only trade one race for another |
+
+Once the worker wins the arming rename, this process is no longer involved at all: the worker alone is now responsible for deleting the target paths and its own private directory, and it has no process left to report a later failure to. If deleting the target then fails on the worker's own side (the file is locked by something else at the moment the parent finally exits, say), nothing here surfaces that: there is no other process still running to receive a diagnostic from it, and no marker file anything reads after arming for it to write one into either. This is an accepted limitation of a worker that, by design, keeps running after every other process from this run has already exited, not a gap this project intends to close with a further diagnostic channel; a worker failure after arming is visible only as a renamed file that never disappeared.
 
 ---
 

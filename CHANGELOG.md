@@ -4,6 +4,535 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.7.0
+
+A CLI built on this SDK had no way to let another package add commands to it.
+Issue [#28](https://github.com/macss-dev/modular_cli_sdk/issues/28) asked for
+a plugin system and three standard plugins (`version`, `doctor` and an
+installer, `upgrade` / `uninstall`) built on it.
+
+### Added
+
+- **`CliPlugin`, `CliPluginHost`, `ModularCli.plugin()`.** A plugin declares a
+  `CliPluginManifest` (`id`, `version`, `hostApiVersion`, `requires`) and a
+  `setup(CliPluginHost host)` that registers routes and reads or contributes
+  to extension points. `ModularCli.plugin(...)` queues one; nothing runs until
+  `run()` (or `buildPlugins()`, for a test that wants the routes without
+  running) is called, once, ever, per `ModularCli`
+- **Dependency ordering, not registration order.** Plugins are topologically
+  sorted by `requires` before any `setup()` runs, so a plugin that contributes
+  to another plugin's extension point does not have to be registered after it,
+  only declared as requiring it. A cycle, a missing dependency, two plugins
+  sharing an `id`, or a `hostApiVersion` constraint this host's plugin API
+  (`cliPluginHostApiVersion`, currently `1.0.0`) does not satisfy all fail the
+  whole build before any plugin's `setup()` runs: there is no partially built
+  plugin set
+- **Extension points.** `host.declareExtensionPoint<T>(id)`,
+  `host.contribute<T>(id, value)`, `host.contributions<T>(id)`. Contributing to
+  an undeclared id, or contributing a value of the wrong `T`, is a build-time
+  `CliPluginError`: an extension point is typed, not a bag of `Object?`
+- **`CliPluginError`**: one exception for every build-time plugin failure
+  (`PLUGIN_DUPLICATE_ID`, `PLUGIN_DEPENDENCY_MISSING`,
+  `PLUGIN_DEPENDENCY_CYCLE`, `PLUGIN_INCOMPATIBLE_HOST_API`,
+  `PLUGIN_DUPLICATE_ROUTE`, `PLUGIN_EXTENSION_POINT_UNDECLARED`,
+  `PLUGIN_EXTENSION_POINT_TYPE_MISMATCH`), carrying `code`, `message`,
+  `pluginId` and, where relevant, `resourceId`
+- **`ModularCli(name:, version:)`**: a CLI's own identity, read back by
+  plugins through `CliPluginHost.metadata()`. Both or neither: a `name`
+  without a `version` (or vice versa) is an `ArgumentError`, not a half
+  identity a plugin might rely on
+- **`VersionPlugin`**: registers `version`, printing the host's `name` and
+  `version`. Reads `metadata()` at `setup()`, not inside the route handler, so
+  a host missing its identity fails while the plugin set is built rather than
+  on the first person who runs `version`
+- **`DoctorPlugin`**: registers `doctor`, running every `CliDoctorCheck`
+  contributed to `DoctorPlugin.extensionPoint` and reporting them together.
+  A check answers `ok`, `warning` or `error`; `doctor`'s exit code is
+  `ExitCode.configError` (78) if any check errored, `ExitCode.ok` otherwise,
+  a warning is visible but never fails the run
+- **`InstallationPlugin`**: configured with a `CliInstallationConfig`
+  (`repository`, `tagPrefix`, `executable`, `alias`, `assets`), it registers
+  `upgrade` and `uninstall` as `Command`s (so both are subject to
+  `--plan`/`--apply`/`--autoapprove` like any other command in this SDK) and
+  contributes three checks (`binary`, `alias`, `release`) to
+  `DoctorPlugin.extensionPoint`: it `requires: ['modular_cli.doctor']`.
+  `upgrade` looks up this repository's GitHub releases, keeps only tags
+  starting with `tagPrefix` (so an application's own `v*` tags and the CLI's
+  `cli-v*` tags coexist in one repository), picks the newest one newer than
+  the host's current version, downloads the asset named for the current
+  platform and installs it over whatever `executable` currently resolves to
+  on `PATH`. `uninstall` removes that binary, and the `alias` too but only
+  when it currently resolves to the same path, an alias pointing elsewhere,
+  or missing, is left alone. Every network, filesystem and platform access
+  (`CliReleaseSource`, `CliDownloader`, `CliFileSystem`, `CliPlatform`) is
+  behind an injectable interface with a `Http*`/`Io*` default, so the test
+  suite never downloads anything or touches a real install path
+
+### Fixed
+
+Review findings against issue #28, found before this release shipped.
+
+- **Self-upgrade no longer overwrites the running executable in place.**
+  `IoCliFileSystem.writeExecutable` now downloads to a temporary file beside
+  the destination, sets and verifies its permissions, then replaces the
+  destination the way each platform requires: `rename(2)` on POSIX (atomic,
+  and never disturbs a handle a running process still has open on the old
+  file, so it does not hit Linux's `ETXTBSY`), or the current target moved
+  aside first on Windows, before the new file takes its name
+- **PATH resolution now checks that a candidate can actually run.**
+  `resolveOnPath` skips a file that exists but is not executable: the POSIX
+  execute bit on Linux and macOS, `PATHEXT`-driven candidate extensions
+  (`.EXE`, `.CMD`, `.BAT`, `.COM` by default) on Windows
+- **`upgrade --apply` and `uninstall --apply` no longer hit the interactive
+  approval prompt.** Both commands now implement `SkipsInteractiveApproval`;
+  an explicit `--apply` on these routes is itself the authorization issue #28
+  asks for, so `ModuleBuilder` no longer prompts, and no longer refuses for
+  lack of a terminal, on either one
+- **A symlinked alias is compared by canonical identity, not by path
+  string.** `doctor`'s `alias` check and `uninstall` both canonicalize before
+  comparing, so a valid symlink alias no longer reports as an error, and
+  `uninstall` deletes the binary and a distinct alias path exactly once each,
+  never the same path twice
+- **`doctor`'s results are an ordered list, not a map keyed by name.** Two
+  checks sharing a name (or contributed by different plugins) are both kept,
+  in the order they ran; the exit code is computed from every result, not
+  from whichever happened to be written last under a shared key. The `--json`
+  shape is now `{"checks": [{"name", "status", "detail"}, ...]}`, per the
+  issue
+- **A check that throws no longer stops the rest.** `DoctorQuery.execute`
+  catches a failing check, records it as an `error` naming the reason, and
+  continues with the checks after it; `doctor` still exits
+  `ExitCode.configError` (78) when that happens
+- **Release lookup follows pagination.** `HttpCliReleaseSource.listReleases`
+  keeps following the response's `Link` header (`rel="next"`) instead of
+  reading only the first page of 30 releases, so a repository with more
+  releases than that no longer loses the older ones a `tagPrefix` search
+  might still need
+- **A tag matching `tagPrefix` that does not parse as semver is surfaced,
+  not skipped.** `latestTaggedRelease` now throws `CliInvalidReleaseTag`
+  naming the tag; `upgrade` fails with `release-lookup-failed` and exits 1,
+  and `doctor`'s `release` check reports it as a warning naming the tag,
+  instead of silently treating the release as absent
+- **`ModularCli.buildPlugins()` tracks success and failure separately.** A
+  second `run()` (or `buildPlugins()`) after a failed build rethrows the
+  stored failure instead of silently skipping validation and using a
+  half-built plugin set; `.plugin()` after either a successful or a failed
+  build throws `StateError`, instead of being accepted and never run
+- **The topological sort breaks ties by registration order.** (Superseded by
+  the Kahn's-algorithm rewrite below, which this same release also ships.)
+- **Declaring an extension point a second time is rejected outright.**
+  `host.declareExtensionPoint<T>(id)` now throws `CliPluginError` on any
+  second declaration of the same `id`, whether or not the second `T` matches
+  the first, before touching registry state; the type check on a duplicate
+  id was previously skipped
+- **`VersionPlugin(version: '0.8.0')` now compiles and reports that version.**
+  (Superseded below: `version` is now required, not a fallback.)
+- **The newer-release doctor warning names the corrective command.** The
+  `release` check's warning text now reads `A newer release is available:
+  <tag> (current: <version>). Run "<alias> upgrade --apply" to install it.`,
+  matching what issue #28 prescribes, rather than announcing the release
+  without saying what to do about it
+
+### Fixed (second review round)
+
+A second pass over #30 found 8 more issues, all against the same code this
+release already touched.
+
+- **A failed Windows self-replacing write no longer loses the installation.**
+  `writeExecutable` used to delete the previous executable's backup before
+  the final rename into place, so a rename failure left nothing at the
+  destination. The backup is now kept until that rename succeeds, and
+  restored from if it does not; the failure is still reported as
+  `file-access-denied` naming the reason
+- **`uninstall --apply` of the running executable on Windows no longer fails
+  outright.** Windows will not let a running executable delete itself, but it
+  will let one be renamed: the step now moves it to
+  `<name>.uninstall-<pid>.old` and starts a detached process that deletes
+  that file once this process exits, reporting explicitly (in both the step's
+  preview and its outcome) that removal is deferred rather than immediate.
+  Starting that detached process is not allowed to fail silently: if it
+  cannot be started, the step fails with `file-access-denied` naming the
+  file to delete by hand
+- **`uninstall` no longer deletes a target before its symlinked alias.** The
+  alias step is now queued before the executable's, and `delete` checks each
+  path's type without following links (`FileSystemEntity.typeSync(...,
+  followLinks: false)`), removing a link with `Link.delete()` rather than
+  `File.delete()`, which fails on a dangling symlink on Linux
+- **`upgrade` through a symlinked executable now replaces the binary, not the
+  link.** The install target is resolved (`canonicalize`) before planning,
+  and the resolved path, not the symlinked `PATH` entry, is what gets
+  written and what the plan reports; a resolution failure is reported as
+  `file-access-denied` instead of silently installing over the symlink
+- **`VersionPlugin`'s version is no longer a fallback.** `version` is now a
+  required constructor parameter, not an optional one read from host
+  metadata when absent. A `VersionPlugin` version that disagrees with
+  `ModularCli`'s own now fails at build time with `CliPluginError`
+  (`PLUGIN_VERSION_MISMATCH`), rather than one silently overriding the
+  other: a CLI has exactly one version
+- **The topological sort is Kahn-stable, not just tie-broken.** The previous
+  fix broke ties within a single plugin's own `requires` list, but a
+  depth-first visit can still order two plugins with no relationship to each
+  other out of registration order when they are reached through different
+  paths. `orderCliPlugins` now runs Kahn's algorithm directly: on every
+  round, scan every not-yet-ordered plugin, in registration order, and take
+  the first whose dependencies are all already ordered. Registering `a`
+  (`requires: ['c']`), `b` (independent) and `c`, in that order, now runs
+  `setup()` as `b`, `c`, `a`
+- **POSIX execute checks now ask "can the calling user run this," not "does
+  any execute bit exist."** `resolveOnPath` used to accept a file with any
+  execute bit set anywhere in its mode; it now looks up the file's owner and
+  the calling process's uid/gid (via `id -u`, `id -G` and `stat`) and checks
+  only the bit that actually governs this process: owner, group or other.
+  Mode `0641` (owner `rw-`, group `r--`, other `--x`), owned by the calling
+  user, is now correctly treated as not executable
+- **A hard-linked alias is now recognized as the same file as its target.**
+  `canonicalize` only resolves symlinks, so two hard-linked paths compared
+  that way still read as different files. `CliFileSystem` gained `sameFile`,
+  which falls back to `FileSystemEntity.identicalSync` after `canonicalize`
+  disagrees, and `doctor`'s `alias` check and `uninstall` both use it in
+  place of a bare `canonicalize` comparison
+
+### Fixed (third review round)
+
+A third pass over #30, against the same install/uninstall code.
+
+- **`canonicalize` no longer swallows a resolution failure.**
+  `IoCliFileSystem.canonicalize` used to catch every `FileSystemException`
+  from resolving symlinks and return the original path unchanged, so a
+  broken resolution looked identical to a successful no-op; a real symlinked
+  upgrade could silently write over the symlink itself instead of its
+  target once resolution started failing partway through. `canonicalize` is
+  now abstract with no such default, and lets the exception through;
+  `UninstallCommand.steps()` (which reaches it indirectly through
+  `sameFile`) now catches that failure explicitly and reports
+  `file-access-denied` instead of crashing as an unhandled exception
+- **Executability is now asked of the platform, not guessed from stat
+  bits.** `resolveOnPath` and `writeExecutable`'s permission verification
+  used to read and interpret POSIX mode bits and uid/gid by hand; they now
+  run a fixed, non-searched `test -x` (`/bin/test` on macOS, `/usr/bin/test`
+  on Linux) against the candidate and trust its exit code. Any exit code
+  other than 0 or 1, or the checker failing to start at all, is
+  `CliExecutableCheckFailure` rather than a guess, and is reported as
+  `executable-check-failed` from `upgrade`, `uninstall` and `doctor` rather
+  than being reported as the file simply not being found
+- **A hard-linked alias is rejected before anything changes, not rewritten.**
+  An alias that is a hard link to the executable, rather than a symlink, is
+  a shape this plugin will not create or update; it is now detected
+  (`sameFile` true, the raw paths unequal, `canonicalize` disagreeing) and
+  reported as `alias-hard-link-unsupported` in `doctor`'s `alias` check, at
+  `upgrade` plan time, and again inside `InstallExecutableStep` immediately
+  before the write
+- **`upgrade --apply` revalidates its install target immediately before
+  replacing it, not only when the plan was built.** `--apply` computes its
+  own plan, asks for approval, then executes within the same run; nothing
+  outside this run stops the target from changing in that window.
+  `InstallExecutableStep.perform` now re-resolves `config.executable` on
+  PATH and requires it still resolves to the exact target the plan showed,
+  and that the target is still a regular file, immediately before writing.
+  Any mismatch is reported as `install-target-changed` and nothing is
+  written; `--plan` already failed with the same typed error whenever the
+  target could not be resolved at all
+- **Windows self-uninstall's cleanup worker is redesigned around a real
+  process, not a broken Dart API.** The previous detached-process approach
+  (`ProcessStartMode.detachedWithStdio`) does not work on Windows: Windows
+  PowerShell's console host cannot run at all under the `DETACHED_PROCESS`
+  creation flag both `.detached` and `.detachedWithStdio` use, and exits
+  within milliseconds before doing anything (confirmed with `Get-Process`
+  never finding the reported pid), separately from the long-standing
+  `detachedWithStdio` I/O bug (dart-lang/sdk#35809). The worker is now
+  launched as `cmd.exe /d /c start "" /min <powershell.exe> -EncodedCommand
+  <script>` under `ProcessStartMode.normal`, the standard Windows job-object
+  breakaway: `start` hands the new process off outside the calling
+  `cmd.exe`'s own process tree, so it survives the launching process's exit
+  instead of being killed by that process's Windows Job Object, while still
+  giving PowerShell a real console. If the worker cannot be started, the
+  step still fails with `cleanup-start-failed`, as before, naming the
+  renamed file to delete by hand
+- **The cleanup worker no longer gives `cmd.exe` a caller-supplied path to
+  re-parse, and no longer leaks temporary files.** `cmd.exe` re-parses its
+  own command line with its own shell grammar on top of ordinary argv
+  quoting, so a `TEMP` directory containing `&`, `%`, `^` or similar could
+  previously break, or inject into, the launch by way of the worker
+  script's own path (`-File <script>`, built from `TEMP`). The worker's
+  fixed bootstrap script is now passed whole through `-EncodedCommand`
+  (Base64 UTF-16LE), so no path is ever on that command line at all: the
+  only run-specific value still there is the resolved `powershell.exe`
+  path, and it is checked to contain none of `cmd.exe`'s metacharacters
+  before use. The payload (the parent pid, the paths to delete, the
+  timeout) now travels as JSON through an environment variable instead of a
+  file: Windows PowerShell 5.1's `Get-Content` decodes a file without a BOM
+  using the system ANSI code page, silently corrupting a non-ASCII path,
+  while an environment variable is inherited through Windows' own
+  Unicode-safe environment block. The ready-marker file the worker creates
+  to signal it is alive now lives inside a private, randomly named,
+  exclusively created temporary directory, never directly under the shared
+  system temp directory with a predictable pid/timestamp name; the launcher
+  removes that directory itself once it has seen the marker or given up
+  waiting for one, so nothing is left behind on success or on a startup
+  failure
+
+### Fixed (fourth review round)
+
+A fourth pass over #30, again against the Windows cleanup worker and the
+hard-link identity check.
+
+- **The cleanup worker now distinguishes "no such parent process" from
+  every other failure to retain a handle on it.** `GetProcessById` is
+  wrapped in a `catch` scoped to `System.ArgumentException` only, the
+  exception it throws when no process with that id exists, so that case
+  alone is still treated as "the parent already exited." Any other
+  failure retaining a handle, such as access denied on a protected
+  process under PowerShell 5.1, is left uncaught: it stops the worker
+  before the ready marker is created, so `startCleanupWorker` sees no
+  marker in time and reports `cleanup-start-failed` instead of silently
+  treating the two cases the same way
+- **The ready marker can no longer recreate a private directory the CLI
+  already gave up on.** The worker used to create its marker with
+  `New-Item -Force`, which recreates a missing parent directory; a worker
+  that started slowly could use it to recreate the private directory
+  `IoCliProcessLauncher` had already deleted after giving up waiting,
+  scheduling a deletion the CLI had already reported as failed. The
+  marker is now created with `[System.IO.File]::Open(path,
+  [System.IO.FileMode]::CreateNew)`, which never creates a missing parent
+  and fails if the marker already exists. The remaining race is closed
+  with an absolute deadline: the CLI computes an absolute
+  `markerDeadlineUnixMs` (Unix epoch milliseconds, UTC) from its own
+  startup timeout minus a safety margin and carries it in the payload;
+  the worker refuses to create the marker past that deadline and exits,
+  deleting nothing. The CLI polls for the marker often enough, well under
+  that margin, that a marker the worker created in time is always
+  observed before the CLI's own, later deadline runs out
+- **A failure to remove the worker's private temporary directory is no
+  longer discarded.** `startCleanupWorker` now returns a warning instead
+  of nothing on success; if the worker confirmed ready but its own
+  private directory could not then be removed, that warning names the
+  directory and the error, and `uninstall`'s schedule step appends it to
+  the outcome it already reports, so it reaches both the JSON result and
+  the text output rather than vanishing into a swallowed catch. A
+  directory-cleanup failure that coincides with a start failure is folded
+  into the same `cleanup-start-failed` message instead of being reported
+  separately
+- **`hardLinkedAliasIssue` no longer reports "no issue" when the real
+  filesystem cannot actually tell.** `IoCliFileSystem.sameFile` used to
+  let `FileSystemEntity.identicalSync` throw past `canonicalize`
+  succeeding, which surfaced to callers as `sameFile` returning `false`,
+  identical to two genuinely different files: a hard-link alias whose
+  identity could not be determined looked exactly like no alias problem
+  at all. The identity check now runs through its own overridable seam,
+  and a failure is left to propagate as `AliasIdentityCheckFailure`, the
+  same typed error already used for a `canonicalize` failure at this
+  point, both in `upgrade --plan` and again immediately before `upgrade
+  --apply`'s own replace step
+- **`cleanupWorkerCmdCommandLine` and `cleanupWorkerEncodedBootstrapScript`
+  are no longer part of the public API.** Both were exported from the
+  public barrel only so a test could reach them; they are implementation
+  details of how the detached worker is launched. Removed from
+  `lib/modular_cli_sdk.dart`; the one test that needs them now imports
+  them from their `src` path directly
+- **CI now runs on a pull request into any base branch, not only `main`.**
+  The `pull_request` trigger was previously filtered to
+  `branches: [main]`, so a pull request whose base is any other branch,
+  including this very PR, got no CI at all. That filter is removed; the
+  `push` trigger, and the existing `ubuntu-latest` / `windows-latest`
+  matrix, are unchanged. (A prior review round's claim that no Windows
+  runner existed in this matrix did not match the file: `windows-latest`
+  was already there. macOS remains deliberately deferred, as recorded by
+  the comment citing issue #15, not an oversight this round addresses.)
+
+### Fixed (fifth review round)
+
+A fifth pass over #30, focused on the same Windows cleanup worker.
+
+- **The worker's claim over its own ready marker is now decided by a
+  single atomic rename, not by comparing two independently read
+  clocks.** An absolute deadline alone could not close the race:
+  `IoCliProcessLauncher` could suspend right up to its own deadline and
+  resume after it, disagreeing with a worker that had already created
+  its marker in time. The worker now creates a `ready` marker and
+  waits; `IoCliProcessLauncher`, if still within its own timeout,
+  claims it by renaming `ready` to `accepted`; the worker, past its own
+  `claimDeadlineUnixMs`, claims abandonment by renaming `ready` to
+  `abandoned` with `[System.IO.File]::Move`. Exactly one of the two
+  renames can ever succeed, since renaming a source that no longer
+  exists always fails. The worker arms deletion only once it actually
+  observes the `accepted` marker, whether while still polling for it
+  or, after its own abandon rename failed, as confirmation that the
+  failure really was the CLI's claim winning first. The claim is always
+  attempted before either side checks its own deadline, on both sides
+  of the race, so a CLI thread resuming from suspension after its own
+  deadline still gets a genuine attempt at a marker the worker created
+  in time. `tryClaimReadyMarker` and `pollForClaim` carry this protocol
+  as pure, directly testable functions; neither is exported from the
+  public barrel
+- **Removing the worker's private temporary directory on a successful
+  claim is now the worker's own responsibility, not
+  `IoCliProcessLauncher`'s.** Removing it from the CLI side immediately
+  after a successful claim would race the worker's own, still-pending,
+  first look at the `accepted` marker. The worker now removes its
+  private directory itself, after deleting the target paths, once it
+  has confirmed the parent process exited. `IoCliProcessLauncher` still
+  removes the directory itself on every path where its own claim never
+  succeeds, the same as before there was a claim to make at all. This
+  retires the fourth round's `startCleanupWorker` warning-on-success:
+  the post-success private-directory cleanup failure it existed to
+  surface can no longer happen on the CLI side, so
+  `CliProcessLauncher.startCleanupWorker`, `IoCliProcessLauncher`,
+  `FakeProcessLauncher` and `SelfDeleteExecutableStep` all revert to a
+  plain `Future<void>`
+- **The bootstrap script's own comments were removed.** With the added
+  claim protocol, the commented script's Base64-encoded, UTF-16LE form
+  pushed the full `cmd.exe` command line past its roughly
+  8191-character limit, which surfaced as every cleanup worker test
+  that launches a real process failing with "The command line is too
+  long." The intent those comments carried already lives in this
+  file's own Dart doc comments; the script itself does not need it
+  duplicated at four times the byte cost
+- **The cleanup worker now retrieves the parent process handle through
+  the explicit `get_Handle()` accessor, and validates the result,
+  instead of trusting the bare `.Handle` property.** Windows PowerShell
+  5.1's property-getter syntax has been observed, and reproduced
+  against pid 4, to return `$null` instead of throwing on an
+  access-denied process, even under `$ErrorActionPreference = 'Stop'`,
+  letting the worker reach the ready marker without actually holding a
+  usable handle. The script now calls `$parent.get_Handle()` and checks
+  the result is neither `$null` nor `[IntPtr]::Zero` before creating
+  the marker, stopping the worker first instead. The equivalent test
+  probe, which used the same bare property access to decide whether to
+  self-skip on this machine, is fixed the same way, and now actually
+  runs against pid 4 rather than reporting itself skipped
+
+### Fixed (sixth review round)
+
+A sixth pass over #30, adding a second phase to the same claim protocol
+so that winning phase 1 is never mistaken for a completed cleanup.
+
+- **A worker that crashes or goes silent between creating its ready
+  marker and being claimed is no longer reported as `scheduled`.**
+  Winning the phase 1 claim, the `ready` to `accepted` rename, used to
+  be treated as success on its own, but a claimed marker with no live
+  worker behind it deletes nothing. The protocol gains a second,
+  independent single-winner rename: the worker, on observing `accepted`,
+  arms deletion by renaming `accepted` to `armed`; `IoCliProcessLauncher`
+  reports `scheduled` only once `pollForArm` has itself observed that
+  `armed` marker, not merely the earlier claim. If the CLI's own ack
+  deadline passes first with no `armed` marker observed, it renames
+  `accepted` to `revoked` instead; a worker that loses the arming rename
+  finds `revoked` and exits without touching the target paths, and the
+  CLI reports `cleanup-start-failed`
+- **A failed abandonment is no longer swallowed by an empty catch.**
+  The worker's `abandoned` rename used to sit inside a bare `catch`
+  that discarded anything other than the expected loss, so a real
+  failure, such as a sharing violation, let the worker exit with its
+  `ready` marker still in place, claimable by a CLI that had already
+  moved on and would then report success for a worker no longer
+  running. An unexpected rename failure, on either the abandon rename
+  or the new arm rename, is now retried on the same poll interval until
+  the worker's own ack deadline, and only then does it record a
+  `failed` marker, best effort, before exiting. The worker never exits
+  while `ready` or `accepted` still exists as a claimable marker.
+  `tryClaimReadyMarker` and `tryRevokeAcceptedMarker` rethrow an
+  unexpected failure instead of hiding it, and `pollForClaim`, on the
+  CLI side, retries through the same kind of transient failure and
+  rethrows only once its own deadline has passed, so the failure that
+  reaches a caller is always the real typed exception, not a generic
+  timeout standing in for it
+- **The worker's wait on its parent process no longer has a five
+  minute cap.** Once armed, the worker used to wait for the parent to
+  exit for at most `cleanupWorkerParentExitTimeoutMs` before giving up
+  on its own; a suspended CLI process or a long-lived host that simply
+  outlived that window then left the target paths and the worker's
+  private directory behind with no further attempt. That constant is
+  removed. An armed worker now waits on the parent handle with no
+  timeout: deletion stays armed until the parent actually exits
+- **The bootstrap script's abandon and arm renames now share one
+  retry-and-failure-marker helper, `Complete-Rename`, instead of each
+  carrying its own copy.** Phase 2 added a second rename with the same
+  retry-until-ack-deadline shape as the first, and writing it out twice
+  pushed the full `cmd.exe` command line back over its roughly
+  8191-character limit. Factoring the shared logic into one function
+  keeps the command line well under that limit while giving both
+  renames the same failure handling
+- Every phase 2 state and timing is a named constant:
+  `cleanupWorkerArmedMarkerFileName`, `cleanupWorkerRevokedMarkerFileName`,
+  `cleanupWorkerFailedMarkerFileName` (removed in the seventh review round
+  below, along with the `failed` state itself), and `cleanupWorkerAckTimeout`
+  for how long `IoCliProcessLauncher` waits to observe `armed` before it
+  revokes
+
+### Fixed (seventh review round)
+
+A seventh pass over #30, closing the one window phase 2 still left open:
+a single failed revoke rename used to be reported as an ordinary
+`cleanup-start-failed`, removing the worker's private directory in the
+process, even though the worker could still win the arming race the
+moment that failure cleared.
+
+- **`IoCliProcessLauncher` no longer reports failure while the worker can
+  still arm.** A failed revoke rename (an unexpected error such as a real
+  sharing violation, not an ordinary lost race) used to be surfaced,
+  after a single attempt, as `cleanup-start-failed`, and the private
+  directory removed along with it. It is now retried on the same poll
+  interval as every other rename in this protocol, through the new
+  `pollForRevokeOrArm`, checking the `armed` marker again before each
+  retry so a worker that wins mid-retry is noticed rather than revoked
+  out from under it. If the failure still has not resolved either way by
+  a new, separate `cleanupWorkerRevokeTimeout` deadline, `uninstall` now
+  reports the new `cleanup-outcome-unknown` id instead of
+  `cleanup-start-failed`, naming the renamed file and the accepted marker
+  path and stating that the worker may still be alive and may still
+  delete the file later. The private directory is deliberately left in
+  place in that one case, since removing it while the worker might still
+  be using it would only trade one race for another. Directory cleanup
+  is never treated as revocation
+- **The worker itself never gives up while a claimable marker still
+  exists.** It used to exit with `ready` or `accepted` still present
+  after a persistent rename failure, once its own ack deadline passed.
+  Its only exits now are the terminal states reached by its own
+  successful rename, or by observing that the CLI already claimed the
+  outcome first (a `revoked` marker on the abandon side, or nothing left
+  to arm on the arm side): while a claimable marker exists and its rename
+  keeps failing, it keeps retrying on the poll interval with no cap of
+  its own, exactly like the CLI's own unbounded wait on it
+- **The `failed` marker, and the state it recorded, are removed
+  entirely**, not merely left unread. With the worker never giving up on
+  its own any more, nothing was ever going to write it past the point a
+  CLI still watching it could read it, and its own write was a nested,
+  swallowed catch this project does not add another instance of. Once
+  armed, the worker has no process left to report a later failure to at
+  all; see the README's `InstallationPlugin error ids` section for what
+  that means and why this is accepted rather than closed with a new
+  diagnostic channel
+- **The worker's parent wait has a real test seam proving there is no
+  cap on it**, not only a test whose own delay happened to be short. The
+  existing "no cap" test never actually drove the script through a
+  bounded wait; it only ever ran the real, always-unbounded script. A new
+  contrast exercises a deliberately bounded stand-in, built by
+  substituting the real script's own unbounded `$parent.WaitForExit()`
+  for a short, self-marking bounded one, showing that stand-in does give
+  up on a still-alive parent, before showing the real, unmodified script
+  does not give up on the same kind of still-alive parent well past the
+  same mark
+
+### Notes
+
+- **No archive format.** An asset is assumed to be the executable itself;
+  extracting a `.tar.gz` or `.zip` release asset is not implemented, because
+  neither issue #28 nor the read portions of the calculatrix spec describe
+  one. A host whose releases are archives needs its own `CliDownloader` that
+  unpacks before this plugin writes the result
+- **A failed release lookup exits non-zero even under `--plan`.** `upgrade`
+  and `uninstall` look the release up inside `steps()`, which runs before the
+  framework branches on `--plan` vs `--apply`, so `release-lookup-failed` is
+  reported and the run exits `ExitCode.genericError` (1) whichever flag was
+  given, rather than `--plan` silently showing nothing
+- **A step failure stops the run at that step; nothing already done is rolled
+  back**, matching `preview_executor`'s existing contract for every command in
+  this SDK. `upgrade`'s failure output distinguishes a download that never
+  produced bytes (`download-failed`) from a download that succeeded but could
+  not be written (`file-access-denied`), and names which steps completed
+- `dart analyze` is clean except for the expected `invalid_dependency`
+  warning on the local path dependency on `cli_router`
+
 ## 0.6.0
 
 Built against `cli_router: { path: ../cli_router-0.2.0 }`. The constraint
