@@ -15,7 +15,9 @@ environment:
 
 dependencies:
   cli_router:
-    path: ../cli_router-0.2.0
+    git:
+      url: https://github.com/ccisnedev/cli_router.git
+      ref: c2fcf3024cd85381d4baa36fd58b464f50385278
   preview_executor: ^0.1.0
 
 dev_dependencies:
