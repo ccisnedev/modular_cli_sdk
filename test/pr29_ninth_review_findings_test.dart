@@ -429,6 +429,30 @@ void main() {
 
       expect(result.exitCode, isNot(equals(ExitCode.ok)));
       expect(result.stdout, isEmpty);
+
+      // Round-10 review finding 3: the same ambiguity must also reach the
+      // rejection's own stderr envelope, not only --help's success path
+      // above. Before the fix, _emitRejectionError() asked the old
+      // _contractFor() helper directly, which looked the consumed words
+      // ("s") up in the catalog and returned only the first entry
+      // registered under that name: the bare `s` route, no positionals at
+      // all, even though the rejection is genuinely ambiguous between it
+      // and `s <id> <sub>`. That attached the bare route's own (empty)
+      // contract to this error, and, since a text-mode envelope renders
+      // "you were one flag away" help text from whatever contract it was
+      // handed, it would offer the bare `s` route's help even though the
+      // invocation was never actually one flag away from it.
+      expect(result.exitCode, equals(ExitCode.invalidUsage));
+      final envelope = jsonDecode(result.stderr) as Map<String, dynamic>;
+      final error = envelope['error'] as Map<String, dynamic>;
+      expect(error['id'], equals('missing-argument'));
+      expect(error['exitCode'], equals(ExitCode.invalidUsage));
+      expect(
+        error.containsKey('contract'),
+        isFalse,
+        reason: 'an ambiguous rejection must never attach any contract, '
+            'the unrelated bare "s" one least of all',
+      );
     });
   });
 
