@@ -39,24 +39,49 @@ class CommandException implements Exception {
   /// Fields a domain error contributes at the top level of the rendered
   /// `"error"` object, alongside [id]/[message]/[exitCode]/[details], not
   /// nested under either of them (`doctor`'s own `"checks"` array, for
-  /// instance).
+  /// instance). Its keys must not collide with a name the envelope itself
+  /// already writes (see [_reservedFieldNames]): the constructor rejects
+  /// that at construction time, rather than let a later spread silently
+  /// overwrite a validated field.
   ///
   /// Distinct from `InvocationOutcome.extraJson`: that is the rendering
   /// layer's own carrier, filled in from this field by
-  /// `ModuleBuilder._reject` right after the error is recorded, in the same
-  /// synchronous continuation ordering `InvocationOutcome` requires. A
-  /// thrower sets [extraFields] here, on the exception itself, never on the
-  /// outcome directly, since a thrown exception has already left the
-  /// thrower's own stack frame by the time anything could record it.
+  /// `recordInvocationError` right after the error is recorded (round-12
+  /// review finding 1: every recording path does this now, not only
+  /// `ModuleBuilder._reject`). A thrower sets [extraFields] here, on the
+  /// exception itself, never on the outcome directly, since a thrown
+  /// exception has already left the thrower's own stack frame by the time
+  /// anything could record it.
   final Map<String, dynamic>? extraFields;
 
   /// Text a domain error contributes after the rendered error line in text
   /// mode, exactly as [extraFields] does for JSON mode, and forwarded the
-  /// same way, through `ModuleBuilder._reject` into
+  /// same way, through `recordInvocationError` into
   /// `InvocationOutcome.extraText`.
   final String? extraLines;
 
   static final _kebabCase = RegExp(r'^[a-z0-9]+(-[a-z0-9]+)*$');
+
+  /// The envelope field names [toJson] always writes, whatever the
+  /// instance: the fixed keys an [extraFields] entry must never collide
+  /// with, since the SDK's own renderer spreads [extraFields] over
+  /// [toJson]'s own output (`ModularCli._renderRecordedError`), so a
+  /// colliding key would silently overwrite a validated field with
+  /// whatever [extraFields] set instead (round-12 review finding 2, PR
+  /// #30).
+  ///
+  /// Derived from [toJson] itself, on a throwaway instance with every
+  /// optional field populated so its key actually appears, rather than
+  /// hand-listed here where it could drift out of sync with [toJson] if a
+  /// field were ever added there and this set forgotten. The probe passes
+  /// no [extraFields] of its own, so building it never re-enters this same
+  /// validation.
+  static final Set<String> _reservedFieldNames = CommandException(
+    id: 'reserved-field-probe',
+    message: '',
+    exitCode: 0,
+    details: const {},
+  ).toJson().keys.toSet();
 
   CommandException({
     required this.id,
@@ -72,6 +97,20 @@ class CommandException implements Exception {
         'and digits, words separated by single hyphens (e.g. '
         '"ticket-not-found").',
       );
+    }
+    if (extraFields != null) {
+      final collisions = extraFields!.keys
+          .where(_reservedFieldNames.contains)
+          .toList();
+      if (collisions.isNotEmpty) {
+        throw ArgumentError(
+          'CommandException extraFields must not use the reserved '
+          'envelope field name(s) ${collisions.join(', ')}: extraFields is '
+          'spread over the rendered "error" object alongside its own '
+          'id/message/exitCode/details, so a colliding key would silently '
+          'overwrite one of them instead of adding a new one.',
+        );
+      }
     }
   }
 

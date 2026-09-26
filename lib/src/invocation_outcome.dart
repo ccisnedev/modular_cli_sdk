@@ -260,8 +260,25 @@ InvocationOutcome currentInvocationOutcome() {
 
 /// Records [error] as the current invocation's outcome, replacing whatever
 /// was recorded before (from an inner boundary this call's caller is
-/// unwinding past) and clearing any [InvocationOutcome.extraText] that went
-/// with it, so it never survives attached to a different error.
+/// unwinding past).
+///
+/// Round-12 review finding 1 (PR #30): [error]'s own [extraFields] and
+/// [extraLines] are carried into [InvocationOutcome.extraJson] and
+/// [InvocationOutcome.extraText] right here, as part of recording the
+/// error itself, rather than left for each call site to forward with a
+/// separate call. Before this fix, only [ModuleBuilder._reject] remembered
+/// to make that separate call; a [CommandException] recorded through any
+/// other path, a `use()` middleware's own throw, a failed step, or the copy
+/// [ModuleBuilder._carryOut] makes to attach discrepancies onto a step
+/// failure, lost its extras silently, since this function used to always
+/// clear them instead. Folding the forwarding into the one place every
+/// recording path already calls means no call site can forget it, present
+/// or future. A caller that still needs to attach something beyond what
+/// the recorded error itself carries (a rejection's own `contract` field,
+/// or the contract help text [ModuleBuilder._reject] shows when the
+/// exception set no [CommandException.extraLines] of its own) still uses
+/// [recordInvocationExtraText]/[recordInvocationExtraJson] afterwards, in
+/// the same synchronous continuation, exactly as before.
 ///
 /// Called by every SDK path that used to write an error to stderr directly:
 /// [ModuleBuilder]'s handling of a thrown [CommandException], an approval
@@ -281,25 +298,33 @@ void recordInvocationError(CommandException error, {required bool jsonMode}) {
   final outcome = currentInvocationOutcome();
   outcome.error = error;
   outcome.jsonMode = jsonMode;
-  outcome.extraText = null;
-  outcome.extraJson = null;
+  outcome.extraText = error.extraLines;
+  outcome.extraJson = error.extraFields;
   outcome.recordedAt = ++outcome._versionCounter;
 }
 
 /// Attaches [text] to the error most recently recorded by
-/// [recordInvocationError], to render after it in text mode only. Must be
-/// called after the [recordInvocationError] call for the same error, in the
-/// same synchronous continuation, so nothing else can record a different
-/// error (and clear this) in between.
+/// [recordInvocationError], to render after it in text mode only,
+/// replacing whatever [recordInvocationError] itself already carried over
+/// from that error's own [CommandException.extraLines] (round-12 review
+/// finding 1: a contract's own help text, shown when the exception set no
+/// [CommandException.extraLines] of its own). Must be called after the
+/// [recordInvocationError] call for the same error, in the same synchronous
+/// continuation, so nothing else can record a different error (and clear
+/// this) in between.
 void recordInvocationExtraText(String text) {
   currentInvocationOutcome().extraText = text;
 }
 
 /// Attaches [fields] to the error most recently recorded by
 /// [recordInvocationError], merged into the rendered `"error"` object in
-/// JSON mode only. Must be called after the [recordInvocationError] call
-/// for the same error, in the same synchronous continuation, for the same
-/// reason [recordInvocationExtraText] must be.
+/// JSON mode only, replacing whatever [recordInvocationError] itself
+/// already carried over from that error's own
+/// [CommandException.extraFields] (round-12 review finding 1: a
+/// rejection's own `contract` field, for instance, which no thrown
+/// [CommandException] could have set itself). Must be called after the
+/// [recordInvocationError] call for the same error, in the same synchronous
+/// continuation, for the same reason [recordInvocationExtraText] must be.
 void recordInvocationExtraJson(Map<String, dynamic> fields) {
   currentInvocationOutcome().extraJson = fields;
 }
