@@ -383,6 +383,87 @@ ModularCli _cliForRecursiveRunThatSucceedsThenParentFails(
   return cli;
 }
 
+/// Registered globally on the same [ModularCli] whose `outer-preserves`
+/// route it also runs behind: only for that one route (tagged by
+/// [CliRequest.originalArgs]'s first word, the same gating
+/// [_escalatingMiddlewareTaggedByRoute] and [_barrierAfterMiddleware] below
+/// use, since this middleware is global and therefore also runs behind the
+/// *nested* `inner-ok` call on the same instance) does it record [ownError]
+/// directly, via [JsonCliOutput.writeError] rather than a throw, before the
+/// nested run() call even starts, run that nested call to a successful
+/// finish, and then return [ownError.exitCode] itself, unchanged, without
+/// ever recording anything a second time: round-8 review finding 4's own
+/// recursion scenario, distinct from [_RecursiveThenFailsQuery] above
+/// (which throws a *fresh* error only after its nested call has already
+/// returned). The point here is whether the nested run(), which pushes and
+/// pops its own frames and touches its own zone's InvocationOutcome along
+/// the way, can disturb an error the parent already recorded before it
+/// even started, or the parent's own next() call for its own leaf handler
+/// (which pushes a frame of its own) can wipe that same pre-recorded
+/// error out from under it.
+CliMiddleware _recordsOwnErrorThenRunsNestedSuccessfullyTaggedByRoute(
+  ModularCli cli,
+  _RecursiveCapture capture,
+  CommandException ownError,
+) => (next) {
+  return (req) async {
+    final tag = req.originalArgs.isNotEmpty ? req.originalArgs.first : '';
+    if (tag != 'outer-preserves') {
+      return await next(req);
+    }
+
+    JsonCliOutput(stdout: req.stdout, stderr: req.stderr).writeError(ownError);
+
+    final innerOut = MemorySink();
+    final innerErr = MemorySink();
+    final innerCode = await cli.run(
+      ['inner-ok', '--json'],
+      stdout: innerOut,
+      stderr: innerErr,
+    );
+    capture.innerExitCode = innerCode;
+    capture.innerStderr = innerErr.output;
+
+    await next(req);
+    return ownError.exitCode;
+  };
+};
+
+/// A CLI whose `outer-preserves` route's own global middleware records its
+/// error before running a nested, successful cli.run() call on the same
+/// instance, then returns the original nonzero code directly, without
+/// re-recording: round-8 review finding 4's exact scenario.
+ModularCli _cliForRecursiveRunPreservingParentErrorRecordedFirst(
+  _RecursiveCapture capture,
+) {
+  final cli = ModularCli(suggestionDistance: 2);
+  cli.query<_WidgetInput, _WidgetOutput>(
+    'inner-ok',
+    (req) => _OkQuery(),
+    globals: true,
+    contract: CliContract.none,
+  );
+  cli.query<_WidgetInput, _WidgetOutput>(
+    'outer-preserves',
+    (req) => _OkQuery(),
+    globals: true,
+    contract: CliContract.none,
+  );
+  cli.use(
+    _recordsOwnErrorThenRunsNestedSuccessfullyTaggedByRoute(
+      cli,
+      capture,
+      CommandException(
+        id: 'outer-error-recorded-before-nested-run',
+        message: "the outer's own error, recorded before its nested run() "
+            'call even started',
+        exitCode: ExitCode.dataError,
+      ),
+    ),
+  );
+  return cli;
+}
+
 /// Wraps `next` and, only for the request whose first argument is
 /// [routeWord], awaits [barrier] *after* `next` has already returned: by
 /// the time this suspends, whatever `next` itself threw has already been
@@ -392,17 +473,31 @@ ModularCli _cliForRecursiveRunThatSucceedsThenParentFails(
 /// force open with an explicit barrier, rather than relying on
 /// `Duration.zero` delays and hoping the scheduler interleaves the two
 /// `run()` calls the way the test wants.
-CliMiddleware _barrierAfterMiddleware(String routeWord, Completer<void> barrier) =>
-    (next) {
-      return (req) async {
-        final result = await next(req);
-        final tag = req.originalArgs.isNotEmpty ? req.originalArgs.first : '';
-        if (tag == routeWord) {
-          await barrier.future;
-        }
-        return result;
-      };
-    };
+///
+/// Round-8 review finding 4: completes [reached], if given, the instant
+/// this dispatch is about to park on [barrier], so a test can `await` that
+/// acknowledgement before starting the second `run()` call instead of
+/// relying on the first `run()` call, merely having been started but not
+/// yet awaited, to have already reached this exact point by the time the
+/// second call begins. Ordering the two calls that way is an assumption
+/// about how far an unawaited `Future` happens to run before the test's
+/// own code resumes; [reached] replaces that assumption with an explicit
+/// signal.
+CliMiddleware _barrierAfterMiddleware(
+  String routeWord,
+  Completer<void> barrier, {
+  Completer<void>? reached,
+}) => (next) {
+  return (req) async {
+    final result = await next(req);
+    final tag = req.originalArgs.isNotEmpty ? req.originalArgs.first : '';
+    if (tag == routeWord) {
+      reached?.complete();
+      await barrier.future;
+    }
+    return result;
+  };
+};
 
 /// The same two failing routes as [_cliForConcurrentRuns], but `fail-a`'s
 /// own dispatch is held, after its error is fully recorded and before
@@ -411,7 +506,14 @@ CliMiddleware _barrierAfterMiddleware(String routeWord, Completer<void> barrier)
 /// to completion, to prove each renders only its own error even though
 /// `fail-b` ran to completion, on the same [ModularCli] instance, entirely
 /// while `fail-a` was suspended mid-dispatch.
-ModularCli _cliForConcurrentRunsWithBarrier(Completer<void> barrierA) {
+///
+/// [reachedBarrierA], if given, is threaded straight through to
+/// [_barrierAfterMiddleware] as its own `reached` acknowledgement (round-8
+/// review finding 4).
+ModularCli _cliForConcurrentRunsWithBarrier(
+  Completer<void> barrierA, {
+  Completer<void>? reachedBarrierA,
+}) {
   final cli = ModularCli(suggestionDistance: 2);
   cli.query<_WidgetInput, _WidgetOutput>(
     'fail-a',
@@ -439,7 +541,9 @@ ModularCli _cliForConcurrentRunsWithBarrier(Completer<void> barrierA) {
   );
   // Outermost: holds fail-a's dispatch after the escalating middleware
   // below has already thrown, been caught and recorded its error.
-  cli.use(_barrierAfterMiddleware('fail-a', barrierA));
+  cli.use(
+    _barrierAfterMiddleware('fail-a', barrierA, reached: reachedBarrierA),
+  );
   cli.use(_escalatingMiddlewareTaggedByRoute());
   return cli;
 }
@@ -778,6 +882,48 @@ void main() {
       );
 
       test(
+        'a middleware that records the parent error before a nested '
+        "cli.run() call that succeeds, then returns the original nonzero "
+        'code without re-recording, still renders the parent error '
+        '(round-8 review finding 4)',
+        () async {
+          final capture = _RecursiveCapture();
+          final outerErr = MemorySink();
+          final outerCode =
+              await _cliForRecursiveRunPreservingParentErrorRecordedFirst(
+            capture,
+          ).run(
+            ['outer-preserves', '--json'],
+            stdout: MemorySink(),
+            stderr: outerErr,
+          );
+
+          // The nested call genuinely succeeded, and rendered nothing of
+          // its own.
+          expect(capture.innerExitCode, equals(ExitCode.ok));
+          expect(capture.innerStderr, isEmpty);
+
+          // The outer's own error, recorded strictly *before* the nested
+          // call even started, is what renders: exactly once, even though
+          // the nested call ran to completion, and the outer's own leaf
+          // handler ran too, in between it being recorded and the
+          // middleware returning its exit code directly.
+          expect(outerCode, equals(ExitCode.dataError));
+          final envelope = jsonDecode(outerErr.output) as Map<String, dynamic>;
+          final error = envelope['error'] as Map<String, dynamic>;
+          expect(
+            error['id'],
+            equals('outer-error-recorded-before-nested-run'),
+          );
+          expect(
+            '"id"'.allMatches(outerErr.output).length,
+            equals(1),
+            reason: 'the envelope must contain exactly one error object',
+          );
+        },
+      );
+
+      test(
         'two concurrent run() calls on the same instance each render only '
         "their own error, not the other's, proven with an explicit barrier "
         'rather than incidental scheduling: fail-b runs to completion '
@@ -785,7 +931,17 @@ void main() {
         'own error already having been recorded',
         () async {
           final barrierA = Completer<void>();
-          final cli = _cliForConcurrentRunsWithBarrier(barrierA);
+          // Round-8 review finding 4: an explicit acknowledgement that
+          // fail-a's own dispatch has actually reached barrierA, awaited
+          // below before fail-b's run() call even starts, so the ordering
+          // this test relies on is established by a real signal, not by
+          // fail-a's run() call merely having been started (and not yet
+          // awaited) before fail-b's own call begins.
+          final reachedBarrierA = Completer<void>();
+          final cli = _cliForConcurrentRunsWithBarrier(
+            barrierA,
+            reachedBarrierA: reachedBarrierA,
+          );
           final errA = MemorySink();
           final errB = MemorySink();
 
@@ -794,6 +950,7 @@ void main() {
             stdout: MemorySink(),
             stderr: errA,
           );
+          await reachedBarrierA.future;
 
           // fail-b's whole run() call, start to finish, happens while
           // fail-a is parked on barrierA, after fail-a's own error has
