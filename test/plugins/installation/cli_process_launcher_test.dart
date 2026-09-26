@@ -12,6 +12,7 @@
 /// that directory on every outcome.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
@@ -2312,6 +2313,137 @@ Future<void> main(List<String> args) async {
             final exitCode = await worker.exitCode;
             expect(exitCode, 0);
             expect(io.File(abandonedPath).existsSync(), isTrue);
+          } finally {
+            lock?.closeSync();
+            try {
+              parent.kill();
+            } on Object {
+              // Already gone; nothing left to clean up.
+            }
+            try {
+              worker.kill();
+            } on Object {
+              // Already gone; nothing left to clean up.
+            }
+          }
+        },
+        skip: io.Platform.isWindows
+            ? false
+            : 'provokes a real Windows sharing violation through the real '
+                  'worker script',
+        timeout: const Timeout(Duration(seconds: 40)),
+      );
+
+      // Every rename in the protocol above rides out an unexpected failure
+      // through Complete-Rename's own indefinite retry. The final deletion
+      // steps are the one place in the real, unmodified script that never
+      // went through that helper at all: this proves deleting the target
+      // must retry a real sharing violation the same way, instead of
+      // letting an unhandled exception there kill the worker before the
+      // target is ever removed.
+      test(
+        'deleting the target path keeps retrying a real sharing violation '
+        'well past a short stand-in for the old cap, and still succeeds '
+        'once it clears',
+        () async {
+          final readyPath = '${tempDir.path}${io.Platform.pathSeparator}ready';
+          final acceptedPath =
+              '${tempDir.path}${io.Platform.pathSeparator}accepted';
+          final armedPath = '${tempDir.path}${io.Platform.pathSeparator}armed';
+          final targetPath =
+              '${tempDir.path}${io.Platform.pathSeparator}victim.txt';
+          io.File(targetPath).writeAsStringSync('gone soon');
+          const oldGapStandIn = Duration(seconds: 5);
+
+          final parent = await io.Process.start('powershell', [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            'Start-Sleep -Seconds 60',
+          ]);
+
+          final nowUnixMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+          final worker = await _startWorkerProcess({
+            'parentPid': parent.pid,
+            'paths': [targetPath],
+            'markerDeadlineUnixMs': nowUnixMs + 30000,
+            'claimDeadlineUnixMs': nowUnixMs + 30000,
+          }, readyPath);
+
+          // Drained, not asserted on: this test is the one real-script case
+          // that deliberately provokes a genuine PowerShell error record (a
+          // sharing violation on the delete step), and its CLIXML rendering
+          // on stderr is large enough that, left unread, it can fill the
+          // pipe buffer and block the worker on the write itself, which
+          // would masquerade as this test's own retry-survival signal for
+          // the wrong reason.
+          unawaited(worker.stdout.drain<void>());
+          unawaited(worker.stderr.drain<void>());
+
+          io.RandomAccessFile? lock;
+          try {
+            final readyDeadline = DateTime.now().add(
+              const Duration(seconds: 20),
+            );
+            while (!io.File(readyPath).existsSync() &&
+                DateTime.now().isBefore(readyDeadline)) {
+              await Future<void>.delayed(const Duration(milliseconds: 5));
+            }
+            expect(io.File(readyPath).existsSync(), isTrue);
+
+            // This test's own claim: the exact retrying claim
+            // IoCliProcessLauncher.startCleanupWorker itself performs.
+            expect(
+              await _claimReadyMarkerForTest(readyPath, acceptedPath),
+              isTrue,
+            );
+
+            // Nothing contests the arm rename here, so the worker wins it
+            // immediately and then blocks on $parent.WaitForExit(), which
+            // this test's own real, still-alive parent keeps it blocked on
+            // until killed below.
+            final armedDeadline = DateTime.now().add(
+              const Duration(seconds: 10),
+            );
+            while (!io.File(armedPath).existsSync() &&
+                DateTime.now().isBefore(armedDeadline)) {
+              await Future<void>.delayed(const Duration(milliseconds: 20));
+            }
+            expect(io.File(armedPath).existsSync(), isTrue);
+
+            // Locked only once armed, and before the parent is killed: by
+            // the time WaitForExit() returns below, the lock has already
+            // been in place for the whole delete step, so there is no
+            // timing window for it to slip through unlocked.
+            lock = io.File(targetPath).openSync(mode: io.FileMode.write);
+
+            parent.kill();
+            await parent.exitCode;
+
+            // Held well past any short interval that would already have
+            // made a single, unretried delete attempt give up.
+            await Future<void>.delayed(
+              oldGapStandIn + const Duration(seconds: 3),
+            );
+            expect(
+              await _isStillRunning(worker),
+              isTrue,
+              reason:
+                  'a worker retrying an unexpected deletion failure with no '
+                  'cap of its own must still be alive well past any short '
+                  'interval that would already have made a single, '
+                  'unretried attempt give up',
+            );
+            expect(io.File(targetPath).existsSync(), isTrue);
+
+            lock.closeSync();
+            lock = null;
+
+            final exitCode = await worker.exitCode.timeout(
+              const Duration(seconds: 10),
+            );
+            expect(exitCode, 0);
+            expect(io.File(targetPath).existsSync(), isFalse);
           } finally {
             lock?.closeSync();
             try {
