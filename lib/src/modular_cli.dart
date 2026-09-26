@@ -488,6 +488,14 @@ class ModularCli {
   /// text) the request that recorded it was running under.
   Future<int> run(List<String> args, {io.IOSink? stdout, io.IOSink? stderr}) {
     return runWithInvocationOutcome(() async {
+      // Read before [_registerHelpCommand] runs, deliberately: that call
+      // always ensures *some* `help` command exists by the time dispatch
+      // happens below (a developer's own, or the SDK's own auto-registered
+      // default when none exists), so this is the only point left where a
+      // CLI that registered its own `help` can still be told apart from
+      // one relying purely on the SDK's default (round-12 review
+      // finding 2).
+      final hasCustomHelp = _catalog.forName('help') != null;
       _registerHelpCommand();
       final out = stdout ?? io.stdout;
       final err = stderr ?? io.stderr;
@@ -496,13 +504,49 @@ class ModularCli {
       // it: a CLI may register its own root route (a dashboard, a status
       // screen), and bare `<cli>` is then that route, not a request for
       // help.
-      if (args.isEmpty && _catalog.forRoute('') == null) {
+      //
+      // Round-12 review finding 2: two things besides a root route already
+      // answer a bare invocation on their own, and the old code, printing
+      // the built-in catalog directly whenever no root *route* existed,
+      // never gave either a chance to. A root *shortcut*
+      // (`shortcut('', target: 'status', ...)`) dispatches through this
+      // same router exactly as an ordinary route does (see
+      // [ModuleBuilder.shortcut]), but, by design, has no [_catalog] entry
+      // of its own, so [CommandCatalog.forRoute] alone can never see one:
+      // a bare invocation on a CLI whose only root registration is a
+      // shortcut still fell through to the catalog printer instead of
+      // dispatching to the shortcut's own target. And a developer's own
+      // `help` route, registered before this call ever runs, was bypassed
+      // outright: the old code never dispatched through the router at all
+      // when there was no root route, so the developer's own handler
+      // never ran for a bare invocation, a regression against
+      // `origin/main`'s own args-rewriting approach, which always let a
+      // bare invocation flow through ordinary dispatch instead of
+      // short-circuiting it.
+      //
+      // The fix is a real, three-way, declared order: a root route or
+      // root shortcut, when either is registered, answers the bare
+      // invocation exactly as any other invocation of it would (dispatch
+      // continues below, `args` unchanged); otherwise a `help` command
+      // registered before this call answers it instead (dispatch
+      // continues below with `['help']`, the very same word the router
+      // would resolve to for anyone typing it themselves); and only when
+      // neither exists at all does this fall back to printing the
+      // built-in catalog directly, exactly as before.
+      final hasRootRegistration =
+          _catalog.forRoute('') != null ||
+          _shortcutContractsByExactRoute.containsKey('');
+      final dispatchArgs = args.isEmpty && !hasRootRegistration
+          ? (hasCustomHelp ? const ['help'] : null)
+          : args;
+
+      if (dispatchArgs == null) {
         out.writeln(HelpRenderer(_catalog).renderCatalog());
         return ExitCode.ok;
       }
 
       final exitCode = await _root.run(
-        args,
+        dispatchArgs,
         onReject: (rejection) => _handleRejection(rejection, out),
         stdout: out,
         stderr: err,
@@ -1073,6 +1117,49 @@ class ModularCli {
     // included.
     if (rejection.kind == CliRejectionKind.unknownCommand) {
       return (contract: null, ambiguous: false);
+    }
+
+    // Round-12 review finding 1: [CliRejectionKind.misplacedOption] can
+    // leave [CliRejection.route] null yet still populate
+    // [CliRejection.candidates] with the exact, genuinely ambiguous routes
+    // still reachable from here (see that field's own doc comment in
+    // `cli_router`, on the router's own [CliRejection]). The name-based
+    // fallback below resolves by [CliRejection.consumed] alone, which is
+    // only the shallower literal prefix every one of those candidates
+    // shares (`s`, when the candidates are `s a` and `s b`), never one of
+    // the candidates itself: consulted first, it would attach that
+    // ancestor route's own contract, one that may not even declare the
+    // option this rejection is actually about, to an error that is
+    // genuinely ambiguous between its descendants instead.
+    //
+    // So the per-kind/per-signal resolution this method declares, in
+    // order, before any name-based candidate is even collected, is now:
+    // [CliRejection.route] non-null resolves to that exact route, always
+    // (checked above); [CliRejectionKind.unknownCommand] never resolves a
+    // contract, full stop (checked above); non-empty
+    // [CliRejection.candidates] resolves from that set alone, the
+    // router's own authoritative "these exact routes, and no others, are
+    // still reachable" signal (checked here); every other rejection keeps
+    // consulting the name-based candidate list below, exactly as before.
+    // This does not exclude `misplacedOption` wholesale: a `misplacedOption`
+    // whose `candidates` stays empty (a lookahead already singled one
+    // route out, or [CliRejection.route] itself was set) still falls
+    // through to the very same name-based resolution every other kind
+    // uses.
+    if (rejection.candidates.isNotEmpty) {
+      final resolved = rejection.candidates
+          .map(
+            (c) =>
+                _catalog.forRoute(c.pattern) ??
+                _shortcutContractsByExactRoute[c.pattern],
+          )
+          .whereType<CommandContract>()
+          .toList();
+      if (resolved.isEmpty) return (contract: null, ambiguous: false);
+      if (resolved.length == 1) {
+        return (contract: resolved.single, ambiguous: false);
+      }
+      return (contract: null, ambiguous: true);
     }
 
     final consumedKey = rejection.consumed.join(' ');
