@@ -463,10 +463,16 @@ build-time `CliPluginError`, not a silently-dropped value.
 | `DoctorPlugin` | `doctor`, and the `doctor.checks` extension point | (none) |
 | `InstallationPlugin` | `upgrade`, `uninstall`; contributes 3 checks to `doctor.checks` | `DoctorPlugin`, a `CliInstallationConfig` |
 
-`doctor` runs every contributed `CliDoctorCheck` and reports them together,
-exiting `ExitCode.configError` (78) if any one of them errored, a warning is
-shown but never fails the run. `InstallationPlugin`'s three checks are
-`binary` (is `executable` on `PATH`), `alias` (does `alias`, if present,
+`doctor` runs every contributed `CliDoctorCheck` and reports them together. A
+run where nothing errored (warnings are fine) reports `{"checks": [...]}` on
+stdout and exits `ExitCode.ok`. A run where at least one check errored
+reports the single error shape instead, on stderr: `{"error": {"id":
+"doctor-check-failed", "message": "<n> check(s) failed: <names>",
+"exitCode": 78, "checks": [...]}}`, the `checks` array being every check's
+result, in run order, exactly as the success shape would have shown it, not
+only the failed ones. Text mode writes the same check lines, then the error
+line, both on stderr, nothing on stdout. `InstallationPlugin`'s three checks
+are `binary` (is `executable` on `PATH`), `alias` (does `alias`, if present,
 resolve to the same binary) and `release` (is a newer tagged release
 available), the first two error when wrong, the third only ever warns,
 including when the lookup itself fails.

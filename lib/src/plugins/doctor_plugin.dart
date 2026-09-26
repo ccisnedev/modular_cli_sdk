@@ -1,4 +1,5 @@
 import '../cli_plugin.dart';
+import '../command_exception.dart';
 import '../exit_codes.dart';
 import '../input.dart';
 import '../output.dart';
@@ -162,6 +163,28 @@ class DoctorQuery implements Query<DoctorInput, DoctorOutput> {
       }
       results.add(CliDoctorEntry(name: check.name, result: result));
     }
-    return DoctorOutput(results);
+    final output = DoctorOutput(results);
+    if (output.hasError) {
+      // A check that actually errors is never reported as ordinary data:
+      // the whole `checks` array (every result, in run order, exactly as
+      // the success path would have shown it) is carried by the single
+      // error shape instead, so a `--json` consumer parses one envelope
+      // regardless of whether doctor found something wrong.
+      final failed = results
+          .where((entry) => entry.result.status == CliCheckStatus.error)
+          .toList();
+      throw CommandException(
+        id: 'doctor-check-failed',
+        message:
+            '${failed.length} check(s) failed: '
+            '${failed.map((entry) => entry.name).join(', ')}',
+        exitCode: ExitCode.configError,
+        extraFields: {
+          'checks': [for (final entry in results) entry.toJson()],
+        },
+        extraLines: output.toText(),
+      );
+    }
+    return output;
   }
 }
