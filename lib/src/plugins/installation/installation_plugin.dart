@@ -414,14 +414,10 @@ class UpgradeOutput extends Output {
   UpgradeOutput({
     required this.stepsCompleted,
     required this.exitCode,
-    this.errorId,
-    this.errorMessage,
     this.installedVersion,
   });
 
   final List<String> stepsCompleted;
-  final String? errorId;
-  final String? errorMessage;
   final String? installedVersion;
 
   @override
@@ -429,8 +425,6 @@ class UpgradeOutput extends Output {
 
   @override
   Map<String, dynamic> toJson() => {
-    if (errorId != null) 'error': errorId,
-    if (errorMessage != null) 'message': errorMessage,
     'stepsCompleted': stepsCompleted,
     if (installedVersion != null) 'version': installedVersion,
   };
@@ -646,11 +640,17 @@ class UpgradeCommand
       final message = error is CliInstallStepFailure
           ? error.message
           : failure.message;
-      return UpgradeOutput(
-        stepsCompleted: stepsCompleted,
+      // A failed --apply is an error, not data: thrown here instead of
+      // returned, it is caught by ModuleBuilder's own CommandException
+      // handling and rendered as the single error envelope on stderr
+      // (JSON or text), rather than as a success-shaped object on stdout
+      // with the error's fields baked in as ordinary data. What ran
+      // before the failure is not lost: it travels in details.
+      throw CommandException(
+        code: id,
+        message: message,
         exitCode: ExitCode.genericError,
-        errorId: id,
-        errorMessage: message,
+        details: {'stepsCompleted': stepsCompleted},
       );
     }
 
@@ -848,8 +848,6 @@ class UninstallOutput extends Output {
     required this.removed,
     required this.exitCode,
     this.scheduled = const [],
-    this.errorId,
-    this.errorMessage,
     this.notes = const [],
   });
 
@@ -869,16 +867,11 @@ class UninstallOutput extends Output {
   /// still reach whoever reads this output rather than being dropped.
   final List<String> notes;
 
-  final String? errorId;
-  final String? errorMessage;
-
   @override
   final int exitCode;
 
   @override
   Map<String, dynamic> toJson() => {
-    if (errorId != null) 'error': errorId,
-    if (errorMessage != null) 'message': errorMessage,
     'removed': removed,
     'scheduled': scheduled,
     if (notes.isNotEmpty) 'notes': notes,
@@ -1026,13 +1019,20 @@ class UninstallCommand
       final message = error is CliInstallStepFailure
           ? error.message
           : failure.message;
-      return UninstallOutput(
-        removed: removed,
-        scheduled: scheduled,
+      // See UpgradeCommand.describe: an error is thrown, not returned, so
+      // it renders as the single error envelope on stderr instead of a
+      // success-shaped object on stdout. removed/scheduled/notes are what
+      // ran before the failure; they travel in details rather than being
+      // dropped.
+      throw CommandException(
+        code: id,
+        message: message,
         exitCode: ExitCode.genericError,
-        errorId: id,
-        errorMessage: message,
-        notes: notes,
+        details: {
+          'removed': removed,
+          'scheduled': scheduled,
+          if (notes.isNotEmpty) 'notes': notes,
+        },
       );
     }
 
