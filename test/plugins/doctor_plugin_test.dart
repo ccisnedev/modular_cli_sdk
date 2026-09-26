@@ -99,8 +99,17 @@ void main() {
           ]),
         );
 
-      final code = await cli.run(['doctor'], stdout: MemorySink());
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run(['doctor'], stdout: out, stderr: err);
+
+      // A doctor failure is the single error shape, not the success shaped
+      // checks array: nothing is written to stdout, the error (naming the
+      // failed check) goes to stderr instead.
       expect(code, ExitCode.configError);
+      expect(out.output, isEmpty);
+      expect(err.output, contains('doctor-check-failed'));
+      expect(err.output, contains('alias'));
     },
   );
 
@@ -124,56 +133,114 @@ void main() {
     expect(out.output, contains('"status": "ok"'));
   });
 
-  test('doctor --json reports the exact ordered checks array', () async {
-    final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
-      ..plugin(const DoctorPlugin())
-      ..plugin(
-        _CheckContributingPlugin([
-          _constantCheck(
-            name: 'binary',
-            status: CliCheckStatus.ok,
-            message: 'cx found at /usr/local/bin/cx',
-          ),
-          _constantCheck(
-            name: 'alias',
-            status: CliCheckStatus.error,
-            message: 'calculatrix was not found on PATH',
-          ),
-          _constantCheck(
-            name: 'release',
-            status: CliCheckStatus.warning,
-            message: 'a newer release is available',
-          ),
-        ]),
+  test(
+    'doctor --json reports the exact ordered checks array on success',
+    () async {
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
+        ..plugin(const DoctorPlugin())
+        ..plugin(
+          _CheckContributingPlugin([
+            _constantCheck(
+              name: 'binary',
+              status: CliCheckStatus.ok,
+              message: 'cx found at /usr/local/bin/cx',
+            ),
+            _constantCheck(
+              name: 'release',
+              status: CliCheckStatus.warning,
+              message: 'a newer release is available',
+            ),
+          ]),
+        );
+
+      final out = MemorySink();
+      await cli.run(['doctor', '--json'], stdout: out);
+
+      // The whole array, in check-run order, with nothing extra and nothing
+      // missing: a substring `contains` check (as the rest of this file
+      // uses) cannot tell an array in the right shape but the wrong order
+      // apart from one that happens to contain the same substrings.
+      expect(jsonDecode(out.output), {
+        'checks': [
+          {
+            'name': 'binary',
+            'status': 'ok',
+            'detail': 'cx found at /usr/local/bin/cx',
+          },
+          {
+            'name': 'release',
+            'status': 'warning',
+            'detail': 'a newer release is available',
+          },
+        ],
+      });
+    },
+  );
+
+  test(
+    'doctor --json reports the single error shape when a check errors, '
+    'with the ordered checks array nested under it',
+    () async {
+      final cli = ModularCli(suggestionDistance: 2, name: 'x', version: '1.0.0')
+        ..plugin(const DoctorPlugin())
+        ..plugin(
+          _CheckContributingPlugin([
+            _constantCheck(
+              name: 'binary',
+              status: CliCheckStatus.ok,
+              message: 'cx found at /usr/local/bin/cx',
+            ),
+            _constantCheck(
+              name: 'alias',
+              status: CliCheckStatus.error,
+              message: 'calculatrix was not found on PATH',
+            ),
+            _constantCheck(
+              name: 'release',
+              status: CliCheckStatus.warning,
+              message: 'a newer release is available',
+            ),
+          ]),
+        );
+
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run(
+        ['doctor', '--json'],
+        stdout: out,
+        stderr: err,
       );
 
-    final out = MemorySink();
-    await cli.run(['doctor', '--json'], stdout: out);
-
-    // The whole array, in check-run order, with nothing extra and nothing
-    // missing: a substring `contains` check (as the rest of this file
-    // uses) cannot tell an array in the right shape but the wrong order
-    // apart from one that happens to contain the same substrings.
-    expect(jsonDecode(out.output), {
-      'checks': [
-        {
-          'name': 'binary',
-          'status': 'ok',
-          'detail': 'cx found at /usr/local/bin/cx',
+      // A checks-array failure is never data on stdout: the single error
+      // shape carries the whole array under its own "error" key instead.
+      expect(code, ExitCode.configError);
+      expect(out.output, isEmpty);
+      expect(jsonDecode(err.output), {
+        'error': {
+          'id': 'doctor-check-failed',
+          'message': '1 check(s) failed: alias',
+          'exitCode': ExitCode.configError,
+          'checks': [
+            {
+              'name': 'binary',
+              'status': 'ok',
+              'detail': 'cx found at /usr/local/bin/cx',
+            },
+            {
+              'name': 'alias',
+              'status': 'error',
+              'detail': 'calculatrix was not found on PATH',
+            },
+            {
+              'name': 'release',
+              'status': 'warning',
+              'detail': 'a newer release is available',
+            },
+          ],
         },
-        {
-          'name': 'alias',
-          'status': 'error',
-          'detail': 'calculatrix was not found on PATH',
-        },
-        {
-          'name': 'release',
-          'status': 'warning',
-          'detail': 'a newer release is available',
-        },
-      ],
-    });
-  });
+      });
+    },
+  );
 
   test(
     'two checks sharing a name are both kept, in order, rather than one overwriting the other',
@@ -196,14 +263,21 @@ void main() {
         );
 
       final out = MemorySink();
-      final code = await cli.run(['doctor', '--json'], stdout: out);
+      final err = MemorySink();
+      final code = await cli.run(
+        ['doctor', '--json'],
+        stdout: out,
+        stderr: err,
+      );
 
       // A later ok must not overwrite an earlier error: the exit code is
       // computed from every result, not just the last one written under a
-      // name two checks happen to share.
+      // name two checks happen to share, and both results still show up in
+      // the failure envelope's own checks array, nothing on stdout.
       expect(code, ExitCode.configError);
-      expect(out.output, contains('first, broken'));
-      expect(out.output, contains('second, fine'));
+      expect(out.output, isEmpty);
+      expect(err.output, contains('first, broken'));
+      expect(err.output, contains('second, fine'));
     },
   );
 
@@ -232,13 +306,19 @@ void main() {
         );
 
       final out = MemorySink();
-      final code = await cli.run(['doctor'], stdout: out);
+      final err = MemorySink();
+      final code = await cli.run(['doctor'], stdout: out, stderr: err);
 
+      // Text mode: the check lines (including the one that threw, and the
+      // ones that ran after it) plus the error line, all on stderr, nothing
+      // on stdout.
       expect(code, ExitCode.configError);
-      expect(out.output, contains('found'));
-      expect(out.output, contains('alias'));
-      expect(out.output, contains('boom'));
-      expect(out.output, contains('up to date'));
+      expect(out.output, isEmpty);
+      expect(err.output, contains('found'));
+      expect(err.output, contains('alias'));
+      expect(err.output, contains('boom'));
+      expect(err.output, contains('up to date'));
+      expect(err.output, contains('doctor-check-failed'));
     },
   );
 }
