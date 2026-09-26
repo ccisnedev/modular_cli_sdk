@@ -38,9 +38,17 @@ class CliCleanupWorkerStartFailure implements Exception {
 /// instead of removing it, for the same reason: removing it while the
 /// worker might still be using it would be its own new race.
 class CliCleanupOutcomeUnknown implements Exception {
-  const CliCleanupOutcomeUnknown(this.message);
+  const CliCleanupOutcomeUnknown(this.message, {this.lastFailure});
 
   final String message;
+
+  /// The last [io.FileSystemException] [pollForRevokeOrArm] caught while
+  /// retrying the revoke rename, kept instead of discarded once its own
+  /// deadline passed with the race still undecided: this is the concrete
+  /// failure that made the outcome unknown, not merely the fact that one
+  /// occurred. Null when this exception was constructed directly, outside
+  /// [pollForRevokeOrArm]'s own retry loop, with no such failure to carry.
+  final io.FileSystemException? lastFailure;
 
   @override
   String toString() => message;
@@ -396,7 +404,10 @@ bool tryClaimReadyMarker(String readyMarkerPath, String acceptedMarkerPath) {
 /// it as a typed [CliCleanupWorkerStartFailure] with detail rather than
 /// silently reporting either outcome for a rename that never actually ran
 /// to completion.
-bool tryRevokeAcceptedMarker(String acceptedMarkerPath, String revokedMarkerPath) {
+bool tryRevokeAcceptedMarker(
+  String acceptedMarkerPath,
+  String revokedMarkerPath,
+) {
   try {
     io.File(acceptedMarkerPath).renameSync(revokedMarkerPath);
     return true;
@@ -568,7 +579,16 @@ enum RevokeOrArmOutcome {
 /// [now] and [pollInterval] are both injectable so a test can exercise every
 /// outcome deterministically rather than depending on real wall-clock
 /// timing.
-Future<RevokeOrArmOutcome> pollForRevokeOrArm({
+///
+/// The second element of the returned record is the last unexpected
+/// [io.FileSystemException] caught while retrying the revoke rename: null
+/// for [RevokeOrArmOutcome.armed] and [RevokeOrArmOutcome.revoked] (neither
+/// resolves through a caught failure), and always set for
+/// [RevokeOrArmOutcome.unknown], which exists only because that failure
+/// kept recurring until the deadline passed. It is never discarded: the
+/// caller carries it into [CliCleanupOutcomeUnknown] so the concrete cause
+/// survives into the diagnostic rather than being reduced to "unknown".
+Future<(RevokeOrArmOutcome, io.FileSystemException?)> pollForRevokeOrArm({
   required String armedMarkerPath,
   required String acceptedMarkerPath,
   required String revokedMarkerPath,
@@ -578,16 +598,16 @@ Future<RevokeOrArmOutcome> pollForRevokeOrArm({
 }) async {
   while (true) {
     if (io.File(armedMarkerPath).existsSync()) {
-      return RevokeOrArmOutcome.armed;
+      return (RevokeOrArmOutcome.armed, null);
     }
     try {
       if (tryRevokeAcceptedMarker(acceptedMarkerPath, revokedMarkerPath)) {
-        return RevokeOrArmOutcome.revoked;
+        return (RevokeOrArmOutcome.revoked, null);
       }
-      return RevokeOrArmOutcome.armed;
-    } on io.FileSystemException {
+      return (RevokeOrArmOutcome.armed, null);
+    } on io.FileSystemException catch (e) {
       if (!now().isBefore(deadline)) {
-        return RevokeOrArmOutcome.unknown;
+        return (RevokeOrArmOutcome.unknown, e);
       }
       await Future<void>.delayed(pollInterval);
     }
@@ -682,13 +702,18 @@ String cmdExecutablePath(Map<String, String> environment) {
 }
 
 /// The fixed argument list [IoCliProcessLauncher.startCleanupWorker] passes
-/// to [cmdExecutablePath]'s process, given the resolved [powershellPath].
-/// Every entry is a fixed literal token except [powershellPath] itself,
-/// already validated by [powershellExecutablePath] to contain no character
-/// cmd.exe treats specially, and [cleanupWorkerEncodedBootstrapScript],
-/// which is fixed and carries no run-specific data. No path the caller
+/// to [cmdExecutablePath]'s process, given the resolved [powershellPath] and
+/// [encodedScript]. Every entry is a fixed literal token except
+/// [powershellPath] itself, already validated by [powershellExecutablePath]
+/// to contain no character cmd.exe treats specially, and [encodedScript],
+/// which a real launch always fills with [cleanupWorkerEncodedBootstrapScript]
+/// (fixed, carrying no run-specific data) and only a test ever overrides
+/// (see [IoCliProcessLauncher.encodedBootstrapScript]). No path the caller
 /// wants deleted, and no payload of any kind, appears here.
-List<String> _cleanupWorkerCmdArgs(String powershellPath) => [
+List<String> _cleanupWorkerCmdArgs(
+  String powershellPath,
+  String encodedScript,
+) => [
   '/d',
   '/c',
   'start',
@@ -698,18 +723,23 @@ List<String> _cleanupWorkerCmdArgs(String powershellPath) => [
   '-NoProfile',
   '-NonInteractive',
   '-EncodedCommand',
-  cleanupWorkerEncodedBootstrapScript,
+  encodedScript,
 ];
 
 /// The full command line [IoCliProcessLauncher.startCleanupWorker] passes to
 /// [cmdPath], built the same way it builds it for a real launch, given
 /// [powershellPath]. Exists as a pure function so a test can assert its
 /// length stays well under cmd.exe's roughly 8191-character command-line
-/// limit without launching a real process:
-/// [cleanupWorkerEncodedBootstrapScript] is by far its largest component,
-/// and it is fixed, so this is deterministic.
-String cleanupWorkerCmdCommandLine(String cmdPath, String powershellPath) =>
-    '$cmdPath ${_cleanupWorkerCmdArgs(powershellPath).join(' ')}';
+/// limit without launching a real process: [encodedScript] (defaulting to
+/// [cleanupWorkerEncodedBootstrapScript], the same as a real launch) is by
+/// far its largest component, and the default is fixed, so this is
+/// deterministic.
+String cleanupWorkerCmdCommandLine(
+  String cmdPath,
+  String powershellPath, {
+  String? encodedScript,
+}) =>
+    '$cmdPath ${_cleanupWorkerCmdArgs(powershellPath, encodedScript ?? cleanupWorkerEncodedBootstrapScript).join(' ')}';
 
 /// The process identity and cleanup-worker-launching capability
 /// [SelfDeleteExecutableStep] needs to remove a running Windows executable.
@@ -941,7 +971,7 @@ class IoCliProcessLauncher implements CliProcessLauncher {
       try {
         launcher = await io.Process.start(
           cmdPath,
-          _cleanupWorkerCmdArgs(powershellPath),
+          _cleanupWorkerCmdArgs(powershellPath, encodedBootstrapScript()),
           runInShell: false,
           environment: workerEnvironment,
           mode: io.ProcessStartMode.normal,
@@ -987,7 +1017,7 @@ class IoCliProcessLauncher implements CliProcessLauncher {
       );
       if (!armed) {
         final revokeDeadline = ackDeadline.add(_revokeTimeout);
-        final outcome = await pollForRevokeOrArm(
+        final (outcome, lastRevokeFailure) = await pollForRevokeOrArm(
           armedMarkerPath: armedMarkerPath,
           acceptedMarkerPath: acceptedMarkerPath,
           revokedMarkerPath: revokedMarkerPath,
@@ -1010,10 +1040,11 @@ class IoCliProcessLauncher implements CliProcessLauncher {
               'renaming the marker at $acceptedMarkerPath to '
               '$revokedMarkerPath kept failing unexpectedly for '
               '${_revokeTimeout.inSeconds}s without resolving either '
-              'way. The cleanup worker may still be alive and may still '
-              'delete the given paths later; its private directory at '
-              '${privateDir.path} has been left in place rather than '
-              'removed.',
+              'way (last failure: $lastRevokeFailure). The cleanup '
+              'worker may still be alive and may still delete the given '
+              'paths later; its private directory at ${privateDir.path} '
+              'has been left in place rather than removed.',
+              lastFailure: lastRevokeFailure,
             );
           case RevokeOrArmOutcome.armed:
             // Falls through to report success below, the same as an
@@ -1087,4 +1118,16 @@ class IoCliProcessLauncher implements CliProcessLauncher {
       privateDir.deleteSync(recursive: true);
     }
   }
+
+  /// The Base64-encoded worker script this launcher passes to
+  /// [powershellExecutablePath]'s process. Defaults to
+  /// [cleanupWorkerEncodedBootstrapScript], the same real script every
+  /// production run launches. Exposed as its own overridable method purely
+  /// as a test seam: a subclass in a test can substitute a deliberately
+  /// modified stand-in (for example, one that waits for a named release
+  /// marker immediately before attempting its arm rename) to close a race
+  /// between a test's own setup and the real worker's polling loop,
+  /// without ever changing what a real run launches. Production code never
+  /// overrides this.
+  String encodedBootstrapScript() => cleanupWorkerEncodedBootstrapScript;
 }
