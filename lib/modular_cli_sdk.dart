@@ -69,6 +69,13 @@ export 'src/plugins/doctor_plugin.dart'
         DoctorOutput,
         DoctorPlugin,
         DoctorQuery;
+export 'src/plugins/installation/cli_archive_extractor.dart'
+    show
+        ArchiveCliArchiveExtractor,
+        CliArchiveEntry,
+        CliArchiveExtractionFailure,
+        CliArchiveExtractor,
+        CliArchiveFormat;
 export 'src/plugins/installation/cli_downloader.dart'
     show CliDownloadFailure, CliDownloader, HttpCliDownloader;
 export 'src/plugins/installation/cli_file_system.dart'
