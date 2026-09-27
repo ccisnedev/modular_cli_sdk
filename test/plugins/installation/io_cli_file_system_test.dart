@@ -62,74 +62,68 @@ void main() {
       expect(leftovers, isEmpty);
     });
 
-    test(
-      'calls revalidate after staging the new content but before '
-      'committing it into place',
-      () async {
-        const fs = IoCliFileSystem();
-        final path = pathIn(tempDir, io.Platform.isWindows ? 'cx.exe' : 'cx');
-        io.File(path).writeAsBytesSync([9, 9, 9]);
+    test('calls revalidate after staging the new content but before '
+        'committing it into place', () async {
+      const fs = IoCliFileSystem();
+      final path = pathIn(tempDir, io.Platform.isWindows ? 'cx.exe' : 'cx');
+      io.File(path).writeAsBytesSync([9, 9, 9]);
 
-        List<int>? pathContentAtRevalidateTime;
-        int? stagedFileCountAtRevalidateTime;
+      List<int>? pathContentAtRevalidateTime;
+      int? stagedFileCountAtRevalidateTime;
 
-        await fs.writeExecutable(
+      await fs.writeExecutable(
+        path,
+        [1, 2, 3],
+        revalidate: () async {
+          pathContentAtRevalidateTime = io.File(path).readAsBytesSync();
+          stagedFileCountAtRevalidateTime = tempDir
+              .listSync()
+              .where((e) => e.path != path)
+              .length;
+        },
+      );
+
+      expect(
+        pathContentAtRevalidateTime,
+        [9, 9, 9],
+        reason:
+            'revalidate must see the pre-commit content: the destructive '
+            'step that replaces it has not run yet',
+      );
+      expect(
+        stagedFileCountAtRevalidateTime,
+        1,
+        reason:
+            'the new content must already be staged to a temporary file '
+            'by the time revalidate runs',
+      );
+      expect(io.File(path).readAsBytesSync(), [1, 2, 3]);
+    });
+
+    test('nothing is committed and no temp file is left behind when '
+        'revalidate throws', () async {
+      const fs = IoCliFileSystem();
+      final path = pathIn(tempDir, io.Platform.isWindows ? 'cx.exe' : 'cx');
+      io.File(path).writeAsBytesSync([9, 9, 9]);
+
+      await expectLater(
+        fs.writeExecutable(
           path,
           [1, 2, 3],
           revalidate: () async {
-            pathContentAtRevalidateTime = io.File(path).readAsBytesSync();
-            stagedFileCountAtRevalidateTime = tempDir
-                .listSync()
-                .where((e) => e.path != path)
-                .length;
+            throw StateError('target changed since this plan was built');
           },
-        );
+        ),
+        throwsA(isA<StateError>()),
+      );
 
-        expect(
-          pathContentAtRevalidateTime,
-          [9, 9, 9],
-          reason:
-              'revalidate must see the pre-commit content: the destructive '
-              'step that replaces it has not run yet',
-        );
-        expect(
-          stagedFileCountAtRevalidateTime,
-          1,
-          reason:
-              'the new content must already be staged to a temporary file '
-              'by the time revalidate runs',
-        );
-        expect(io.File(path).readAsBytesSync(), [1, 2, 3]);
-      },
-    );
-
-    test(
-      'nothing is committed and no temp file is left behind when '
-      'revalidate throws',
-      () async {
-        const fs = IoCliFileSystem();
-        final path = pathIn(tempDir, io.Platform.isWindows ? 'cx.exe' : 'cx');
-        io.File(path).writeAsBytesSync([9, 9, 9]);
-
-        await expectLater(
-          fs.writeExecutable(
-            path,
-            [1, 2, 3],
-            revalidate: () async {
-              throw StateError('target changed since this plan was built');
-            },
-          ),
-          throwsA(isA<StateError>()),
-        );
-
-        expect(io.File(path).readAsBytesSync(), [9, 9, 9]);
-        final leftovers = tempDir
-            .listSync()
-            .where((e) => e.path != path)
-            .toList();
-        expect(leftovers, isEmpty);
-      },
-    );
+      expect(io.File(path).readAsBytesSync(), [9, 9, 9]);
+      final leftovers = tempDir
+          .listSync()
+          .where((e) => e.path != path)
+          .toList();
+      expect(leftovers, isEmpty);
+    });
 
     test(
       'sets the execute bit',
@@ -250,6 +244,312 @@ void main() {
           ? 'POSIX chmod/executable-check path only'
           : false,
     );
+  });
+
+  group('writeInstallationArchive', () {
+    test(
+      'writes the executable and every declared directory as one unit',
+      () async {
+        const fs = IoCliFileSystem();
+        final exePath = pathIn(tempDir, 'cx');
+
+        await fs.writeInstallationArchive(
+          executablePath: exePath,
+          executableBytes: [1, 2, 3],
+          directories: {
+            'assets': {
+              'a.txt': [4, 5],
+              'sub/b.txt': [6, 7],
+            },
+          },
+          revalidate: () async {},
+        );
+
+        expect(io.File(exePath).readAsBytesSync(), [1, 2, 3]);
+        expect(io.File(pathIn(tempDir, 'assets/a.txt')).readAsBytesSync(), [
+          4,
+          5,
+        ]);
+        expect(io.File(pathIn(tempDir, 'assets/sub/b.txt')).readAsBytesSync(), [
+          6,
+          7,
+        ]);
+      },
+    );
+
+    test(
+      'replaces an existing directory wholesale rather than merging into it',
+      () async {
+        const fs = IoCliFileSystem();
+        final exePath = pathIn(tempDir, 'cx');
+        final assetsDir = io.Directory(pathIn(tempDir, 'assets'))..createSync();
+        io.File(pathIn(assetsDir, 'old.txt')).writeAsBytesSync([9]);
+
+        await fs.writeInstallationArchive(
+          executablePath: exePath,
+          executableBytes: [1],
+          directories: {
+            'assets': {
+              'new.txt': [2],
+            },
+          },
+          revalidate: () async {},
+        );
+
+        expect(io.File(pathIn(assetsDir, 'old.txt')).existsSync(), isFalse);
+        expect(io.File(pathIn(assetsDir, 'new.txt')).readAsBytesSync(), [2]);
+      },
+    );
+
+    test(
+      'leaves no staging or backup directory behind after a successful call',
+      () async {
+        const fs = IoCliFileSystem();
+        final exePath = pathIn(tempDir, 'cx');
+        io.Directory(pathIn(tempDir, 'assets')).createSync();
+
+        await fs.writeInstallationArchive(
+          executablePath: exePath,
+          executableBytes: [1],
+          directories: {
+            'assets': {
+              'a.txt': [2],
+            },
+          },
+          revalidate: () async {},
+        );
+
+        final leftovers = tempDir
+            .listSync()
+            .map((e) => e.path.split(io.Platform.pathSeparator).last)
+            .where((name) => name != 'cx' && name != 'assets')
+            .toList();
+        expect(leftovers, isEmpty);
+      },
+    );
+
+    test('calls revalidate after staging but before either the directories or '
+        'the executable are committed', () async {
+      const fs = IoCliFileSystem();
+      final exePath = pathIn(tempDir, 'cx');
+      io.File(exePath).writeAsBytesSync([9, 9, 9]);
+      final assetsDir = io.Directory(pathIn(tempDir, 'assets'))..createSync();
+      io.File(pathIn(assetsDir, 'old.txt')).writeAsBytesSync([9]);
+
+      bool? assetsStillHadOldFileAtRevalidateTime;
+      List<int>? exeContentAtRevalidateTime;
+
+      await fs.writeInstallationArchive(
+        executablePath: exePath,
+        executableBytes: [1],
+        directories: {
+          'assets': {
+            'new.txt': [2],
+          },
+        },
+        revalidate: () async {
+          assetsStillHadOldFileAtRevalidateTime = io.File(
+            pathIn(assetsDir, 'old.txt'),
+          ).existsSync();
+          exeContentAtRevalidateTime = io.File(exePath).readAsBytesSync();
+        },
+      );
+
+      expect(
+        assetsStillHadOldFileAtRevalidateTime,
+        isTrue,
+        reason: 'revalidate must see the pre-commit directory contents',
+      );
+      expect(
+        exeContentAtRevalidateTime,
+        [9, 9, 9],
+        reason: 'revalidate must see the pre-commit executable content',
+      );
+    });
+
+    test('nothing is committed and no staging directory is left behind when '
+        'revalidate throws', () async {
+      const fs = IoCliFileSystem();
+      final exePath = pathIn(tempDir, 'cx');
+      io.File(exePath).writeAsBytesSync([9, 9, 9]);
+
+      await expectLater(
+        fs.writeInstallationArchive(
+          executablePath: exePath,
+          executableBytes: [1],
+          directories: {
+            'assets': {
+              'new.txt': [2],
+            },
+          },
+          revalidate: () async {
+            throw StateError('target changed since this plan was built');
+          },
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(io.File(exePath).readAsBytesSync(), [9, 9, 9]);
+      expect(io.Directory(pathIn(tempDir, 'assets')).existsSync(), isFalse);
+      final leftovers = tempDir
+          .listSync()
+          .where((e) => e.path != exePath)
+          .toList();
+      expect(leftovers, isEmpty);
+    });
+
+    test(
+      'rolls back a directory already committed in this call when a later '
+      'directory fails to commit, and leaves the executable untouched',
+      () async {
+        const fs = IoCliFileSystem();
+        final exePath = pathIn(tempDir, 'cx');
+        io.File(exePath).writeAsBytesSync([9, 9, 9]);
+        // 'templates' already exists as a plain file, not a directory: the
+        // staged 'templates' directory cannot be renamed into a path a file
+        // already occupies, which fails that directory's commit
+        // deterministically without needing to fake the filesystem.
+        final blockedTemplatesPath = pathIn(tempDir, 'templates');
+        io.File(blockedTemplatesPath).writeAsBytesSync([0]);
+
+        await expectLater(
+          fs.writeInstallationArchive(
+            executablePath: exePath,
+            executableBytes: [1],
+            directories: {
+              'assets': {
+                'a.txt': [2],
+              },
+              'templates': {
+                't.txt': [3],
+              },
+            },
+            revalidate: () async {},
+          ),
+          throwsA(isA<Object>()),
+        );
+
+        expect(
+          io.Directory(pathIn(tempDir, 'assets')).existsSync(),
+          isFalse,
+          reason:
+              'assets committed successfully in this call, then had to be '
+              'rolled back once templates failed to commit',
+        );
+        expect(
+          io.File(blockedTemplatesPath).readAsBytesSync(),
+          [0],
+          reason: 'the file blocking templates must be left exactly as is',
+        );
+        expect(io.File(exePath).readAsBytesSync(), [9, 9, 9]);
+        final leftovers = tempDir
+            .listSync()
+            .map((e) => e.path.split(io.Platform.pathSeparator).last)
+            .where((name) => name != 'cx' && name != 'templates')
+            .toList();
+        expect(
+          leftovers,
+          isEmpty,
+          reason: 'no staging or backup directory should remain',
+        );
+      },
+    );
+
+    test('rolls back every directory already committed in this call when '
+        'committing the executable fails', () async {
+      const fs = IoCliFileSystem();
+      final exePath = pathIn(tempDir, 'cx');
+      // The executable's own target is already a directory: the staged
+      // temp file cannot be put in its place, which fails the executable
+      // commit deterministically without needing to fake the filesystem.
+      io.Directory(exePath).createSync();
+
+      await expectLater(
+        fs.writeInstallationArchive(
+          executablePath: exePath,
+          executableBytes: [1],
+          directories: {
+            'assets': {
+              'a.txt': [2],
+            },
+          },
+          revalidate: () async {},
+        ),
+        throwsA(isA<Object>()),
+      );
+
+      expect(
+        io.Directory(pathIn(tempDir, 'assets')).existsSync(),
+        isFalse,
+        reason:
+            'assets committed successfully in this call, then had to be '
+            'rolled back once the executable failed to commit',
+      );
+      expect(
+        io.Directory(exePath).existsSync(),
+        isTrue,
+        reason: 'the directory blocking the executable must be left as is',
+      );
+      final leftovers = tempDir
+          .listSync()
+          .map((e) => e.path.split(io.Platform.pathSeparator).last)
+          .where((name) => name != 'cx')
+          .toList();
+      expect(
+        leftovers,
+        isEmpty,
+        reason: 'no staging or backup directory should remain',
+      );
+    });
+
+    test('restores an existing directory from backup when a later directory '
+        'fails to commit', () async {
+      const fs = IoCliFileSystem();
+      final exePath = pathIn(tempDir, 'cx');
+      io.File(exePath).writeAsBytesSync([9, 9, 9]);
+      final assetsDir = io.Directory(pathIn(tempDir, 'assets'))..createSync();
+      io.File(pathIn(assetsDir, 'old.txt')).writeAsBytesSync([9]);
+      final blockedTemplatesPath = pathIn(tempDir, 'templates');
+      io.File(blockedTemplatesPath).writeAsBytesSync([0]);
+
+      await expectLater(
+        fs.writeInstallationArchive(
+          executablePath: exePath,
+          executableBytes: [1],
+          directories: {
+            'assets': {
+              'new.txt': [2],
+            },
+            'templates': {
+              't.txt': [3],
+            },
+          },
+          revalidate: () async {},
+        ),
+        throwsA(isA<Object>()),
+      );
+
+      expect(
+        io.File(pathIn(assetsDir, 'old.txt')).existsSync(),
+        isTrue,
+        reason:
+            'the previous assets directory must be restored from its '
+            'backup, not merely absent',
+      );
+      expect(io.File(pathIn(assetsDir, 'new.txt')).existsSync(), isFalse);
+      final leftovers = tempDir
+          .listSync()
+          .map((e) => e.path.split(io.Platform.pathSeparator).last)
+          .where(
+            (name) => name != 'cx' && name != 'assets' && name != 'templates',
+          )
+          .toList();
+      expect(
+        leftovers,
+        isEmpty,
+        reason: 'no backup directory should remain after rollback',
+      );
+    });
   });
 
   group('writeExecutable (Windows rename-failure restore)', () {
@@ -474,8 +774,7 @@ void main() {
       'skipped in favor of the next PATH entry',
       () {
         final firstDir = io.Directory(pathIn(tempDir, 'first'))..createSync();
-        final secondDir = io.Directory(pathIn(tempDir, 'second'))
-          ..createSync();
+        final secondDir = io.Directory(pathIn(tempDir, 'second'))..createSync();
         final notExecutable = pathIn(firstDir, 'cx');
         final executable = pathIn(secondDir, 'cx');
         io.File(notExecutable).writeAsBytesSync([1]);
@@ -618,10 +917,7 @@ void main() {
           io.FileSystemException('permission denied comparing identity'),
         );
 
-        expect(
-          () => fs.sameFile(a, b),
-          throwsA(isA<io.FileSystemException>()),
-        );
+        expect(() => fs.sameFile(a, b), throwsA(isA<io.FileSystemException>()));
       },
     );
   });
@@ -653,42 +949,35 @@ void main() {
     // (UpgradeCommand.steps, UninstallCommand.steps) is the one that turns
     // this into a file-access-denied failure; canonicalize's own job is
     // only to surface the failure rather than hide it.
-    test(
-      'propagates the failure rather than returning the path itself when '
-      'nothing exists there',
-      () {
-        const fs = IoCliFileSystem();
-        final missing = pathIn(tempDir, 'does-not-exist');
-        expect(
-          () => fs.canonicalize(missing),
-          throwsA(isA<io.FileSystemException>()),
-        );
-      },
-    );
+    test('propagates the failure rather than returning the path itself when '
+        'nothing exists there', () {
+      const fs = IoCliFileSystem();
+      final missing = pathIn(tempDir, 'does-not-exist');
+      expect(
+        () => fs.canonicalize(missing),
+        throwsA(isA<io.FileSystemException>()),
+      );
+    });
 
-    test(
-      'propagates the failure for a dangling symlink instead of returning '
-      'the link path itself',
-      () {
-        final target = pathIn(tempDir, 'real');
-        io.File(target).writeAsBytesSync([1]);
-        final linkPath = pathIn(tempDir, 'link');
-        try {
-          io.Link(linkPath).createSync(target);
-        } on io.FileSystemException catch (e) {
-          markTestSkipped('could not create a symlink fixture: $e');
-          return;
-        }
-        io.File(target).deleteSync();
+    test('propagates the failure for a dangling symlink instead of returning '
+        'the link path itself', () {
+      final target = pathIn(tempDir, 'real');
+      io.File(target).writeAsBytesSync([1]);
+      final linkPath = pathIn(tempDir, 'link');
+      try {
+        io.Link(linkPath).createSync(target);
+      } on io.FileSystemException catch (e) {
+        markTestSkipped('could not create a symlink fixture: $e');
+        return;
+      }
+      io.File(target).deleteSync();
 
-        const fs = IoCliFileSystem();
-        expect(
-          () => fs.canonicalize(linkPath),
-          throwsA(isA<io.FileSystemException>()),
-        );
-      },
-      skip: io.Platform.isWindows ? 'POSIX symlink semantics only' : false,
-    );
+      const fs = IoCliFileSystem();
+      expect(
+        () => fs.canonicalize(linkPath),
+        throwsA(isA<io.FileSystemException>()),
+      );
+    }, skip: io.Platform.isWindows ? 'POSIX symlink semantics only' : false);
   });
 }
 
