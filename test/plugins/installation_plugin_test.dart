@@ -171,6 +171,84 @@ void main() {
       expect(code, ExitCode.validationFailed);
     });
 
+    group('--help and invalid flag combinations have no side effects', () {
+      test('--help prints help and never looks up a release', () async {
+        final downloader = FakeDownloader();
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final cli = _cliWith(
+          _upgradePlugin(
+            // A steps() call that reached this would throw, since --help
+            // must never get far enough to call it.
+            releaseError: StateError('steps() must not run for --help'),
+            downloader: downloader,
+            fileSystem: fileSystem,
+          ),
+        );
+
+        final out = MemorySink();
+        final code = await cli.run(['upgrade', '--help'], stdout: out);
+
+        expect(code, ExitCode.ok);
+        expect(downloader.requested, isEmpty);
+        expect(fileSystem.written, isEmpty);
+        expect(fileSystem.deleted, isEmpty);
+      });
+
+      test('both --plan and --apply together is refused before any release is '
+          'looked up', () async {
+        final downloader = FakeDownloader();
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final cli = _cliWith(
+          _upgradePlugin(
+            releaseError: StateError(
+              'steps() must not run for an invalid flag combination',
+            ),
+            downloader: downloader,
+            fileSystem: fileSystem,
+          ),
+        );
+
+        final err = MemorySink();
+        final code = await cli.run([
+          'upgrade',
+          '--plan',
+          '--apply',
+        ], stderr: err);
+
+        expect(code, ExitCode.validationFailed);
+        expect(downloader.requested, isEmpty);
+        expect(fileSystem.written, isEmpty);
+        expect(fileSystem.deleted, isEmpty);
+      });
+
+      test(
+        '--autoapprove on its own is refused before any release is looked up',
+        () async {
+          final downloader = FakeDownloader();
+          final fileSystem = FakeFileSystem(
+            onPath: {'cx': '/usr/local/bin/cx'},
+          );
+          final cli = _cliWith(
+            _upgradePlugin(
+              releaseError: StateError(
+                'steps() must not run for an invalid flag combination',
+              ),
+              downloader: downloader,
+              fileSystem: fileSystem,
+            ),
+          );
+
+          final err = MemorySink();
+          final code = await cli.run(['upgrade', '--autoapprove'], stderr: err);
+
+          expect(code, ExitCode.validationFailed);
+          expect(downloader.requested, isEmpty);
+          expect(fileSystem.written, isEmpty);
+          expect(fileSystem.deleted, isEmpty);
+        },
+      );
+    });
+
     test(
       '--plan shows the release it would install and changes nothing',
       () async {
@@ -1176,6 +1254,69 @@ void main() {
 
       final code = await cli.run(['uninstall'], stderr: MemorySink());
       expect(code, ExitCode.validationFailed);
+    });
+
+    group('--help and invalid flag combinations have no side effects', () {
+      test('--help prints help and never touches the filesystem', () async {
+        final fileSystem = FakeFileSystem(
+          onPath: {
+            'cx': '/usr/local/bin/cx',
+            'calculatrix': '/usr/local/bin/cx',
+          },
+        );
+        final cli = _cliWith(_upgradePlugin(fileSystem: fileSystem));
+
+        final out = MemorySink();
+        final code = await cli.run(['uninstall', '--help'], stdout: out);
+
+        expect(code, ExitCode.ok);
+        expect(fileSystem.deleted, isEmpty);
+        expect(fileSystem.deletedDirectories, isEmpty);
+        expect(fileSystem.renamed, isEmpty);
+      });
+
+      test(
+        'both --plan and --apply together is refused and deletes nothing',
+        () async {
+          final fileSystem = FakeFileSystem(
+            onPath: {
+              'cx': '/usr/local/bin/cx',
+              'calculatrix': '/usr/local/bin/cx',
+            },
+          );
+          final cli = _cliWith(_upgradePlugin(fileSystem: fileSystem));
+
+          final err = MemorySink();
+          final code = await cli.run([
+            'uninstall',
+            '--plan',
+            '--apply',
+          ], stderr: err);
+
+          expect(code, ExitCode.validationFailed);
+          expect(fileSystem.deleted, isEmpty);
+          expect(fileSystem.deletedDirectories, isEmpty);
+          expect(fileSystem.renamed, isEmpty);
+        },
+      );
+
+      test('--autoapprove on its own is refused and deletes nothing', () async {
+        final fileSystem = FakeFileSystem(
+          onPath: {
+            'cx': '/usr/local/bin/cx',
+            'calculatrix': '/usr/local/bin/cx',
+          },
+        );
+        final cli = _cliWith(_upgradePlugin(fileSystem: fileSystem));
+
+        final err = MemorySink();
+        final code = await cli.run(['uninstall', '--autoapprove'], stderr: err);
+
+        expect(code, ExitCode.validationFailed);
+        expect(fileSystem.deleted, isEmpty);
+        expect(fileSystem.deletedDirectories, isEmpty);
+        expect(fileSystem.renamed, isEmpty);
+      });
     });
 
     test('nothing on PATH: nothing to do', () async {
