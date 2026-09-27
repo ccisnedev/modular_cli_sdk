@@ -1612,6 +1612,282 @@ void main() {
           ? 'symlink creation needs a privilege this environment may lack'
           : false,
     );
+
+    group('declared directories', () {
+      test(
+        'on POSIX, an existing declared directory is removed outright, '
+        'resolved relative to the executable it was found alongside',
+        () async {
+          final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+            ..existingDirectories.add('/usr/local/bin/assets');
+          final cli = _cliWith(
+            _upgradePlugin(
+              fileSystem: fileSystem,
+              archiveLayouts: const {
+                'linux': CliArchiveLayout(
+                  format: CliArchiveFormat.zip,
+                  executablePath: 'cx',
+                  directories: ['assets'],
+                ),
+              },
+            ),
+          );
+
+          final code = await cli.run([
+            'uninstall',
+            '--apply',
+            '--autoapprove',
+          ], stdout: MemorySink());
+
+          expect(code, ExitCode.ok);
+          expect(fileSystem.deleted, ['/usr/local/bin/cx']);
+          expect(fileSystem.deletedDirectories, ['/usr/local/bin/assets']);
+        },
+      );
+
+      test('a declared directory that does not actually exist is left alone, '
+          'not queued for removal', () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final cli = _cliWith(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            archiveLayouts: const {
+              'linux': CliArchiveLayout(
+                format: CliArchiveFormat.zip,
+                executablePath: 'cx',
+                directories: ['assets'],
+              ),
+            },
+          ),
+        );
+
+        final code = await cli.run([
+          'uninstall',
+          '--apply',
+          '--autoapprove',
+        ], stdout: MemorySink());
+
+        expect(code, ExitCode.ok);
+        expect(fileSystem.deletedDirectories, isEmpty);
+      });
+
+      test(
+        'a failure to remove a declared directory reports file-access-denied',
+        () async {
+          final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+            ..existingDirectories.add('/usr/local/bin/assets')
+            ..deleteDirectoryError = Exception('busy');
+          final cli = _cliWith(
+            _upgradePlugin(
+              fileSystem: fileSystem,
+              archiveLayouts: const {
+                'linux': CliArchiveLayout(
+                  format: CliArchiveFormat.zip,
+                  executablePath: 'cx',
+                  directories: ['assets'],
+                ),
+              },
+            ),
+          );
+
+          final err = MemorySink();
+          final code = await cli.run([
+            'uninstall',
+            '--apply',
+            '--autoapprove',
+          ], stderr: err);
+
+          expect(code, ExitCode.genericError);
+          expect(err.output, contains('file-access-denied'));
+        },
+      );
+
+      test(
+        'a failure to check whether the declared directory itself is '
+        'directory reports file-access-denied rather than crashing',
+        () async {
+          final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+            ..isDirectoryError = Exception('permission denied');
+          final cli = _cliWith(
+            _upgradePlugin(
+              fileSystem: fileSystem,
+              archiveLayouts: const {
+                'linux': CliArchiveLayout(
+                  format: CliArchiveFormat.zip,
+                  executablePath: 'cx',
+                  directories: ['assets'],
+                ),
+              },
+            ),
+          );
+
+          final err = MemorySink();
+          final code = await cli.run([
+            'uninstall',
+            '--apply',
+            '--autoapprove',
+          ], stderr: err);
+
+          expect(code, ExitCode.genericError);
+          expect(err.output, contains('file-access-denied'));
+        },
+      );
+
+      test('a failure to resolve the executable path itself, when directories '
+          'are declared, reports file-access-denied', () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+          ..canonicalizeError = Exception('too many levels of symbolic links');
+        final cli = _cliWith(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            archiveLayouts: const {
+              'linux': CliArchiveLayout(
+                format: CliArchiveFormat.zip,
+                executablePath: 'cx',
+                directories: ['assets'],
+              ),
+            },
+          ),
+        );
+
+        final err = MemorySink();
+        final code = await cli.run([
+          'uninstall',
+          '--apply',
+          '--autoapprove',
+        ], stderr: err);
+
+        expect(code, ExitCode.genericError);
+        expect(err.output, contains('file-access-denied'));
+      });
+
+      test('on Windows, declared directories are handed to the same cleanup '
+          'worker call as the executable, deferred rather than deleted '
+          'outright, and reported as scheduled', () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+          ..existingDirectories.add('/usr/local/bin/assets');
+        final processLauncher = FakeProcessLauncher(pid: 4242);
+        final cli = _cliWith(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            platform: const FakePlatform('windows'),
+            processLauncher: processLauncher,
+            archiveLayouts: const {
+              'windows': CliArchiveLayout(
+                format: CliArchiveFormat.zip,
+                executablePath: 'cx',
+                directories: ['assets'],
+              ),
+            },
+          ),
+        );
+
+        final out = MemorySink();
+        final code = await cli.run([
+          'uninstall',
+          '--apply',
+          '--autoapprove',
+        ], stdout: out);
+
+        expect(code, ExitCode.ok);
+        // Not deleted outright: handed to the deferred worker instead,
+        // exactly like the executable itself.
+        expect(fileSystem.deletedDirectories, isEmpty);
+        final payload = processLauncher.startedCleanupWorkers.single;
+        expect(payload['recursivePaths'], ['/usr/local/bin/assets']);
+        expect(out.output, contains('scheduled: ['));
+        expect(out.output, contains('/usr/local/bin/assets'));
+      });
+    });
+
+    group('cmdShim alias removal', () {
+      test('a shim whose content names this executable is removed, before the '
+          'executable itself', () async {
+        final fileSystem =
+            FakeFileSystem(
+                onPath: {
+                  'cx': '/usr/local/bin/cx',
+                  'calculatrix': '/usr/local/bin/calculatrix.cmd',
+                },
+              )
+              ..fileContents['/usr/local/bin/calculatrix.cmd'] =
+                  '@"%~dp0cx.exe" %*\r\n';
+        final cli = _cliWith(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            aliasStrategies: const {'linux': CliAliasStrategy.cmdShim},
+          ),
+        );
+
+        final code = await cli.run([
+          'uninstall',
+          '--apply',
+          '--autoapprove',
+        ], stdout: MemorySink());
+
+        expect(code, ExitCode.ok);
+        expect(fileSystem.deleted, [
+          '/usr/local/bin/calculatrix.cmd',
+          '/usr/local/bin/cx',
+        ]);
+      });
+
+      test(
+        'a shim whose content does not name this executable is left alone',
+        () async {
+          final fileSystem =
+              FakeFileSystem(
+                  onPath: {
+                    'cx': '/usr/local/bin/cx',
+                    'calculatrix': '/usr/local/bin/calculatrix.cmd',
+                  },
+                )
+                ..fileContents['/usr/local/bin/calculatrix.cmd'] =
+                    '@"%~dp0some-other-tool.exe" %*\r\n';
+          final cli = _cliWith(
+            _upgradePlugin(
+              fileSystem: fileSystem,
+              aliasStrategies: const {'linux': CliAliasStrategy.cmdShim},
+            ),
+          );
+
+          final code = await cli.run([
+            'uninstall',
+            '--apply',
+            '--autoapprove',
+          ], stdout: MemorySink());
+
+          expect(code, ExitCode.ok);
+          expect(fileSystem.deleted, ['/usr/local/bin/cx']);
+        },
+      );
+
+      test('a shim that cannot be read reports file-access-denied rather than '
+          'crashing or silently skipping it', () async {
+        final fileSystem = FakeFileSystem(
+          onPath: {
+            'cx': '/usr/local/bin/cx',
+            'calculatrix': '/usr/local/bin/calculatrix.cmd',
+          },
+        )..readAsStringError = Exception('permission denied');
+        final cli = _cliWith(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            aliasStrategies: const {'linux': CliAliasStrategy.cmdShim},
+          ),
+        );
+
+        final err = MemorySink();
+        final code = await cli.run([
+          'uninstall',
+          '--apply',
+          '--autoapprove',
+        ], stderr: err);
+
+        expect(code, ExitCode.genericError);
+        expect(err.output, contains('file-access-denied'));
+      });
+    });
   });
 
   group('doctor checks contributed by InstallationPlugin', () {
