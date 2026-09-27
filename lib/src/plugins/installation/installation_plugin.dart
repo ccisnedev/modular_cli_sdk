@@ -10,6 +10,7 @@ import '../../input.dart';
 import '../../output.dart';
 import '../../skips_interactive_approval.dart';
 import '../doctor_plugin.dart';
+import 'cli_archive_extractor.dart';
 import 'cli_downloader.dart';
 import 'cli_file_system.dart';
 import 'cli_platform.dart';
@@ -36,11 +37,14 @@ class InstallationPlugin implements CliPlugin {
     CliFileSystem? fileSystem,
     CliPlatform? platform,
     CliProcessLauncher? processLauncher,
+    CliArchiveExtractor? archiveExtractor,
+    this.postUpgradeSteps,
   }) : releaseSource = releaseSource ?? HttpCliReleaseSource(),
        downloader = downloader ?? HttpCliDownloader(),
        fileSystem = fileSystem ?? const IoCliFileSystem(),
        platform = platform ?? const IoCliPlatform(),
-       processLauncher = processLauncher ?? const IoCliProcessLauncher();
+       processLauncher = processLauncher ?? const IoCliProcessLauncher(),
+       archiveExtractor = archiveExtractor ?? const ArchiveCliArchiveExtractor();
 
   final CliInstallationConfig config;
   final CliReleaseSource releaseSource;
@@ -48,6 +52,17 @@ class InstallationPlugin implements CliPlugin {
   final CliFileSystem fileSystem;
   final CliPlatform platform;
   final CliProcessLauncher processLauncher;
+  final CliArchiveExtractor archiveExtractor;
+
+  /// Extra steps a consumer CLI runs after `upgrade` has successfully
+  /// installed the new release, e.g. inquiry redeploying its agents from the
+  /// freshly-installed assets. Called once per `upgrade` run, after the
+  /// install step has been built (not yet run): the returned steps are
+  /// appended to [UpgradeCommand.steps]'s own list, so they only execute,
+  /// and only appear in a `--plan`, after a successful install, and a
+  /// failure in one of them is reported the same way any other step's
+  /// failure is.
+  final List<Step> Function()? postUpgradeSteps;
 
   @override
   CliPluginManifest get manifest => CliPluginManifest(
@@ -82,7 +97,9 @@ class InstallationPlugin implements CliPlugin {
         downloader: downloader,
         fileSystem: fileSystem,
         platform: platform,
+        archiveExtractor: archiveExtractor,
         currentVersion: host.metadata().version,
+        postUpgradeSteps: postUpgradeSteps,
       ),
       globals: true,
       description: 'Upgrade to the latest release',
@@ -124,6 +141,11 @@ class InstallationPlugin implements CliPlugin {
   }
 
   Future<CliCheckResult> _checkAlias() async {
+    if (config.aliasStrategyFor(platform.operatingSystem) ==
+        CliAliasStrategy.cmdShim) {
+      return _checkCmdShimAlias();
+    }
+
     final String? aliasPath;
     final String? binaryPath;
     try {
@@ -177,6 +199,53 @@ class InstallationPlugin implements CliPlugin {
     return CliCheckResult(
       status: CliCheckStatus.ok,
       message: '${config.alias} resolves to ${config.executable}',
+    );
+  }
+
+  /// The `alias` doctor check for [CliAliasStrategy.cmdShim]: a shim is
+  /// deliberately a distinct file from [config.executable], invoking it
+  /// rather than being it, so it cannot be recognized by same-file identity
+  /// the way a symlinked alias is. Its content is read instead, and the
+  /// check passes when it mentions [config.executable] at all: this plugin
+  /// does not create the shim itself (a consumer's own release tooling
+  /// does), so it does not assume one exact script form to match verbatim.
+  Future<CliCheckResult> _checkCmdShimAlias() async {
+    final String? aliasPath;
+    try {
+      aliasPath = fileSystem.resolveOnPath(config.alias);
+    } on Object catch (e) {
+      return CliCheckResult(
+        status: CliCheckStatus.error,
+        message: 'could not check whether ${config.alias} is on PATH: $e',
+      );
+    }
+    if (aliasPath == null) {
+      return CliCheckResult(
+        status: CliCheckStatus.error,
+        message: '${config.alias} was not found on PATH',
+      );
+    }
+
+    final String content;
+    try {
+      content = fileSystem.readAsString(aliasPath);
+    } on Object catch (e) {
+      return CliCheckResult(
+        status: CliCheckStatus.error,
+        message: 'could not read ${config.alias} shim at $aliasPath: $e',
+      );
+    }
+    if (!content.contains(config.executable)) {
+      return CliCheckResult(
+        status: CliCheckStatus.error,
+        message:
+            '${config.alias} at $aliasPath does not appear to invoke '
+            '${config.executable}',
+      );
+    }
+    return CliCheckResult(
+      status: CliCheckStatus.ok,
+      message: '${config.alias} shim at $aliasPath invokes ${config.executable}',
     );
   }
 
@@ -240,6 +309,8 @@ class CliInstallationConfig {
     required this.executable,
     required this.alias,
     required this.assets,
+    this.archiveLayouts = const {},
+    this.aliasStrategies = const {},
   });
 
   /// `owner/repo` on GitHub, e.g. `'ccisnedev/calculatrix'`.
@@ -259,6 +330,82 @@ class CliInstallationConfig {
   /// [CliPlatform.operatingSystem] → the name of the release asset for that
   /// platform.
   final Map<String, String> assets;
+
+  /// [CliPlatform.operatingSystem] → the archive layout for that platform's
+  /// release asset. A platform with no entry here has its asset installed
+  /// as a bare, ready-to-run executable, exactly as every 0.7.0 config
+  /// already does; this defaults to the empty map for that reason, so an
+  /// existing config is unaffected by upgrading this SDK.
+  final Map<String, CliArchiveLayout> archiveLayouts;
+
+  /// [CliPlatform.operatingSystem] → how [alias] is created and recognized
+  /// on that platform. A platform with no entry here uses
+  /// [CliAliasStrategy.symlink], 0.7.0's only behavior; this defaults to the
+  /// empty map for the same backward-compatibility reason as
+  /// [archiveLayouts].
+  final Map<String, CliAliasStrategy> aliasStrategies;
+
+  /// The archive layout declared for [operatingSystem], or null when that
+  /// platform's asset is a bare executable.
+  CliArchiveLayout? archiveLayoutFor(String operatingSystem) =>
+      archiveLayouts[operatingSystem];
+
+  /// The alias strategy declared for [operatingSystem], defaulting to
+  /// [CliAliasStrategy.symlink] when [operatingSystem] has no entry in
+  /// [aliasStrategies].
+  CliAliasStrategy aliasStrategyFor(String operatingSystem) =>
+      aliasStrategies[operatingSystem] ?? CliAliasStrategy.symlink;
+}
+
+/// Where an archive layout's [CliArchiveFormat] and executable path apply,
+/// declared per [CliPlatform.operatingSystem] in
+/// [CliInstallationConfig.archiveLayouts]. Declaring one for a platform
+/// switches [UpgradeCommand] from installing that platform's release asset
+/// as a bare executable to downloading it, extracting it, and installing
+/// its executable and declared directories instead.
+class CliArchiveLayout {
+  const CliArchiveLayout({
+    required this.format,
+    required this.executablePath,
+    this.directories = const [],
+  });
+
+  /// Whether the release asset for this platform is a zip or a tar.gz.
+  final CliArchiveFormat format;
+
+  /// The executable's path inside the archive, e.g. `'bin/docmd'`. Matched
+  /// against a [CliArchiveEntry.path] exactly, which is always
+  /// `/`-separated regardless of the platform this runs on.
+  final String executablePath;
+
+  /// The sibling directories, alongside the installed executable's own
+  /// parent directory, that this archive also installs, e.g. `['assets']`
+  /// for a CLI that resolves an assets tree relative to its own executable
+  /// path at runtime. Every archive entry whose path starts with `'<name>/'`
+  /// for a name in this list is installed into that directory, relative to
+  /// it; an entry under any other prefix is ignored.
+  final List<String> directories;
+}
+
+/// How [CliInstallationConfig.alias] is created and recognized, declared per
+/// [CliPlatform.operatingSystem] in [CliInstallationConfig.aliasStrategies].
+enum CliAliasStrategy {
+  /// A symlink to [CliInstallationConfig.executable]. 0.7.0's only
+  /// behavior, and the default for a platform with no explicit entry in
+  /// [CliInstallationConfig.aliasStrategies], so an existing config is
+  /// unaffected.
+  symlink,
+
+  /// A `.cmd` shim script that invokes [CliInstallationConfig.executable],
+  /// e.g. `@"%~dp0docmd.exe" %*`. Meant for Windows, where a real symlink
+  /// needs an elevated prompt or Developer Mode that an installed CLI's own
+  /// `upgrade`/`uninstall` cannot assume. Creating the shim itself is
+  /// outside this plugin's scope, the same way installing an archive's
+  /// executable does not involve building that executable: a consumer's own
+  /// release tooling produces it. This plugin only recognizes an existing
+  /// one, for the `alias` doctor check and for `uninstall`'s decision to
+  /// remove it.
+  cmdShim,
 }
 
 /// Thrown by [latestTaggedRelease] when a release's tag carries [CliInstallationConfig.tagPrefix]
@@ -460,7 +607,9 @@ class UpgradeCommand
     required this.fileSystem,
     required this.platform,
     required this.currentVersion,
-  });
+    CliArchiveExtractor? archiveExtractor,
+    this.postUpgradeSteps,
+  }) : archiveExtractor = archiveExtractor ?? const ArchiveCliArchiveExtractor();
 
   @override
   final UpgradeInput input;
@@ -471,6 +620,13 @@ class UpgradeCommand
   final CliFileSystem fileSystem;
   final CliPlatform platform;
   final String currentVersion;
+  final CliArchiveExtractor archiveExtractor;
+
+  /// See [InstallationPlugin.postUpgradeSteps]. Called once, after the
+  /// install step for this run has been built, and its steps appended after
+  /// it: they run, and appear in a `--plan`, only following that install
+  /// step's own successful completion.
+  final List<Step> Function()? postUpgradeSteps;
 
   String? _nothingToDo;
   String? _latestVersion;
@@ -622,13 +778,31 @@ class UpgradeCommand
       url: asset.downloadUrl,
       assetName: asset.name,
     );
-    final install = InstallExecutableStep(
-      fileSystem: fileSystem,
-      config: config,
-      path: resolvedPath,
-      download: download,
-    );
-    return [download, install];
+    // The same, already-selected release's asset backs both: nothing here
+    // looks up "latest" a second time, so the executable and its declared
+    // directories always come from the exact release this run resolved
+    // above, never a release that may have shipped in the meantime.
+    final layout = config.archiveLayoutFor(platform.operatingSystem);
+    final Step install = layout == null
+        ? InstallExecutableStep(
+            fileSystem: fileSystem,
+            config: config,
+            path: resolvedPath,
+            download: download,
+          )
+        : InstallArchiveStep(
+            fileSystem: fileSystem,
+            archiveExtractor: archiveExtractor,
+            config: config,
+            layout: layout,
+            path: resolvedPath,
+            download: download,
+          );
+
+    final steps = [download, install];
+    final extraSteps = postUpgradeSteps?.call();
+    if (extraSteps != null) steps.addAll(extraSteps);
+    return steps;
   }
 
   @override
@@ -725,97 +899,7 @@ class InstallExecutableStep implements Step {
   @override
   Future<Outcome> perform(StepContext context) async {
     final bytes = context.outcomeOf(download).values['bytes'] as List<int>;
-
-    // Re-resolve the original PATH entry and require it still resolves to
-    // [path], the exact target this plan showed. Nothing is committed on
-    // any mismatch: the entry disappearing from PATH, resolving somewhere
-    // else now, or the target no longer being a plain file are all
-    // reported as install-target-changed rather than risking a write
-    // through whatever is there now.
-    //
-    // Run by [CliFileSystem.writeExecutable] itself, immediately before its
-    // destructive commit rather than before it starts staging the new
-    // content: staging is the slow, asynchronous part of that call, and
-    // checking before it instead of immediately before the commit would
-    // leave that whole window open for the target to change unnoticed.
-    Future<void> revalidate() async {
-      final String? reResolvedInstallPath;
-      try {
-        reResolvedInstallPath = fileSystem.resolveOnPath(config.executable);
-      } on Object catch (e) {
-        throw CliInstallStepFailure(
-          'executable-check-failed',
-          'Could not check whether ${config.executable} is on PATH: $e',
-        );
-      }
-      if (reResolvedInstallPath == null) {
-        throw CliInstallStepFailure(
-          'install-target-changed',
-          '${config.executable} is no longer on PATH; it resolved to $path '
-              'when this plan was built.',
-        );
-      }
-
-      final String reResolvedTarget;
-      try {
-        reResolvedTarget = fileSystem.canonicalize(reResolvedInstallPath);
-      } on Object catch (e) {
-        throw CliInstallStepFailure(
-          'install-target-changed',
-          'Could not resolve $reResolvedInstallPath to an install target '
-              'any more: $e. It resolved to $path when this plan was '
-              'built.',
-        );
-      }
-      if (reResolvedTarget != path) {
-        throw CliInstallStepFailure(
-          'install-target-changed',
-          '${config.executable} now resolves to $reResolvedTarget, not '
-              '$path as it did when this plan was built.',
-        );
-      }
-
-      if (!fileSystem.isRegularFile(path)) {
-        throw CliInstallStepFailure(
-          'install-target-changed',
-          '$path is no longer a regular file; refusing to write over it.',
-        );
-      }
-
-      // Checked again here, not only when the plan was built: the alias
-      // could have been turned into a hard link to the executable in the
-      // same window a symlinked PATH entry could have been repointed in.
-      String? aliasPath;
-      try {
-        aliasPath = fileSystem.resolveOnPath(config.alias);
-      } on Object catch (e) {
-        throw CliInstallStepFailure(
-          'executable-check-failed',
-          'Could not check whether ${config.alias} is on PATH: $e',
-        );
-      }
-      final String? hardLinkIssue;
-      try {
-        hardLinkIssue = hardLinkedAliasIssue(
-          fileSystem,
-          config,
-          aliasPath,
-          reResolvedInstallPath,
-        );
-      } on AliasIdentityCheckFailure catch (e) {
-        throw CliInstallStepFailure(
-          'executable-check-failed',
-          'Could not check whether ${config.alias} is a hard link to '
-              '${config.executable}: $e',
-        );
-      }
-      if (hardLinkIssue != null) {
-        throw CliInstallStepFailure(
-          'alias-hard-link-unsupported',
-          hardLinkIssue,
-        );
-      }
-    }
+    final revalidate = installTargetRevalidator(fileSystem, config, path);
 
     try {
       await fileSystem.writeExecutable(path, bytes, revalidate: revalidate);
@@ -830,6 +914,201 @@ class InstallExecutableStep implements Step {
       throw CliInstallStepFailure(
         'file-access-denied',
         'Could not write $path: $e',
+      );
+    }
+    return Outcome(verb: 'install', target: path);
+  }
+}
+
+/// Builds the revalidate callback [InstallExecutableStep] and
+/// [InstallArchiveStep] both pass to [CliFileSystem]: re-checks, immediately
+/// before the destructive commit, that [config.executable] still resolves
+/// to [path], the exact single install target this plan was built against,
+/// and that [config.alias] is still not an unsupported hard link to it.
+/// Shared so the same install-target-changed and
+/// alias-hard-link-unsupported checks apply whether the release asset is a
+/// bare executable or an archive.
+///
+/// Run by [CliFileSystem.writeExecutable] (or, for an archive,
+/// [CliFileSystem.writeInstallationArchive]) itself, immediately before its
+/// destructive commit rather than before it starts staging the new
+/// content: staging is the slow, asynchronous part of that call, and
+/// checking before it instead of immediately before the commit would leave
+/// that whole window open for the target to change unnoticed.
+Future<void> Function() installTargetRevalidator(
+  CliFileSystem fileSystem,
+  CliInstallationConfig config,
+  String path,
+) {
+  return () async {
+    final String? reResolvedInstallPath;
+    try {
+      reResolvedInstallPath = fileSystem.resolveOnPath(config.executable);
+    } on Object catch (e) {
+      throw CliInstallStepFailure(
+        'executable-check-failed',
+        'Could not check whether ${config.executable} is on PATH: $e',
+      );
+    }
+    if (reResolvedInstallPath == null) {
+      throw CliInstallStepFailure(
+        'install-target-changed',
+        '${config.executable} is no longer on PATH; it resolved to $path '
+            'when this plan was built.',
+      );
+    }
+
+    final String reResolvedTarget;
+    try {
+      reResolvedTarget = fileSystem.canonicalize(reResolvedInstallPath);
+    } on Object catch (e) {
+      throw CliInstallStepFailure(
+        'install-target-changed',
+        'Could not resolve $reResolvedInstallPath to an install target '
+            'any more: $e. It resolved to $path when this plan was built.',
+      );
+    }
+    if (reResolvedTarget != path) {
+      throw CliInstallStepFailure(
+        'install-target-changed',
+        '${config.executable} now resolves to $reResolvedTarget, not '
+            '$path as it did when this plan was built.',
+      );
+    }
+
+    if (!fileSystem.isRegularFile(path)) {
+      throw CliInstallStepFailure(
+        'install-target-changed',
+        '$path is no longer a regular file; refusing to write over it.',
+      );
+    }
+
+    // Checked again here, not only when the plan was built: the alias
+    // could have been turned into a hard link to the executable in the
+    // same window a symlinked PATH entry could have been repointed in.
+    String? aliasPath;
+    try {
+      aliasPath = fileSystem.resolveOnPath(config.alias);
+    } on Object catch (e) {
+      throw CliInstallStepFailure(
+        'executable-check-failed',
+        'Could not check whether ${config.alias} is on PATH: $e',
+      );
+    }
+    final String? hardLinkIssue;
+    try {
+      hardLinkIssue = hardLinkedAliasIssue(
+        fileSystem,
+        config,
+        aliasPath,
+        reResolvedInstallPath,
+      );
+    } on AliasIdentityCheckFailure catch (e) {
+      throw CliInstallStepFailure(
+        'executable-check-failed',
+        'Could not check whether ${config.alias} is a hard link to '
+            '${config.executable}: $e',
+      );
+    }
+    if (hardLinkIssue != null) {
+      throw CliInstallStepFailure('alias-hard-link-unsupported', hardLinkIssue);
+    }
+  };
+}
+
+/// Downloads and installs an archive release asset: extracts it, requires
+/// its declared executable entry ([CliArchiveLayout.executablePath]) to be
+/// present, groups every entry under a declared directory's own `'<name>/'`
+/// prefix, and installs the whole thing as one unit through
+/// [CliFileSystem.writeInstallationArchive], so a failure partway leaves the
+/// previous installation intact rather than a half-upgraded one.
+class InstallArchiveStep implements Step {
+  InstallArchiveStep({
+    required this.fileSystem,
+    required this.archiveExtractor,
+    required this.config,
+    required this.layout,
+    required this.path,
+    required this.download,
+  });
+
+  final CliFileSystem fileSystem;
+  final CliArchiveExtractor archiveExtractor;
+  final CliInstallationConfig config;
+  final CliArchiveLayout layout;
+
+  /// The install target [UpgradeCommand.steps] resolved and planned to
+  /// write to, the same single, already-validated location
+  /// [InstallExecutableStep.path] would be for a bare-executable release:
+  /// the archive's declared directories are installed as this path's
+  /// siblings, never anywhere separately configured.
+  final String path;
+
+  final Step download;
+
+  @override
+  Preview preview() => Preview(
+    verb: 'install',
+    target: path,
+    detail: layout.directories.isEmpty
+        ? null
+        : 'together with ${layout.directories.join(', ')}',
+  );
+
+  @override
+  Future<Outcome> perform(StepContext context) async {
+    final bytes = context.outcomeOf(download).values['bytes'] as List<int>;
+
+    final List<CliArchiveEntry> entries;
+    try {
+      entries = archiveExtractor.extract(bytes, layout.format);
+    } on CliArchiveExtractionFailure catch (e) {
+      throw CliInstallStepFailure(
+        'extraction-failed',
+        'Could not extract the downloaded archive: $e',
+      );
+    }
+
+    final byPath = {for (final entry in entries) entry.path: entry.bytes};
+    final executableBytes = byPath[layout.executablePath];
+    if (executableBytes == null) {
+      throw CliInstallStepFailure(
+        'extraction-failed',
+        'The downloaded archive has no entry at "${layout.executablePath}", '
+            'the executable path declared for this platform.',
+      );
+    }
+
+    final directories = <String, Map<String, List<int>>>{};
+    for (final dirName in layout.directories) {
+      final prefix = '$dirName/';
+      directories[dirName] = {
+        for (final entry in entries)
+          if (entry.path.startsWith(prefix))
+            entry.path.substring(prefix.length): entry.bytes,
+      };
+    }
+
+    final revalidate = installTargetRevalidator(fileSystem, config, path);
+
+    try {
+      await fileSystem.writeInstallationArchive(
+        executablePath: path,
+        executableBytes: executableBytes,
+        directories: directories,
+        revalidate: revalidate,
+      );
+    } on CliInstallStepFailure {
+      rethrow;
+    } on CliExecutableCheckFailure catch (e) {
+      throw CliInstallStepFailure(
+        'executable-check-failed',
+        'Could not check whether $path is executable after writing it: $e',
+      );
+    } on Object catch (e) {
+      throw CliInstallStepFailure(
+        'file-access-denied',
+        'Could not install the archive at $path: $e',
       );
     }
     return Outcome(verb: 'install', target: path);
@@ -948,41 +1227,121 @@ class UninstallCommand
     // this one null-check so aliasPath and executablePath stay promoted to
     // non-null throughout: splitting the boolean result out into its own
     // variable for use further down loses that promotion.
+    final aliasStrategy = config.aliasStrategyFor(platform.operatingSystem);
+
     if (aliasPath != null && executablePath != null) {
-      final bool isSameBinary;
+      final bool ownsAlias;
+      if (aliasStrategy == CliAliasStrategy.cmdShim) {
+        // A shim is deliberately a distinct file from the executable it
+        // invokes, so sameFile identity always reports it as a different
+        // file: that is not evidence this CLI does not own it, the way it
+        // would be for a symlinked alias. Its content is read instead, the
+        // same check the alias doctor check makes for a shim.
+        try {
+          ownsAlias = fileSystem
+              .readAsString(aliasPath)
+              .contains(config.executable);
+        } on Object catch (e) {
+          throw CommandException(
+            id: 'file-access-denied',
+            message: 'Could not read $aliasPath to check whether it is a '
+                'shim for ${config.executable}: $e',
+            exitCode: ExitCode.genericError,
+          );
+        }
+      } else {
+        try {
+          ownsAlias = fileSystem.sameFile(aliasPath, executablePath);
+        } on Object catch (e) {
+          throw CommandException(
+            id: 'file-access-denied',
+            message: 'Could not compare $aliasPath with $executablePath: $e',
+            exitCode: ExitCode.genericError,
+          );
+        }
+      }
+      // The alias's own step is queued before the executable's: deleting
+      // the target first would leave a symlinked alias dangling, and
+      // File.delete on a dangling symlink fails on Linux (it stats through
+      // the link before removing it, and a dangling link has nothing at
+      // the other end to stat). Removing the alias while it is still valid,
+      // then the target, avoids that failure entirely; a shim has no such
+      // dangling state, but removing it first keeps the same ordering
+      // either way.
+      if (ownsAlias && aliasPath != executablePath) {
+        steps.add(RemoveFileStep(fileSystem: fileSystem, path: aliasPath));
+      }
+    }
+
+    // The declared directories for this platform, if any, are resolved
+    // relative to the executable's own resolved location, never a
+    // separately configured path: the same single installation this run
+    // found on PATH is what owns both the executable and its directories.
+    final layout = config.archiveLayoutFor(platform.operatingSystem);
+    final directoryPaths = <String>[];
+    if (executablePath != null &&
+        layout != null &&
+        layout.directories.isNotEmpty) {
+      final String resolvedExecutablePath;
       try {
-        isSameBinary = fileSystem.sameFile(aliasPath, executablePath);
+        resolvedExecutablePath = fileSystem.canonicalize(executablePath);
       } on Object catch (e) {
         throw CommandException(
           id: 'file-access-denied',
-          message: 'Could not compare $aliasPath with $executablePath: $e',
+          message:
+              'Could not resolve $executablePath to locate its installed '
+              'directories: $e',
           exitCode: ExitCode.genericError,
         );
       }
-      // The alias's own step is queued before the executable's: deleting
-      // the target first would leave the symlinked alias dangling, and
-      // File.delete on a dangling symlink fails on Linux (it stats through
-      // the link before removing it, and a dangling link has nothing at
-      // the other end to stat). Removing the alias while it is still a
-      // valid link, then the target, avoids that failure entirely.
-      if (isSameBinary && aliasPath != executablePath) {
-        steps.add(RemoveFileStep(fileSystem: fileSystem, path: aliasPath));
+      final lastSeparator = resolvedExecutablePath.lastIndexOf(
+        RegExp(r'[\\/]'),
+      );
+      final installDir = lastSeparator < 0
+          ? resolvedExecutablePath
+          : resolvedExecutablePath.substring(0, lastSeparator);
+      final separator = lastSeparator < 0
+          ? '/'
+          : resolvedExecutablePath[lastSeparator];
+      for (final dirName in layout.directories) {
+        final dirPath = '$installDir$separator$dirName';
+        final bool exists;
+        try {
+          exists = fileSystem.isDirectory(dirPath);
+        } on Object catch (e) {
+          throw CommandException(
+            id: 'file-access-denied',
+            message: 'Could not check whether $dirPath exists: $e',
+            exitCode: ExitCode.genericError,
+          );
+        }
+        if (exists) directoryPaths.add(dirPath);
       }
     }
 
     if (executablePath != null) {
       // On Windows, the running executable cannot simply be deleted: the
       // loader holds it open. It is instead moved aside and a detached
-      // process is started to delete it once this one has exited.
+      // process is started to delete it once this one has exited; its
+      // declared directories are not locked the same way, but are still
+      // handed to the same worker (deferred, alongside the executable)
+      // rather than deleted outright, since a consumer CLI can itself have
+      // a file under one of them open at the moment this runs.
       steps.add(
         platform.operatingSystem == 'windows'
             ? SelfDeleteExecutableStep(
                 fileSystem: fileSystem,
                 processLauncher: processLauncher,
                 path: executablePath,
+                directories: directoryPaths,
               )
             : RemoveFileStep(fileSystem: fileSystem, path: executablePath),
       );
+      if (platform.operatingSystem != 'windows') {
+        for (final dirPath in directoryPaths) {
+          steps.add(RemoveDirectoryStep(fileSystem: fileSystem, path: dirPath));
+        }
+      }
     }
 
     if (steps.isEmpty) {
@@ -1003,10 +1362,18 @@ class UninstallCommand
         .where((o) => o.verb == 'remove')
         .map((o) => o.target)
         .toList();
-    final scheduled = execution.outcomes
-        .where((o) => o.verb == 'schedule')
-        .map((o) => o.target)
-        .toList();
+    // A schedule outcome's own values may carry 'directories': the paths
+    // SelfDeleteExecutableStep handed to the same cleanup worker call as
+    // the executable, deferred exactly like it rather than deleted
+    // outright. Folded into this same list, not a separate one: from this
+    // output's reader's perspective, they are scheduled the same way the
+    // executable itself is.
+    final scheduled = <String>[];
+    for (final o in execution.outcomes.where((o) => o.verb == 'schedule')) {
+      scheduled.add(o.target);
+      final dirs = o.values['directories'];
+      if (dirs is List) scheduled.addAll(dirs.cast<String>());
+    }
     final notes = execution.outcomes
         .map((o) => o.detail)
         .whereType<String>()
@@ -1076,17 +1443,28 @@ class SelfDeleteExecutableStep implements Step {
     required this.fileSystem,
     required this.processLauncher,
     required this.path,
+    this.directories = const [],
   });
 
   final CliFileSystem fileSystem;
   final CliProcessLauncher processLauncher;
   final String path;
 
+  /// Directories, alongside [path], that the same cleanup worker call also
+  /// deletes (recursively) once this process exits, deferred the same way
+  /// [path] itself is rather than deleted outright: unlike [path], nothing
+  /// here is locked open by the Windows loader, but a consumer CLI can
+  /// itself have a file under one of them open at the moment this runs.
+  final List<String> directories;
+
   @override
   Preview preview() => Preview(
     verb: 'schedule',
     target: path,
-    detail: '$path will be removed when this process exits',
+    detail: directories.isEmpty
+        ? '$path will be removed when this process exits'
+        : '$path and ${directories.join(', ')} will be removed when this '
+              'process exits',
   );
 
   @override
@@ -1107,6 +1485,7 @@ class SelfDeleteExecutableStep implements Step {
       await processLauncher.startCleanupWorker({
         'parentPid': pid,
         'paths': [renamedPath],
+        'recursivePaths': directories,
       });
     } on CliCleanupOutcomeUnknown catch (e) {
       throw CliInstallStepFailure(
@@ -1130,8 +1509,39 @@ class SelfDeleteExecutableStep implements Step {
     return Outcome(
       verb: 'schedule',
       target: path,
-      detail: '$path will be removed when this process exits',
+      detail: directories.isEmpty
+          ? '$path will be removed when this process exits'
+          : '$path and ${directories.join(', ')} will be removed when this '
+                'process exits',
+      values: directories.isEmpty ? const {} : {'directories': directories},
     );
+  }
+}
+
+/// Removes a declared directory outright (POSIX only: Windows defers this
+/// through [SelfDeleteExecutableStep] alongside the executable itself,
+/// since a consumer CLI can have a file under it open at the moment this
+/// runs).
+class RemoveDirectoryStep implements Step {
+  RemoveDirectoryStep({required this.fileSystem, required this.path});
+
+  final CliFileSystem fileSystem;
+  final String path;
+
+  @override
+  Preview preview() => Preview(verb: 'remove', target: path);
+
+  @override
+  Future<Outcome> perform(StepContext context) async {
+    try {
+      await fileSystem.deleteDirectory(path);
+    } on Object catch (e) {
+      throw CliInstallStepFailure(
+        'file-access-denied',
+        'Could not remove $path: $e',
+      );
+    }
+    return Outcome(verb: 'remove', target: path);
   }
 }
 

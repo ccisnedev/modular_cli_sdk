@@ -77,11 +77,42 @@ class FakeFileSystem implements CliFileSystem {
   /// link has no symlink target for it to follow.
   final Set<(String, String)> _hardLinkedPairs = {};
 
+  /// Backs [readAsString]: the content [readAsString] returns for a path
+  /// already present here, keyed by path. A path not present here throws,
+  /// matching a real filesystem's behaviour for a file that does not exist.
+  final Map<String, String> fileContents = {};
+
+  /// Paths this fake reports as a directory from [isDirectory]. Every other
+  /// path is reported as not a directory, matching a freshly written
+  /// install target (a plain file, or nothing at all).
+  final Set<String> existingDirectories = {};
+
+  /// Every directory path passed to [deleteDirectory], in order.
+  final List<String> deletedDirectories = [];
+
+  /// Every archive [writeInstallationArchive] committed, keyed by the
+  /// executable path it was called with, each holding the directories it
+  /// wrote (themselves keyed by directory name, then by file path within
+  /// that directory). This fake does not model true staged/rollback
+  /// atomicity (unlike the write-then-revalidate-then-commit sequence
+  /// [IoCliFileSystem] actually performs): it either simulates full success
+  /// (recording everything and updating [written] for the executable) or
+  /// throws [writeInstallationArchiveError] outright, which is enough to
+  /// drive [InstallArchiveStep] through a fake-based test; the real,
+  /// atomic, rollback-on-failure behaviour is exercised separately against
+  /// a real filesystem.
+  final Map<String, Map<String, Map<String, List<int>>>> installedDirectories =
+      {};
+
   Object? writeError;
   Object? deleteError;
   Object? renameError;
   Object? canonicalizeError;
   Object? resolveOnPathError;
+  Object? readAsStringError;
+  Object? isDirectoryError;
+  Object? deleteDirectoryError;
+  Object? writeInstallationArchiveError;
 
   /// Makes [sameFile] throw [sameFileError] on every call, in place of its
   /// normal identity comparison. Used to exercise a caller
@@ -194,6 +225,44 @@ class FakeFileSystem implements CliFileSystem {
     // [from] resolves to [to] afterwards, since that is what a real rename
     // does to anything already looked up on `PATH`.
     _onPath.updateAll((name, resolved) => resolved == from ? to : resolved);
+  }
+
+  @override
+  String readAsString(String path) {
+    if (readAsStringError != null) throw readAsStringError!;
+    final content = fileContents[path];
+    if (content == null) {
+      throw StateError('$path has no fake content set');
+    }
+    return content;
+  }
+
+  @override
+  bool isDirectory(String path) {
+    if (isDirectoryError != null) throw isDirectoryError!;
+    return existingDirectories.contains(path);
+  }
+
+  @override
+  Future<void> deleteDirectory(String path) async {
+    if (deleteDirectoryError != null) throw deleteDirectoryError!;
+    deletedDirectories.add(path);
+    existingDirectories.remove(path);
+  }
+
+  @override
+  Future<void> writeInstallationArchive({
+    required String executablePath,
+    required List<int> executableBytes,
+    required Map<String, Map<String, List<int>>> directories,
+    required Future<void> Function() revalidate,
+  }) async {
+    if (writeInstallationArchiveError != null) {
+      throw writeInstallationArchiveError!;
+    }
+    await revalidate();
+    installedDirectories[executablePath] = directories;
+    written[executablePath] = executableBytes;
   }
 }
 

@@ -92,6 +92,50 @@ abstract class CliFileSystem {
   /// know it is about to write through a plain file, not through whatever a
   /// symlink someone swapped in at the last moment happens to point at.
   bool isRegularFile(String path);
+
+  /// The full text content of the file at [path]. Used to read a `.cmd`
+  /// alias shim's script, in place of comparing file identity: a shim is
+  /// deliberately a distinct file from the executable it invokes, so
+  /// [sameFile] can never be how it is recognized.
+  String readAsString(String path);
+
+  /// Whether [path] is a directory. Symlinks are not followed, for the same
+  /// reason [isRegularFile] does not follow them.
+  bool isDirectory(String path);
+
+  /// Removes the directory at [path] and everything inside it.
+  Future<void> deleteDirectory(String path);
+
+  /// Installs [executableBytes] at [executablePath] and every file in
+  /// [directories] into its sibling directories, as one unit.
+  ///
+  /// [directories] maps a directory name (a sibling of [executablePath]'s
+  /// own parent directory, e.g. `'assets'`, never a separately configured
+  /// path: the single installation this call targets is wherever
+  /// [executablePath] itself already is) to that directory's own contents,
+  /// itself a map from a path relative to that directory to a file's bytes.
+  ///
+  /// Every declared directory is staged into a temporary location first;
+  /// [revalidate] is called once staging finishes, mirroring
+  /// [writeExecutable]'s own [revalidate] contract exactly (including: if it
+  /// throws, nothing is committed and [executablePath] is left exactly as it
+  /// was); then each directory is committed in turn (the current one, if
+  /// any, renamed aside; the staged one renamed into its place), and the
+  /// executable is committed last, through [writeExecutable] itself, reusing
+  /// its own already-atomic commit. If any directory's commit fails, or the
+  /// executable's does, every directory already committed in this same call
+  /// is rolled back too (its aside copy restored, or the directory removed
+  /// outright when none existed before this call) before the failure is let
+  /// through, so a failed call leaves the previous installation exactly as
+  /// it was. Only once the executable itself has been committed are the
+  /// directories' aside copies removed, best-effort, the same way
+  /// [writeExecutable] removes its own backup.
+  Future<void> writeInstallationArchive({
+    required String executablePath,
+    required List<int> executableBytes,
+    required Map<String, Map<String, List<int>>> directories,
+    required Future<void> Function() revalidate,
+  });
 }
 
 /// Thrown when whether a path is executable could not be determined: the
@@ -148,7 +192,7 @@ class IoCliExecutableChecker implements CliExecutableChecker {
       throw CliExecutableCheckFailure(
         path,
         'Could not start $testExecutable to check whether $path is '
-            'executable: $e',
+        'executable: $e',
       );
     }
     return result.exitCode;
@@ -160,7 +204,7 @@ class IoCliExecutableChecker implements CliExecutableChecker {
     throw CliExecutableCheckFailure(
       path,
       'No fixed executable-check path is known for platform '
-          '"${io.Platform.operatingSystem}".',
+      '"${io.Platform.operatingSystem}".',
     );
   }
 }
@@ -272,7 +316,7 @@ class IoCliFileSystem implements CliFileSystem {
         throw CliExecutableCheckFailure(
           path,
           'Checking whether $path is executable exited with unexpected '
-              'code $exitCode.',
+          'code $exitCode.',
         );
     }
   }
@@ -446,5 +490,149 @@ class IoCliFileSystem implements CliFileSystem {
   @override
   Future<void> rename(String from, String to) async {
     await io.File(from).rename(to);
+  }
+
+  @override
+  String readAsString(String path) => io.File(path).readAsStringSync();
+
+  @override
+  bool isDirectory(String path) =>
+      io.FileSystemEntity.typeSync(path, followLinks: false) ==
+      io.FileSystemEntityType.directory;
+
+  @override
+  Future<void> deleteDirectory(String path) async {
+    await io.Directory(path).delete(recursive: true);
+  }
+
+  @override
+  Future<void> writeInstallationArchive({
+    required String executablePath,
+    required List<int> executableBytes,
+    required Map<String, Map<String, List<int>>> directories,
+    required Future<void> Function() revalidate,
+  }) async {
+    final parentDir = io.File(executablePath).parent.path;
+    final sep = io.Platform.pathSeparator;
+    final stamp = '${io.pid}-${DateTime.now().microsecondsSinceEpoch}';
+
+    // Stage every declared directory fully, into its own temporary
+    // location, before anything is committed.
+    final stagingPaths = <String, String>{};
+    for (final entry in directories.entries) {
+      final stagingPath = '$parentDir$sep.${entry.key}.staging-$stamp';
+      final stagingDir = io.Directory(stagingPath);
+      await stagingDir.create(recursive: true);
+      for (final fileEntry in entry.value.entries) {
+        final file = io.File('$stagingPath/${fileEntry.key}');
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(fileEntry.value, flush: true);
+      }
+      stagingPaths[entry.key] = stagingPath;
+    }
+
+    try {
+      // Staging (all the writes above) is the slow, asynchronous part of
+      // this call: re-checking the target immediately before the commits
+      // below, rather than before staging started, is what keeps that
+      // window from being one in which the target can change unnoticed.
+      await revalidate();
+
+      final backups = <String, String?>{};
+      final committed = <String>[];
+      try {
+        for (final dirName in directories.keys) {
+          final targetPath = '$parentDir$sep$dirName';
+          final targetDir = io.Directory(targetPath);
+          String? backupPath;
+          if (await targetDir.exists()) {
+            backupPath = '$targetPath.old-$stamp';
+            await targetDir.rename(backupPath);
+          }
+          backups[dirName] = backupPath;
+          await io.Directory(stagingPaths[dirName]!).rename(targetPath);
+          committed.add(dirName);
+        }
+      } on Object {
+        await _rollbackDirectories(parentDir, sep, committed, backups);
+        rethrow;
+      }
+
+      try {
+        // Reuses writeExecutable's own already-atomic, already-tested
+        // commit: the executable is committed last, and revalidate is not
+        // re-run here since it already ran, immediately before the first
+        // destructive step above, for this same call.
+        await writeExecutable(
+          executablePath,
+          executableBytes,
+          revalidate: () async {},
+        );
+      } on Object {
+        await _rollbackDirectories(parentDir, sep, committed, backups);
+        rethrow;
+      }
+
+      // Both the directories and the executable are committed: remove the
+      // directories' own backups, best-effort, exactly like writeExecutable
+      // already does for its own.
+      for (final backupPath in backups.values) {
+        if (backupPath == null) continue;
+        try {
+          await io.Directory(backupPath).delete(recursive: true);
+        } on Object {
+          // Best effort: the process that was running against the old
+          // directory can still have a file under it open, and that is not
+          // a reason to fail an install that has already succeeded.
+        }
+      }
+    } finally {
+      // A staging directory that was committed no longer exists at its
+      // staging path (it was renamed into place); one this call never got
+      // to commit (staging itself failed partway, or revalidate threw)
+      // still does, and is cleaned up here.
+      for (final stagingPath in stagingPaths.values) {
+        if (await io.Directory(stagingPath).exists()) {
+          try {
+            await io.Directory(stagingPath).delete(recursive: true);
+          } on Object {
+            // Best effort: the original failure is what matters to the
+            // caller.
+          }
+        }
+      }
+    }
+  }
+
+  /// Restores every directory in [committed] to how it was before this
+  /// [writeInstallationArchive] call: the one [backups] recorded a backup
+  /// for is restored from it; one that had no backup (nothing existed at
+  /// its target before this call) is removed outright, since a target that
+  /// did not exist before this call must not exist after it fails either.
+  /// Best-effort throughout: the original failure that triggered this
+  /// rollback is what the caller needs to see, not a secondary failure
+  /// encountered while undoing an already-partial commit.
+  Future<void> _rollbackDirectories(
+    String parentDir,
+    String sep,
+    List<String> committed,
+    Map<String, String?> backups,
+  ) async {
+    for (final dirName in committed) {
+      final targetPath = '$parentDir$sep$dirName';
+      final backupPath = backups[dirName];
+      try {
+        if (backupPath != null) {
+          if (await io.Directory(targetPath).exists()) {
+            await io.Directory(targetPath).delete(recursive: true);
+          }
+          await io.Directory(backupPath).rename(targetPath);
+        } else {
+          await io.Directory(targetPath).delete(recursive: true);
+        }
+      } on Object {
+        // Best effort.
+      }
+    }
   }
 }
