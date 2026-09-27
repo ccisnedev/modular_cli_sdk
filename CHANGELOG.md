@@ -4,6 +4,85 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.8.0
+
+Issue [#31](https://github.com/ccisnedev/modular_cli_sdk/issues/31) asked
+`InstallationPlugin` to grow into the one installation mechanism every CLI
+built on this SDK could adopt: archive releases with sibling asset
+directories, a Windows alias that does not need an elevated prompt, and
+`uninstall` that also removes what an archive install added. The design was
+not invented from scratch: it was extracted by reading the real
+install/upgrade/uninstall mechanisms `inquiry`, `docmd`, `skillwire` and
+`help` already ship, and adjusted only where doing so is a genuine
+strengthening (a full staged swap with rollback, in place of extracting
+straight over, or into, the previous install).
+
+### Added
+
+- **`CliArchiveLayout`, `CliInstallationConfig.archiveLayouts`.** A platform
+  with an entry here has its release asset installed by downloading it,
+  extracting it (`CliArchiveFormat.zip` or `.tarGz`), and installing its
+  `executablePath` and declared sibling `directories` as one unit, rather
+  than as a bare executable. A platform with no entry keeps 0.7.0's own
+  behavior unchanged
+- **`CliArchiveExtractor`, `ArchiveCliArchiveExtractor`.** Decodes a zip or
+  tar.gz release asset into its entries; injectable, with a real default
+  built on the `archive` package
+- **`CliFileSystem.writeInstallationArchive`.** Installs an executable and
+  its declared directories as one staged-swap unit: every directory is
+  staged to a temporary location first, `revalidate` runs once staging
+  finishes (mirroring `writeExecutable`'s own contract), then each directory
+  is committed in turn (the previous one backed up, not deleted, until the
+  whole call succeeds) and the executable is committed last. A failure at
+  any point rolls back every directory this call already committed and
+  leaves the previous installation exactly as it was
+- **`CliAliasStrategy.cmdShim`, per-platform `CliInstallationConfig.aliasStrategies`.**
+  A real symlink alias needs an elevated prompt or Developer Mode an
+  installed CLI's own `upgrade`/`uninstall` cannot assume, so
+  `aliasStrategyFor('windows')` now defaults to a `.cmd` shim instead of a
+  symlink, recognized by content (does it mention `config.executable`) rather
+  than by file identity. Every other platform still defaults to
+  `CliAliasStrategy.symlink`, 0.7.0's only behavior, so an existing POSIX-only
+  config is unaffected. Explicitly declaring `CliAliasStrategy.symlink` for
+  `'windows'` in `aliasStrategies` is still possible, but not recommended
+- **`uninstall` removes declared directories too.** On POSIX, each directory
+  a config's `archiveLayoutFor` names is removed outright, the same run that
+  removes the executable and alias. On Windows, where a directory can be
+  locked by the very process running `uninstall`, removal is deferred to the
+  same cleanup worker that already deletes the renamed executable, alongside
+  it rather than as a second, separate mechanism
+- **`InstallationPlugin(postUpgradeSteps:)`.** An extension point for steps a
+  consumer CLI needs to run after a successful upgrade (e.g. migrating a
+  config file's format), returned as `Step`s appended after this plugin's own
+  install steps, in the same `--plan`/`--apply` run
+- **`### Adopting InstallationPlugin`** (README): a canonical
+  `CliInstallationConfig` for an archive release with assets, a table of
+  where `inquiry`, `docmd`, `skillwire` and `help` actually differ today, and
+  `example/install/install.ps1` / `example/install/install.sh` templates that
+  produce exactly the on-disk layout this plugin expects, written
+  temp-directory-then-move so a failed download or extraction never leaves a
+  working install half-replaced
+
+### Changed
+
+- **The Windows alias default.** A 0.7.0 config with no `aliasStrategies`
+  entry for `'windows'` used to default to `CliAliasStrategy.symlink` there
+  too, the same as every other platform; it now defaults to
+  `CliAliasStrategy.cmdShim`. A real symlink on Windows needs an elevated
+  prompt or Developer Mode an installed CLI's own `upgrade`/`uninstall`
+  cannot assume, so this is treated as a bug fix rather than a breaking
+  change: nothing that depended on the old default could have had a working
+  Windows alias to begin with. A config that genuinely needs the old
+  behavior can still declare `aliasStrategies: {'windows':
+  CliAliasStrategy.symlink}` explicitly
+
+### Unchanged
+
+- A 0.7.0 config with no `archiveLayouts` entries behaves exactly as it did
+  under 0.7.0 on every platform: a bare-executable install, and, on POSIX, a
+  symlink alias exactly as before. Nothing about 0.8.0 requires a consumer to
+  adopt archives or the `.cmd` shim to keep working
+
 ## 0.7.0
 
 A CLI built on this SDK had no way to let another package add commands to it.

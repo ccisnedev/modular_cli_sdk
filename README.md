@@ -611,7 +611,7 @@ Each row is what actually happens in `installation_plugin.dart`, not an aspirati
 | --- | --- |
 | `release-lookup-failed` | the release source could not be queried, a release's tag does not parse as semver once the tag prefix is stripped, no release with the configured tag prefix exists, or the latest release has no asset for the current platform |
 | `executable-check-failed` | resolving `config.executable` or `config.alias` on PATH itself threw, before it could even be determined whether either is present; or, after writing the downloaded executable, checking whether it actually ended up executable could not be answered at all (the checker itself failed to start, or exited with a code other than the one that means "not executable") |
-| `file-access-denied` | `config.executable` is not on PATH, a resolved PATH entry could not be canonicalized to an install target, or moving the running executable aside for `uninstall` failed |
+| `file-access-denied` | `config.executable` is not on PATH, a resolved PATH entry could not be canonicalized to an install target, moving the running executable aside for `uninstall` failed, reading a `.cmd` alias shim's content failed, or checking whether a declared directory exists, or removing one during `uninstall`, failed |
 | `alias-hard-link-unsupported` | `config.alias` resolves to a hard link to the executable rather than a symlink, a shape this plugin will not create or rewrite |
 | `download-failed` | the release asset could not be downloaded, or an `--apply` run failed at a point where no `CliInstallStepFailure` was thrown (the default id for an otherwise-untyped step failure) |
 | `install-target-changed` | immediately before writing the downloaded binary, re-resolving `config.executable` no longer matches the target `--apply`'s own plan showed: it fell off PATH, now resolves elsewhere, or is no longer a plain file |
@@ -619,6 +619,127 @@ Each row is what actually happens in `installation_plugin.dart`, not an aspirati
 | `cleanup-outcome-unknown` | `uninstall` renamed the running executable aside successfully and this process's own claim over the worker's ready marker succeeded, but once the worker failed to arm deletion within the ack deadline, this process's own attempt to revoke that claim (renaming the accepted marker to revoked) kept failing with an unexpected error, such as a real sharing violation on the accepted marker, on every retry for the whole of a further, separate revoke deadline, without ever resolving into either an observed armed marker or a clean revoke. This is reported as its own distinct id rather than folded into `cleanup-start-failed`, because which side actually won is genuinely unknown: the worker may still be alive, may still win the arming rename once the failure clears, and may still delete the renamed file later. The message names the renamed file and the accepted marker path, and says not to delete the file by hand unless the worker is confirmed to no longer be running. Unlike every other id in this table, this one leaves the worker's private temporary directory in place rather than removing it: removing it here, while the worker might still be alive and using it, would only trade one race for another |
 
 Once the worker wins the arming rename, this process is no longer involved at all: the worker alone is now responsible for deleting the target paths and its own private directory, and it has no process left to report a later failure to. If deleting the target then fails on the worker's own side (the file is locked by something else at the moment the parent finally exits, say), nothing here surfaces that: there is no other process still running to receive a diagnostic from it, and no marker file anything reads after arming for it to write one into either. This is an accepted limitation of a worker that, by design, keeps running after every other process from this run has already exited, not a gap this project intends to close with a further diagnostic channel; a worker failure after arming is visible only as a renamed file that never disappeared.
+
+---
+
+## Adopting InstallationPlugin
+
+`InstallationPlugin` is meant to be the one installation mechanism every CLI
+built on this SDK adopts, replacing whatever bespoke `upgrade`/`uninstall`
+commands it already hand-rolled. This section's example and the two install
+script templates it points at (`example/install/install.ps1`,
+`example/install/install.sh`) were not designed from scratch: they were
+extracted by reading the real, already-shipping install/upgrade/uninstall
+mechanisms of four CLIs built on earlier versions of this SDK (`inquiry`,
+`docmd`, `skillwire`, `help`), none of which use `InstallationPlugin` yet.
+Where those four disagreed, `inquiry`'s behavior was kept as the canonical
+one; every disagreement is called out below rather than silently resolved,
+so each CLI can adopt this plugin without having to change its release
+archive's own contents.
+
+### Canonical config
+
+```dart
+InstallationPlugin(
+  config: CliInstallationConfig(
+    repository: 'you/mycli',
+    tagPrefix: 'cli-v',
+    executable: 'mycli',
+    alias: 'mc',
+    assets: {
+      'windows': 'mycli-windows-x64.zip',
+      'linux': 'mycli-linux-x64.tar.gz',
+      'macos': 'mycli-macos-x64.tar.gz',
+    },
+    archiveLayouts: {
+      'windows': CliArchiveLayout(
+        format: CliArchiveFormat.zip,
+        executablePath: 'bin/mycli.exe',
+        directories: ['assets'],
+      ),
+      'linux': CliArchiveLayout(
+        format: CliArchiveFormat.tarGz,
+        executablePath: 'bin/mycli',
+        directories: ['assets'],
+      ),
+      'macos': CliArchiveLayout(
+        format: CliArchiveFormat.tarGz,
+        executablePath: 'bin/mycli',
+        directories: ['assets'],
+      ),
+    },
+    // aliasStrategies is left at its default here on purpose: 'windows'
+    // already defaults to CliAliasStrategy.cmdShim and every other platform
+    // to CliAliasStrategy.symlink, which is exactly what every CLI below
+    // that ships an alias at all already does.
+  ),
+)
+```
+
+This mirrors what `inquiry`'s own release actually produces: a single
+archive per platform (`.zip` on Windows, `.tar.gz` elsewhere) containing
+`bin/<executable>` alongside an `assets/` directory, installed to one
+directory (`%LOCALAPPDATA%\<name>` on Windows, `$HOME/.<name>` on Linux and
+macOS) with that same `bin/` directory added to `PATH`. `directories` names
+only the sibling directories a given platform's archive actually carries;
+`docmd`'s archive (see below) carries none, and an empty list is exactly how
+its config would declare that, matching what it already ships without
+requiring it to start bundling an `assets/` directory it has no use for.
+
+### Where the four CLIs disagreed
+
+| | inquiry (canonical) | docmd | skillwire | help |
+| --- | --- | --- | --- | --- |
+| Archive carries an `assets/` directory | yes | no | yes | n/a, no archive yet |
+| Windows alias | `.cmd` shim | none | `.cmd` shim | none |
+| Unix alias location | `~/.local/bin/<alias>` | `~/.local/bin/<alias>` | beside the executable, inside `bin/` | n/a |
+| Old install removed before the new one is written | yes (`rm -rf` then re-extract) | yes | no (extracted over the old one) | n/a |
+
+Adopting this plugin does not require matching every column: it only
+resolves whatever the currently installed executable resolves to on `PATH`,
+wherever that is, so `skillwire` keeping its alias beside its own executable
+rather than moving it to `~/.local/bin` needs no code change here, only its
+own install script continuing to put it there. A CLI with no alias today
+(`docmd`, `help`) has to pick one to satisfy `CliInstallationConfig.alias`,
+which is required; reusing the executable's own name is not a safe stand-in
+once `aliasStrategyFor` is `CliAliasStrategy.cmdShim` (the doctor check and
+`uninstall` both read that path as a text shim, and the real executable is
+not one), so a short, genuinely distinct name is the recommended fix when
+adopting, not a way to opt out of having one. `help` has no release pipeline
+at all yet (it only compiles from source locally): it should leave
+`archiveLayouts` and `aliasStrategies` unset until it ships one, which costs
+it nothing, since both default to backward-compatible, archive-free,
+POSIX-symlink behavior.
+
+### The staged swap here is stricter than what any of the four do today
+
+None of the four CLIs' own install scripts stage a full directory swap with
+rollback: the bootstrap installers `rm -rf` the install directory and
+re-extract (or, for `skillwire`, extract straight over it with no removal at
+all), and each CLI's own `upgrade` command renames the running executable
+aside and extracts into the live install directory in place, rather than
+building the whole new installation beside the old one first. This plugin,
+and the templates below, are deliberately stricter than that: every declared
+directory, and the executable, is staged to a temporary location first,
+revalidated, then committed one at a time with the previous version kept
+until every commit succeeds, and rolled back to exactly its previous state
+if any commit fails partway. This is a strengthening, not something copied
+verbatim from any of the four; call it out to anyone comparing this plugin's
+behavior against what their CLI's install script already does.
+
+### install.ps1 / install.sh templates
+
+`example/install/install.ps1` and `example/install/install.sh` produce
+exactly the on-disk layout the config above expects: `<install dir>/bin/`
+holding the executable, `<install dir>/assets/` (or whichever directories
+are declared) beside it, `<install dir>/bin` added to `PATH`, and the alias
+created the way `aliasStrategyFor` expects it recognized (a `.cmd` shim on
+Windows, a symlink on Linux and macOS). Both templates download to a
+temporary directory and only move the finished result into place, so a
+failure partway (a bad download, a failed extraction) never leaves a working
+install half-replaced. They are meant to be copied into a consumer CLI's own
+repository and edited only where marked, not referenced from here at
+install time.
 
 ---
 
