@@ -23,6 +23,7 @@ import 'output.dart';
 import 'plan.dart';
 import 'query.dart';
 import 'route_pattern.dart';
+import 'skips_interactive_approval.dart';
 
 /// Registers [Query]s and [Command]s within a named module.
 ///
@@ -477,7 +478,11 @@ class ModuleBuilder {
       return nothing.exitCode;
     }
 
-    if (!flags.autoapprove) {
+    // A command whose own `--apply` already is the authorization (see
+    // [SkipsInteractiveApproval]) skips this gate entirely, not merely
+    // treated as pre-approved, but never asked at all, so it never refuses
+    // for lack of a terminal either.
+    if (!flags.autoapprove && unit is! SkipsInteractiveApproval) {
       final declined = await _refusalOf(plan);
       if (declined != null) {
         output.writeError(
@@ -543,6 +548,12 @@ class ModuleBuilder {
       // In --json mode, a discrepancy that led up to this failure travels
       // in the failure envelope itself, since it is the only JSON document
       // stderr gets to carry it in.
+      // Round-12 review finding 1 (PR #30): this copy used to drop
+      // baseException's own extraFields/extraLines, so a step's own
+      // CommandException lost its extras the moment a discrepancy also
+      // needed attaching. Carried forward explicitly here: a copy is still
+      // a copy, not a fresh exception, and must keep everything the
+      // original one set.
       final exception = (isJsonMode && discrepancies.isNotEmpty)
           ? CommandException(
               id: baseException.id,
@@ -552,6 +563,8 @@ class ModuleBuilder {
                 ...?baseException.details,
                 'discrepancies': [for (final d in discrepancies) d.toJson()],
               },
+              extraFields: baseException.extraFields,
+              extraLines: baseException.extraLines,
             )
           : baseException;
       output.writeError(exception);
@@ -709,6 +722,15 @@ class ModuleBuilder {
   /// record, into the current invocation's own [InvocationOutcome]
   /// (round-6 review findings 1 through 3), what [ModularCli.run] alone
   /// renders, exactly once, after the whole dispatch finishes.
+  ///
+  /// Round-12 review finding 1 (PR #30): [error]'s own
+  /// [CommandException.extraFields]/[CommandException.extraLines] no
+  /// longer need forwarding here, [cliOutput.writeError] already carries
+  /// them into the outcome as part of recording [error] itself
+  /// (`recordInvocationError`'s own doc comment). What is left to this
+  /// method is the one thing genuinely specific to a rejection: falling
+  /// back to the command's own contract help text, in text mode, when
+  /// [error] set no [CommandException.extraLines] of its own.
   int _reject(
     CommandException error,
     CliRequest req,
@@ -717,7 +739,8 @@ class ModuleBuilder {
     required bool showsContractOnRejection,
   }) {
     cliOutput.writeError(error);
-    if (showsContractOnRejection &&
+    if (error.extraLines == null &&
+        showsContractOnRejection &&
         error.exitCode == ExitCode.validationFailed) {
       recordInvocationExtraText(HelpRenderer(_catalog).renderCommand(entry));
     }

@@ -1,5 +1,5 @@
 /// example/example.dart
-/// Minimal runnable example — mirrors example/example.dart from modular_api.
+/// Minimal runnable example, mirrors example/example.dart from modular_api.
 ///
 /// Run:
 ///   dart run example/example.dart                  # the root command
@@ -29,7 +29,6 @@ import 'dart:io';
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 
 import 'commands/status.dart';
-import 'commands/version.dart';
 import 'modules/greetings/greetings_builder.dart';
 import 'modules/math/math_builder.dart';
 import 'modules/notes/notes_builder.dart';
@@ -51,13 +50,19 @@ Future<int> runExample(
   // [approver] and [planSink] are the two decisions the SDK leaves to the host:
   // how an approval is taken, and whether a plan is kept on disk. Passing them
   // in is also what lets the suite exercise `--apply` without a terminal.
+  //
+  // name/version identify this CLI to its own plugins: VersionPlugin reads
+  // them back, and any plugin declaring a hostApiVersion constraint is
+  // checked against cliPluginHostApiVersion when the plugin set is built.
   final cli = ModularCli(
     approver: approver,
     planSink: planSink,
     suggestionDistance: 2,
-  );
+    name: 'example',
+    version: '0.2.0',
+  )..plugin(const VersionPlugin(version: '0.2.0'));
 
-  // The root command — what the bare invocation runs. Registering it means this
+  // The root command: what the bare invocation runs. Registering it means this
   // CLI, not the help, owns the empty invocation.
   cli.query<StatusInput, StatusOutput>(
     '',
@@ -65,15 +70,6 @@ Future<int> runExample(
     globals: true,
     contract: CliContract.none,
     description: 'Show the CLI status',
-  );
-
-  // Root-level commands
-  cli.query<VersionInput, VersionOutput>(
-    'version',
-    (req) => VersionQuery(VersionInput.fromCliRequest(req)),
-    globals: true,
-    contract: CliContract.none,
-    description: 'Print application version',
   );
 
   // Module-scoped commands
