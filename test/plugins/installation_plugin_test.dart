@@ -131,6 +131,36 @@ void main() {
     });
   });
 
+  group('CliInstallationConfig.aliasStrategyFor default', () {
+    test(
+      'defaults to cmdShim on windows with no explicit aliasStrategies entry, '
+      'since a real symlink alias needs a privilege an installed CLI cannot '
+      'assume there',
+      () {
+        expect(_config().aliasStrategyFor('windows'), CliAliasStrategy.cmdShim);
+      },
+    );
+
+    test('defaults to symlink on linux and macos with no explicit '
+        'aliasStrategies entry, matching 0.7.0\'s only behavior', () {
+      expect(_config().aliasStrategyFor('linux'), CliAliasStrategy.symlink);
+      expect(_config().aliasStrategyFor('macos'), CliAliasStrategy.symlink);
+    });
+
+    test('an explicit aliasStrategies entry for windows overrides the cmdShim '
+        'default', () {
+      final config = CliInstallationConfig(
+        repository: 'ccisnedev/calculatrix',
+        tagPrefix: 'cli-v',
+        executable: 'cx',
+        alias: 'calculatrix',
+        assets: const {'windows': 'cx-windows.exe'},
+        aliasStrategies: const {'windows': CliAliasStrategy.symlink},
+      );
+      expect(config.aliasStrategyFor('windows'), CliAliasStrategy.symlink);
+    });
+  });
+
   group('upgrade', () {
     test('invoked with neither --plan nor --apply is refused', () async {
       final cli = _cliWith(_upgradePlugin());
@@ -1887,6 +1917,36 @@ void main() {
         expect(code, ExitCode.genericError);
         expect(err.output, contains('file-access-denied'));
       });
+
+      test('on windows, the shim-based removal runs by default with no '
+          'explicit aliasStrategies entry at all', () async {
+        final fileSystem =
+            FakeFileSystem(
+                onPath: {
+                  'cx': '/usr/local/bin/cx',
+                  'calculatrix': '/usr/local/bin/calculatrix.cmd',
+                },
+              )
+              ..fileContents['/usr/local/bin/calculatrix.cmd'] =
+                  '@"%~dp0cx.exe" %*\r\n';
+        final processLauncher = FakeProcessLauncher(pid: 4242);
+        final cli = _cliWith(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            platform: const FakePlatform('windows'),
+            processLauncher: processLauncher,
+          ),
+        );
+
+        final code = await cli.run([
+          'uninstall',
+          '--apply',
+          '--autoapprove',
+        ], stdout: MemorySink());
+
+        expect(code, ExitCode.ok);
+        expect(fileSystem.deleted, ['/usr/local/bin/calculatrix.cmd']);
+      });
     });
   });
 
@@ -2178,6 +2238,25 @@ void main() {
 
         expect(code, ExitCode.configError);
         expect(err.output, contains('could not read'));
+      });
+
+      test('on windows, the shim check runs by default with no explicit '
+          'aliasStrategies entry at all', () async {
+        final fileSystem = FakeFileSystem(
+          onPath: {
+            'cx': '/usr/local/bin/cx',
+            'calculatrix': '/bin/calculatrix.cmd',
+          },
+        )..fileContents['/bin/calculatrix.cmd'] = '@echo off\r\ncx %*\r\n';
+        final cli = _cliWithDoctor(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            platform: const FakePlatform('windows'),
+          ),
+        );
+
+        final code = await cli.run(['doctor'], stdout: MemorySink());
+        expect(code, ExitCode.ok);
       });
     });
   });

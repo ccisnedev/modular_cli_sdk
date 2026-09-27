@@ -44,7 +44,8 @@ class InstallationPlugin implements CliPlugin {
        fileSystem = fileSystem ?? const IoCliFileSystem(),
        platform = platform ?? const IoCliPlatform(),
        processLauncher = processLauncher ?? const IoCliProcessLauncher(),
-       archiveExtractor = archiveExtractor ?? const ArchiveCliArchiveExtractor();
+       archiveExtractor =
+           archiveExtractor ?? const ArchiveCliArchiveExtractor();
 
   final CliInstallationConfig config;
   final CliReleaseSource releaseSource;
@@ -125,8 +126,7 @@ class InstallationPlugin implements CliPlugin {
     } on Object catch (e) {
       return CliCheckResult(
         status: CliCheckStatus.error,
-        message:
-            'could not check whether ${config.executable} is on PATH: $e',
+        message: 'could not check whether ${config.executable} is on PATH: $e',
       );
     }
     return path != null
@@ -194,7 +194,10 @@ class InstallationPlugin implements CliPlugin {
       );
     }
     if (hardLinkIssue != null) {
-      return CliCheckResult(status: CliCheckStatus.error, message: hardLinkIssue);
+      return CliCheckResult(
+        status: CliCheckStatus.error,
+        message: hardLinkIssue,
+      );
     }
     return CliCheckResult(
       status: CliCheckStatus.ok,
@@ -245,7 +248,8 @@ class InstallationPlugin implements CliPlugin {
     }
     return CliCheckResult(
       status: CliCheckStatus.ok,
-      message: '${config.alias} shim at $aliasPath invokes ${config.executable}',
+      message:
+          '${config.alias} shim at $aliasPath invokes ${config.executable}',
     );
   }
 
@@ -339,10 +343,16 @@ class CliInstallationConfig {
   final Map<String, CliArchiveLayout> archiveLayouts;
 
   /// [CliPlatform.operatingSystem] → how [alias] is created and recognized
-  /// on that platform. A platform with no entry here uses
-  /// [CliAliasStrategy.symlink], 0.7.0's only behavior; this defaults to the
-  /// empty map for the same backward-compatibility reason as
-  /// [archiveLayouts].
+  /// on that platform. A platform with no entry here falls back to
+  /// [aliasStrategyFor]'s own per-platform default: a real symlink needs an
+  /// elevated prompt or Developer Mode that an installed CLI's own
+  /// `upgrade`/`uninstall` cannot assume, so `'windows'` defaults to
+  /// [CliAliasStrategy.cmdShim] rather than the [CliAliasStrategy.symlink]
+  /// every other platform defaults to (0.7.0's only behavior, before this
+  /// map existed). This defaults to the empty map for the same
+  /// backward-compatibility reason as [archiveLayouts]: a POSIX-only
+  /// existing config is unaffected either way, since its default was already
+  /// [CliAliasStrategy.symlink].
   final Map<String, CliAliasStrategy> aliasStrategies;
 
   /// The archive layout declared for [operatingSystem], or null when that
@@ -350,11 +360,20 @@ class CliInstallationConfig {
   CliArchiveLayout? archiveLayoutFor(String operatingSystem) =>
       archiveLayouts[operatingSystem];
 
-  /// The alias strategy declared for [operatingSystem], defaulting to
-  /// [CliAliasStrategy.symlink] when [operatingSystem] has no entry in
-  /// [aliasStrategies].
+  /// The alias strategy declared for [operatingSystem] in [aliasStrategies],
+  /// or, when it has no entry there, [CliAliasStrategy.cmdShim] for
+  /// `'windows'` and [CliAliasStrategy.symlink] for every other platform.
+  /// A real symlink alias on Windows needs an elevated prompt or Developer
+  /// Mode that an installed CLI cannot assume for its own `upgrade` or
+  /// `uninstall`, so a `.cmd` shim is the only alias shape this plugin
+  /// expects to actually work there; explicitly declaring
+  /// [CliAliasStrategy.symlink] for `'windows'` in [aliasStrategies] is still
+  /// possible but not recommended.
   CliAliasStrategy aliasStrategyFor(String operatingSystem) =>
-      aliasStrategies[operatingSystem] ?? CliAliasStrategy.symlink;
+      aliasStrategies[operatingSystem] ??
+      (operatingSystem == 'windows'
+          ? CliAliasStrategy.cmdShim
+          : CliAliasStrategy.symlink);
 }
 
 /// Where an archive layout's [CliArchiveFormat] and executable path apply,
@@ -391,20 +410,26 @@ class CliArchiveLayout {
 /// [CliPlatform.operatingSystem] in [CliInstallationConfig.aliasStrategies].
 enum CliAliasStrategy {
   /// A symlink to [CliInstallationConfig.executable]. 0.7.0's only
-  /// behavior, and the default for a platform with no explicit entry in
-  /// [CliInstallationConfig.aliasStrategies], so an existing config is
+  /// behavior, and [CliInstallationConfig.aliasStrategyFor]'s default for
+  /// every platform except `'windows'` when it has no explicit entry in
+  /// [CliInstallationConfig.aliasStrategies], so an existing POSIX config is
   /// unaffected.
   symlink,
 
   /// A `.cmd` shim script that invokes [CliInstallationConfig.executable],
-  /// e.g. `@"%~dp0docmd.exe" %*`. Meant for Windows, where a real symlink
-  /// needs an elevated prompt or Developer Mode that an installed CLI's own
-  /// `upgrade`/`uninstall` cannot assume. Creating the shim itself is
-  /// outside this plugin's scope, the same way installing an archive's
-  /// executable does not involve building that executable: a consumer's own
-  /// release tooling produces it. This plugin only recognizes an existing
-  /// one, for the `alias` doctor check and for `uninstall`'s decision to
-  /// remove it.
+  /// e.g. `@"%~dp0cx.exe" %*`. The only alias shape this plugin expects to
+  /// actually work on Windows, where a real symlink needs an elevated prompt
+  /// or Developer Mode that an installed CLI's own `upgrade`/`uninstall`
+  /// cannot assume: never a symlink or a hard link there. It is
+  /// [CliInstallationConfig.aliasStrategyFor]'s default for `'windows'` when
+  /// it has no explicit entry in [CliInstallationConfig.aliasStrategies], so
+  /// a Windows config does not need to declare it at all. Creating the shim
+  /// itself is outside this plugin's scope, the same way installing an
+  /// archive's executable does not involve building that executable: a
+  /// consumer's own release tooling produces it (see the `install.ps1`
+  /// template in the README). This plugin only recognizes an existing one,
+  /// for the `alias` doctor check and for `uninstall`'s decision to remove
+  /// it.
   cmdShim,
 }
 
@@ -609,7 +634,8 @@ class UpgradeCommand
     required this.currentVersion,
     CliArchiveExtractor? archiveExtractor,
     this.postUpgradeSteps,
-  }) : archiveExtractor = archiveExtractor ?? const ArchiveCliArchiveExtractor();
+  }) : archiveExtractor =
+           archiveExtractor ?? const ArchiveCliArchiveExtractor();
 
   @override
   final UpgradeInput input;
@@ -1244,7 +1270,8 @@ class UninstallCommand
         } on Object catch (e) {
           throw CommandException(
             id: 'file-access-denied',
-            message: 'Could not read $aliasPath to check whether it is a '
+            message:
+                'Could not read $aliasPath to check whether it is a '
                 'shim for ${config.executable}: $e',
             exitCode: ExitCode.genericError,
           );
