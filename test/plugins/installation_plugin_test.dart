@@ -64,67 +64,54 @@ void main() {
   group('hardLinkedAliasIssue', () {
     final config = _config();
 
-    test(
-      'propagates a sameFile identity-resolution failure instead of '
-      'reporting no issue',
-      () {
-        final fileSystem =
-            FakeFileSystem(
-              onPath: {
-                'cx': '/usr/local/bin/cx',
-                'calculatrix': '/usr/local/bin/calculatrix',
-              },
-            )..sameFileError = Exception(
-              'permission denied comparing identity',
-            );
+    test('propagates a sameFile identity-resolution failure instead of '
+        'reporting no issue', () {
+      final fileSystem = FakeFileSystem(
+        onPath: {
+          'cx': '/usr/local/bin/cx',
+          'calculatrix': '/usr/local/bin/calculatrix',
+        },
+      )..sameFileError = Exception('permission denied comparing identity');
 
-        expect(
-          () => hardLinkedAliasIssue(
-            fileSystem,
-            config,
-            '/usr/local/bin/calculatrix',
-            '/usr/local/bin/cx',
-          ),
-          throwsA(isA<AliasIdentityCheckFailure>()),
-        );
-      },
-    );
+      expect(
+        () => hardLinkedAliasIssue(
+          fileSystem,
+          config,
+          '/usr/local/bin/calculatrix',
+          '/usr/local/bin/cx',
+        ),
+        throwsA(isA<AliasIdentityCheckFailure>()),
+      );
+    });
 
-    test(
-      'propagates a canonicalize identity-resolution failure instead of '
-      'reporting no issue',
-      () {
-        // markHardLinked makes sameFile true through its identicalSync
-        // branch, which itself calls canonicalize twice (once per path)
-        // without failing. canonicalizeErrorAfterCalls lets those two
-        // succeed and only the direct canonicalize calls hardLinkedAliasIssue
-        // makes afterward, to compare the two paths' canonical targets, fail.
-        final fileSystem =
-            FakeFileSystem(
-              onPath: {
-                'cx': '/usr/local/bin/cx',
-                'calculatrix': '/usr/local/bin/calculatrix',
-              },
-            )..markHardLinked(
-              '/usr/local/bin/calculatrix',
-              '/usr/local/bin/cx',
-            );
-        fileSystem.canonicalizeError = Exception(
-          'permission denied resolving canonical target',
-        );
-        fileSystem.canonicalizeErrorAfterCalls = 2;
+    test('propagates a canonicalize identity-resolution failure instead of '
+        'reporting no issue', () {
+      // markHardLinked makes sameFile true through its identicalSync
+      // branch, which itself calls canonicalize twice (once per path)
+      // without failing. canonicalizeErrorAfterCalls lets those two
+      // succeed and only the direct canonicalize calls hardLinkedAliasIssue
+      // makes afterward, to compare the two paths' canonical targets, fail.
+      final fileSystem = FakeFileSystem(
+        onPath: {
+          'cx': '/usr/local/bin/cx',
+          'calculatrix': '/usr/local/bin/calculatrix',
+        },
+      )..markHardLinked('/usr/local/bin/calculatrix', '/usr/local/bin/cx');
+      fileSystem.canonicalizeError = Exception(
+        'permission denied resolving canonical target',
+      );
+      fileSystem.canonicalizeErrorAfterCalls = 2;
 
-        expect(
-          () => hardLinkedAliasIssue(
-            fileSystem,
-            config,
-            '/usr/local/bin/calculatrix',
-            '/usr/local/bin/cx',
-          ),
-          throwsA(isA<AliasIdentityCheckFailure>()),
-        );
-      },
-    );
+      expect(
+        () => hardLinkedAliasIssue(
+          fileSystem,
+          config,
+          '/usr/local/bin/calculatrix',
+          '/usr/local/bin/cx',
+        ),
+        throwsA(isA<AliasIdentityCheckFailure>()),
+      );
+    });
 
     test('returns null when either path is null', () {
       final fileSystem = FakeFileSystem();
@@ -356,11 +343,11 @@ void main() {
 
         final out = MemorySink();
         final err = MemorySink();
-        final code = await cli.run([
-          'upgrade',
-          '--apply',
-          '--autoapprove',
-        ], stdout: out, stderr: err);
+        final code = await cli.run(
+          ['upgrade', '--apply', '--autoapprove'],
+          stdout: out,
+          stderr: err,
+        );
 
         expect(code, ExitCode.genericError);
         expect(out.output, isNot(contains('file-access-denied')));
@@ -392,12 +379,11 @@ void main() {
 
         final out = MemorySink();
         final err = MemorySink();
-        final code = await cli.run([
-          'upgrade',
-          '--apply',
-          '--autoapprove',
-          '--json',
-        ], stdout: out, stderr: err);
+        final code = await cli.run(
+          ['upgrade', '--apply', '--autoapprove', '--json'],
+          stdout: out,
+          stderr: err,
+        );
 
         expect(code, ExitCode.genericError);
         expect(out.output, isEmpty);
@@ -411,37 +397,34 @@ void main() {
       },
     );
 
-    test(
-      'a post-write executable-check failure is reported distinctly from a '
-      'plain file-access failure',
-      () async {
-        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
-          ..writeError = const CliExecutableCheckFailure(
-            '/usr/local/bin/cx',
-            'checking whether /usr/local/bin/cx is executable exited with '
-                'unexpected code 2',
-          );
-        final cli = _cliWith(
-          _upgradePlugin(
-            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
-            fileSystem: fileSystem,
-          ),
+    test('a post-write executable-check failure is reported distinctly from a '
+        'plain file-access failure', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+        ..writeError = const CliExecutableCheckFailure(
+          '/usr/local/bin/cx',
+          'checking whether /usr/local/bin/cx is executable exited with '
+              'unexpected code 2',
         );
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+        ),
+      );
 
-        final out = MemorySink();
-        final err = MemorySink();
-        final code = await cli.run([
-          'upgrade',
-          '--apply',
-          '--autoapprove',
-        ], stdout: out, stderr: err);
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run(
+        ['upgrade', '--apply', '--autoapprove'],
+        stdout: out,
+        stderr: err,
+      );
 
-        expect(code, ExitCode.genericError);
-        expect(out.output, isNot(contains('executable-check-failed')));
-        expect(err.output, contains('executable-check-failed'));
-        expect(err.output, isNot(contains('file-access-denied')));
-      },
-    );
+      expect(code, ExitCode.genericError);
+      expect(out.output, isNot(contains('executable-check-failed')));
+      expect(err.output, contains('executable-check-failed'));
+      expect(err.output, isNot(contains('file-access-denied')));
+    });
 
     test(
       'the executable not being on PATH is a file-access-denied build failure',
@@ -465,30 +448,27 @@ void main() {
       },
     );
 
-    test(
-      'the executable check itself failing is a distinct, typed error from '
-      'the executable not being found at all',
-      () async {
-        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
-          ..resolveOnPathError = Exception('permission denied reading PATH');
-        final cli = _cliWith(
-          _upgradePlugin(
-            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
-            fileSystem: fileSystem,
-          ),
-        );
+    test('the executable check itself failing is a distinct, typed error from '
+        'the executable not being found at all', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+        ..resolveOnPathError = Exception('permission denied reading PATH');
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+        ),
+      );
 
-        final err = MemorySink();
-        final code = await cli.run([
-          'upgrade',
-          '--apply',
-          '--autoapprove',
-        ], stderr: err);
+      final err = MemorySink();
+      final code = await cli.run([
+        'upgrade',
+        '--apply',
+        '--autoapprove',
+      ], stderr: err);
 
-        expect(code, ExitCode.genericError);
-        expect(err.output, contains('executable-check-failed'));
-      },
-    );
+      expect(code, ExitCode.genericError);
+      expect(err.output, contains('executable-check-failed'));
+    });
 
     test('installs to the resolved target, not a symlinked PATH entry, when '
         'the executable on PATH is a symlink', () async {
@@ -615,157 +595,136 @@ void main() {
           : false,
     );
 
-    test(
-      'apply refuses to write when the install target disappears from PATH '
-      'between this run\'s own plan and its own replace step',
-      () async {
-        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
-        final downloader = FakeDownloader(
-          bytes: const [9, 9, 9],
-          onDownload: () => fileSystem.setOnPath('cx', null),
-        );
-        final cli = _cliWith(
-          _upgradePlugin(
-            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
-            fileSystem: fileSystem,
-            downloader: downloader,
-          ),
-        );
+    test('apply refuses to write when the install target disappears from PATH '
+        'between this run\'s own plan and its own replace step', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+      final downloader = FakeDownloader(
+        bytes: const [9, 9, 9],
+        onDownload: () => fileSystem.setOnPath('cx', null),
+      );
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+          downloader: downloader,
+        ),
+      );
 
-        final out = MemorySink();
-        final err = MemorySink();
-        final code = await cli.run([
-          'upgrade',
-          '--apply',
-          '--autoapprove',
-        ], stdout: out, stderr: err);
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run(
+        ['upgrade', '--apply', '--autoapprove'],
+        stdout: out,
+        stderr: err,
+      );
 
-        expect(code, ExitCode.genericError);
-        expect(out.output, isNot(contains('install-target-changed')));
-        expect(err.output, contains('install-target-changed'));
-        expect(fileSystem.written, isEmpty);
-      },
-    );
+      expect(code, ExitCode.genericError);
+      expect(out.output, isNot(contains('install-target-changed')));
+      expect(err.output, contains('install-target-changed'));
+      expect(fileSystem.written, isEmpty);
+    });
 
-    test(
-      'apply refuses to write when the install target resolves to a '
-      'different file between this run\'s own plan and its own replace '
-      'step',
-      () async {
-        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
-        final downloader = FakeDownloader(
-          bytes: const [9, 9, 9],
-          onDownload: () => fileSystem.setCanonicalTarget(
-            '/usr/local/bin/cx',
-            '/usr/local/bin/cx-swapped',
-          ),
-        );
-        final cli = _cliWith(
-          _upgradePlugin(
-            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
-            fileSystem: fileSystem,
-            downloader: downloader,
-          ),
-        );
+    test('apply refuses to write when the install target resolves to a '
+        'different file between this run\'s own plan and its own replace '
+        'step', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+      final downloader = FakeDownloader(
+        bytes: const [9, 9, 9],
+        onDownload: () => fileSystem.setCanonicalTarget(
+          '/usr/local/bin/cx',
+          '/usr/local/bin/cx-swapped',
+        ),
+      );
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+          downloader: downloader,
+        ),
+      );
 
-        final out = MemorySink();
-        final err = MemorySink();
-        final code = await cli.run([
-          'upgrade',
-          '--apply',
-          '--autoapprove',
-        ], stdout: out, stderr: err);
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run(
+        ['upgrade', '--apply', '--autoapprove'],
+        stdout: out,
+        stderr: err,
+      );
 
-        expect(code, ExitCode.genericError);
-        expect(out.output, isNot(contains('install-target-changed')));
-        expect(err.output, contains('install-target-changed'));
-        expect(fileSystem.written, isEmpty);
-      },
-    );
+      expect(code, ExitCode.genericError);
+      expect(out.output, isNot(contains('install-target-changed')));
+      expect(err.output, contains('install-target-changed'));
+      expect(fileSystem.written, isEmpty);
+    });
 
-    test(
-      'apply refuses to write when the install target is no longer a '
-      'regular file by the time of its own replace step',
-      () async {
-        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
-        final downloader = FakeDownloader(
-          bytes: const [9, 9, 9],
-          onDownload: () => fileSystem.nonRegularFiles.add(
-            '/usr/local/bin/cx',
-          ),
-        );
-        final cli = _cliWith(
-          _upgradePlugin(
-            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
-            fileSystem: fileSystem,
-            downloader: downloader,
-          ),
-        );
+    test('apply refuses to write when the install target is no longer a '
+        'regular file by the time of its own replace step', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+      final downloader = FakeDownloader(
+        bytes: const [9, 9, 9],
+        onDownload: () => fileSystem.nonRegularFiles.add('/usr/local/bin/cx'),
+      );
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+          downloader: downloader,
+        ),
+      );
 
-        final out = MemorySink();
-        final err = MemorySink();
-        final code = await cli.run([
-          'upgrade',
-          '--apply',
-          '--autoapprove',
-        ], stdout: out, stderr: err);
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run(
+        ['upgrade', '--apply', '--autoapprove'],
+        stdout: out,
+        stderr: err,
+      );
 
-        expect(code, ExitCode.genericError);
-        expect(out.output, isNot(contains('install-target-changed')));
-        expect(err.output, contains('install-target-changed'));
-        expect(fileSystem.written, isEmpty);
-      },
-    );
+      expect(code, ExitCode.genericError);
+      expect(out.output, isNot(contains('install-target-changed')));
+      expect(err.output, contains('install-target-changed'));
+      expect(fileSystem.written, isEmpty);
+    });
 
-    test(
-      '--plan fails with a typed error when the install target cannot be '
-      'resolved',
-      () async {
-        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
-          ..canonicalizeError = Exception('permission denied');
-        final cli = _cliWith(
-          _upgradePlugin(
-            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
-            fileSystem: fileSystem,
-          ),
-        );
+    test('--plan fails with a typed error when the install target cannot be '
+        'resolved', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+        ..canonicalizeError = Exception('permission denied');
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+        ),
+      );
 
-        final err = MemorySink();
-        final code = await cli.run(['upgrade', '--plan'], stderr: err);
+      final err = MemorySink();
+      final code = await cli.run(['upgrade', '--plan'], stderr: err);
 
-        expect(code, ExitCode.genericError);
-        expect(err.output, contains('file-access-denied'));
-      },
-    );
+      expect(code, ExitCode.genericError);
+      expect(err.output, contains('file-access-denied'));
+    });
 
-    test(
-      'upgrade refuses to plan when the alias is a hard link to the '
-      'executable rather than a symlink',
-      () async {
-        final fileSystem =
-            FakeFileSystem(
-              onPath: {
-                'cx': '/usr/local/bin/cx',
-                'calculatrix': '/usr/local/bin/calculatrix',
-              },
-            )..markHardLinked(
-              '/usr/local/bin/calculatrix',
-              '/usr/local/bin/cx',
-            );
-        final cli = _cliWith(
-          _upgradePlugin(
-            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
-            fileSystem: fileSystem,
-          ),
-        );
+    test('upgrade refuses to plan when the alias is a hard link to the '
+        'executable rather than a symlink', () async {
+      final fileSystem = FakeFileSystem(
+        onPath: {
+          'cx': '/usr/local/bin/cx',
+          'calculatrix': '/usr/local/bin/calculatrix',
+        },
+      )..markHardLinked('/usr/local/bin/calculatrix', '/usr/local/bin/cx');
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+        ),
+      );
 
-        final err = MemorySink();
-        final code = await cli.run(['upgrade', '--plan'], stderr: err);
+      final err = MemorySink();
+      final code = await cli.run(['upgrade', '--plan'], stderr: err);
 
-        expect(code, ExitCode.genericError);
-        expect(err.output, contains('alias-hard-link-unsupported'));
-      },
-    );
+      expect(code, ExitCode.genericError);
+      expect(err.output, contains('alias-hard-link-unsupported'));
+    });
 
     test(
       'apply refuses to write when the alias becomes a hard link to the '
@@ -794,11 +753,11 @@ void main() {
 
         final out = MemorySink();
         final err = MemorySink();
-        final code = await cli.run([
-          'upgrade',
-          '--apply',
-          '--autoapprove',
-        ], stdout: out, stderr: err);
+        final code = await cli.run(
+          ['upgrade', '--apply', '--autoapprove'],
+          stdout: out,
+          stderr: err,
+        );
 
         expect(code, ExitCode.genericError);
         expect(out.output, isNot(contains('alias-hard-link-unsupported')));
@@ -807,74 +766,65 @@ void main() {
       },
     );
 
-    test(
-      'upgrade refuses to plan with a typed error when whether the alias '
-      'is a hard link cannot be determined',
-      () async {
-        final fileSystem =
-            FakeFileSystem(
-              onPath: {
-                'cx': '/usr/local/bin/cx',
-                'calculatrix': '/usr/local/bin/calculatrix',
-              },
-            )..sameFileError = Exception(
-              'permission denied comparing identity',
-            );
-        final cli = _cliWith(
-          _upgradePlugin(
-            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
-            fileSystem: fileSystem,
-          ),
-        );
+    test('upgrade refuses to plan with a typed error when whether the alias '
+        'is a hard link cannot be determined', () async {
+      final fileSystem = FakeFileSystem(
+        onPath: {
+          'cx': '/usr/local/bin/cx',
+          'calculatrix': '/usr/local/bin/calculatrix',
+        },
+      )..sameFileError = Exception('permission denied comparing identity');
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+        ),
+      );
 
-        final err = MemorySink();
-        final code = await cli.run(['upgrade', '--plan'], stderr: err);
+      final err = MemorySink();
+      final code = await cli.run(['upgrade', '--plan'], stderr: err);
 
-        expect(code, ExitCode.genericError);
-        expect(err.output, contains('executable-check-failed'));
-        expect(err.output, isNot(contains('alias-hard-link-unsupported')));
-      },
-    );
+      expect(code, ExitCode.genericError);
+      expect(err.output, contains('executable-check-failed'));
+      expect(err.output, isNot(contains('alias-hard-link-unsupported')));
+    });
 
-    test(
-      'apply fails with a typed error when whether the alias became a hard '
-      'link cannot be determined at the replace step',
-      () async {
-        final fileSystem = FakeFileSystem(
-          onPath: {
-            'cx': '/usr/local/bin/cx',
-            'calculatrix': '/usr/local/bin/calculatrix',
-          },
-        );
-        final downloader = FakeDownloader(
-          bytes: const [9, 9, 9],
-          onDownload: () => fileSystem.sameFileError = Exception(
-            'permission denied comparing identity',
-          ),
-        );
-        final cli = _cliWith(
-          _upgradePlugin(
-            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
-            fileSystem: fileSystem,
-            downloader: downloader,
-          ),
-        );
+    test('apply fails with a typed error when whether the alias became a hard '
+        'link cannot be determined at the replace step', () async {
+      final fileSystem = FakeFileSystem(
+        onPath: {
+          'cx': '/usr/local/bin/cx',
+          'calculatrix': '/usr/local/bin/calculatrix',
+        },
+      );
+      final downloader = FakeDownloader(
+        bytes: const [9, 9, 9],
+        onDownload: () => fileSystem.sameFileError = Exception(
+          'permission denied comparing identity',
+        ),
+      );
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+          downloader: downloader,
+        ),
+      );
 
-        final out = MemorySink();
-        final err = MemorySink();
-        final code = await cli.run([
-          'upgrade',
-          '--apply',
-          '--autoapprove',
-        ], stdout: out, stderr: err);
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run(
+        ['upgrade', '--apply', '--autoapprove'],
+        stdout: out,
+        stderr: err,
+      );
 
-        expect(code, ExitCode.genericError);
-        expect(out.output, isNot(contains('executable-check-failed')));
-        expect(err.output, contains('executable-check-failed'));
-        expect(err.output, isNot(contains('alias-hard-link-unsupported')));
-        expect(fileSystem.written, isEmpty);
-      },
-    );
+      expect(code, ExitCode.genericError);
+      expect(out.output, isNot(contains('executable-check-failed')));
+      expect(err.output, contains('executable-check-failed'));
+      expect(err.output, isNot(contains('alias-hard-link-unsupported')));
+      expect(fileSystem.written, isEmpty);
+    });
 
     // Round 5 finding 3: the two tests above exercise the propagation
     // through FakeFileSystem's own sameFileError seam, which already
@@ -884,88 +834,310 @@ void main() {
     // These two run the same plan-time and replace-step scenarios
     // through the real adapter, with only its identicalFiles seam
     // overridden, to prove the real implementation propagates too.
-    test(
-      'upgrade refuses to plan with a typed error when the real filesystem '
-      'adapter cannot determine whether the alias is a hard link',
-      () async {
-        final tempDir = io.Directory.systemTemp.createTempSync(
-          'upgrade_real_fs_plan_test_',
-        );
-        addTearDown(() {
-          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-        });
-        final executablePath = _writeRealExecutableFixture(tempDir, 'cx');
-        _writeRealExecutableFixture(tempDir, 'calculatrix');
+    test('upgrade refuses to plan with a typed error when the real filesystem '
+        'adapter cannot determine whether the alias is a hard link', () async {
+      final tempDir = io.Directory.systemTemp.createTempSync(
+        'upgrade_real_fs_plan_test_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final executablePath = _writeRealExecutableFixture(tempDir, 'cx');
+      _writeRealExecutableFixture(tempDir, 'calculatrix');
 
-        final fileSystem = _RealFileSystemWithIdenticalFilesSeam(
-          pathDirectories: [tempDir.path],
-        )..identicalFilesError = Exception(
+      final fileSystem =
+          _RealFileSystemWithIdenticalFilesSeam(pathDirectories: [tempDir.path])
+            ..identicalFilesError = Exception(
+              'permission denied comparing identity',
+            );
+
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+        ),
+      );
+
+      final err = MemorySink();
+      final code = await cli.run(['upgrade', '--plan'], stderr: err);
+
+      expect(code, ExitCode.genericError);
+      expect(err.output, contains('executable-check-failed'));
+      expect(err.output, isNot(contains('alias-hard-link-unsupported')));
+      expect(io.File(executablePath).existsSync(), isTrue);
+    });
+
+    test('apply fails with a typed error when the real filesystem adapter '
+        'cannot determine whether the alias became a hard link at the '
+        'replace step', () async {
+      final tempDir = io.Directory.systemTemp.createTempSync(
+        'upgrade_real_fs_replace_test_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      _writeRealExecutableFixture(tempDir, 'cx');
+      _writeRealExecutableFixture(tempDir, 'calculatrix');
+
+      final fileSystem = _RealFileSystemWithIdenticalFilesSeam(
+        pathDirectories: [tempDir.path],
+      );
+      final downloader = FakeDownloader(
+        bytes: const [9, 9, 9],
+        onDownload: () => fileSystem.identicalFilesError = Exception(
           'permission denied comparing identity',
-        );
+        ),
+      );
 
+      final cli = _cliWith(
+        _upgradePlugin(
+          releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+          fileSystem: fileSystem,
+          downloader: downloader,
+        ),
+      );
+
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run(
+        ['upgrade', '--apply', '--autoapprove'],
+        stdout: out,
+        stderr: err,
+      );
+
+      expect(code, ExitCode.genericError);
+      expect(out.output, isNot(contains('executable-check-failed')));
+      expect(err.output, contains('executable-check-failed'));
+      expect(err.output, isNot(contains('alias-hard-link-unsupported')));
+    });
+
+    group('archive releases', () {
+      test(
+        '--apply downloads, extracts, and installs the executable and '
+        'declared directories from an archive release, resolved through '
+        'the same single install target as a bare-executable release',
+        () async {
+          final fileSystem = FakeFileSystem(
+            onPath: {'cx': '/usr/local/bin/cx'},
+          );
+          final extractor = FakeArchiveExtractor(
+            entries: const [
+              CliArchiveEntry(path: 'bin/cx', bytes: [9, 9, 9]),
+              CliArchiveEntry(path: 'assets/prompts/one.md', bytes: [1, 2, 3]),
+            ],
+          );
+          final cli = _cliWith(
+            _upgradePlugin(
+              releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+              fileSystem: fileSystem,
+              archiveLayouts: const {
+                'linux': CliArchiveLayout(
+                  format: CliArchiveFormat.zip,
+                  executablePath: 'bin/cx',
+                  directories: ['assets'],
+                ),
+              },
+              archiveExtractor: extractor,
+            ),
+          );
+
+          final out = MemorySink();
+          final code = await cli.run([
+            'upgrade',
+            '--apply',
+            '--autoapprove',
+          ], stdout: out);
+
+          expect(code, ExitCode.ok);
+          expect(fileSystem.written['/usr/local/bin/cx'], [9, 9, 9]);
+          expect(
+            fileSystem.installedDirectories['/usr/local/bin/cx']?['assets'],
+            {
+              'prompts/one.md': [1, 2, 3],
+            },
+          );
+          expect(extractor.requested, hasLength(1));
+          expect(extractor.requested.single.$2, CliArchiveFormat.zip);
+        },
+      );
+
+      test('an archive missing the declared executable entry fails with '
+          'extraction-failed, and installs nothing', () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final extractor = FakeArchiveExtractor(
+          entries: const [
+            CliArchiveEntry(path: 'assets/one.md', bytes: [1]),
+          ],
+        );
         final cli = _cliWith(
           _upgradePlugin(
             releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
             fileSystem: fileSystem,
+            archiveLayouts: const {
+              'linux': CliArchiveLayout(
+                format: CliArchiveFormat.zip,
+                executablePath: 'bin/cx',
+              ),
+            },
+            archiveExtractor: extractor,
           ),
         );
 
-        final err = MemorySink();
-        final code = await cli.run(['upgrade', '--plan'], stderr: err);
-
-        expect(code, ExitCode.genericError);
-        expect(err.output, contains('executable-check-failed'));
-        expect(err.output, isNot(contains('alias-hard-link-unsupported')));
-        expect(io.File(executablePath).existsSync(), isTrue);
-      },
-    );
-
-    test(
-      'apply fails with a typed error when the real filesystem adapter '
-      'cannot determine whether the alias became a hard link at the '
-      'replace step',
-      () async {
-        final tempDir = io.Directory.systemTemp.createTempSync(
-          'upgrade_real_fs_replace_test_',
-        );
-        addTearDown(() {
-          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-        });
-        _writeRealExecutableFixture(tempDir, 'cx');
-        _writeRealExecutableFixture(tempDir, 'calculatrix');
-
-        final fileSystem = _RealFileSystemWithIdenticalFilesSeam(
-          pathDirectories: [tempDir.path],
-        );
-        final downloader = FakeDownloader(
-          bytes: const [9, 9, 9],
-          onDownload: () => fileSystem.identicalFilesError = Exception(
-            'permission denied comparing identity',
-          ),
-        );
-
-        final cli = _cliWith(
-          _upgradePlugin(
-            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
-            fileSystem: fileSystem,
-            downloader: downloader,
-          ),
-        );
-
-        final out = MemorySink();
         final err = MemorySink();
         final code = await cli.run([
           'upgrade',
           '--apply',
           '--autoapprove',
-        ], stdout: out, stderr: err);
+        ], stderr: err);
 
         expect(code, ExitCode.genericError);
-        expect(out.output, isNot(contains('executable-check-failed')));
-        expect(err.output, contains('executable-check-failed'));
-        expect(err.output, isNot(contains('alias-hard-link-unsupported')));
-      },
-    );
+        expect(err.output, contains('extraction-failed'));
+        expect(fileSystem.written, isEmpty);
+      });
+
+      test('a corrupt or truncated download fails with extraction-failed, and '
+          'installs nothing', () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final extractor = FakeArchiveExtractor(
+          error: const CliArchiveExtractionFailure('bad gzip framing'),
+        );
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+            archiveLayouts: const {
+              'linux': CliArchiveLayout(
+                format: CliArchiveFormat.tarGz,
+                executablePath: 'bin/cx',
+              ),
+            },
+            archiveExtractor: extractor,
+          ),
+        );
+
+        final err = MemorySink();
+        final code = await cli.run([
+          'upgrade',
+          '--apply',
+          '--autoapprove',
+        ], stderr: err);
+
+        expect(code, ExitCode.genericError);
+        expect(err.output, contains('extraction-failed'));
+        expect(fileSystem.written, isEmpty);
+      });
+
+      test('a platform with no declared archive layout still installs a bare '
+          'executable exactly as a plain 0.7.0-style config does, even when '
+          'other platforms declare one', () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final downloader = FakeDownloader(bytes: const [9, 9, 9]);
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+            downloader: downloader,
+            platform: const FakePlatform('linux'),
+            archiveLayouts: const {
+              'windows': CliArchiveLayout(
+                format: CliArchiveFormat.zip,
+                executablePath: 'bin/cx.exe',
+              ),
+            },
+          ),
+        );
+
+        final code = await cli.run(['upgrade', '--apply', '--autoapprove']);
+
+        expect(code, ExitCode.ok);
+        expect(fileSystem.written['/usr/local/bin/cx'], [9, 9, 9]);
+        expect(fileSystem.installedDirectories, isEmpty);
+      });
+    });
+
+    group('postUpgradeSteps extension point', () {
+      test('runs the consumer-provided steps after a successful install, and '
+          'reports them among the completed steps', () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final ran = <String>[];
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+            downloader: FakeDownloader(bytes: const [9, 9, 9]),
+            postUpgradeSteps: () => [_RecordingStep('post-upgrade-hook', ran)],
+          ),
+        );
+
+        final out = MemorySink();
+        final code = await cli.run([
+          'upgrade',
+          '--apply',
+          '--autoapprove',
+        ], stdout: out);
+
+        expect(code, ExitCode.ok);
+        expect(ran, ['post-upgrade-hook']);
+        expect(out.output, contains('post-upgrade-hook'));
+      });
+
+      test(
+        'a failure in a post-upgrade step is reported as a failed apply, '
+        'after the install step it ran alongside is recorded as completed',
+        () async {
+          final fileSystem = FakeFileSystem(
+            onPath: {'cx': '/usr/local/bin/cx'},
+          );
+          final cli = _cliWith(
+            _upgradePlugin(
+              releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+              fileSystem: fileSystem,
+              downloader: FakeDownloader(bytes: const [9, 9, 9]),
+              postUpgradeSteps: () => [
+                _RecordingStep(
+                  'post-upgrade-hook',
+                  [],
+                  error: const CliInstallStepFailure(
+                    'post-upgrade-hook-failed',
+                    'the consumer post-upgrade step failed',
+                  ),
+                ),
+              ],
+            ),
+          );
+
+          final err = MemorySink();
+          final code = await cli.run([
+            'upgrade',
+            '--apply',
+            '--autoapprove',
+          ], stderr: err);
+
+          expect(code, ExitCode.genericError);
+          expect(err.output, contains('post-upgrade-hook-failed'));
+          // The install step it ran alongside already succeeded, and stays
+          // installed: an extension point step failing after a successful
+          // swap does not roll the swap back.
+          expect(fileSystem.written['/usr/local/bin/cx'], [9, 9, 9]);
+        },
+      );
+
+      test('not declared, upgrade behaves exactly as before', () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final cli = _cliWith(
+          _upgradePlugin(
+            releases: [_release('cli-v1.1.0', asset: 'cx-linux')],
+            fileSystem: fileSystem,
+            downloader: FakeDownloader(bytes: const [9, 9, 9]),
+          ),
+        );
+
+        final code = await cli.run(['upgrade', '--apply', '--autoapprove']);
+
+        expect(code, ExitCode.ok);
+        expect(fileSystem.written['/usr/local/bin/cx'], [9, 9, 9]);
+      });
+    });
   });
 
   group('uninstall', () {
@@ -1096,25 +1268,22 @@ void main() {
       expect(fileSystem.deleted, ['/usr/local/bin/cx']);
     });
 
-    test(
-      'the executable check itself failing is a distinct, typed error from '
-      'nothing being on PATH',
-      () async {
-        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
-          ..resolveOnPathError = Exception('permission denied reading PATH');
-        final cli = _cliWith(_upgradePlugin(fileSystem: fileSystem));
+    test('the executable check itself failing is a distinct, typed error from '
+        'nothing being on PATH', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+        ..resolveOnPathError = Exception('permission denied reading PATH');
+      final cli = _cliWith(_upgradePlugin(fileSystem: fileSystem));
 
-        final err = MemorySink();
-        final code = await cli.run([
-          'uninstall',
-          '--apply',
-          '--autoapprove',
-        ], stderr: err);
+      final err = MemorySink();
+      final code = await cli.run([
+        'uninstall',
+        '--apply',
+        '--autoapprove',
+      ], stderr: err);
 
-        expect(code, ExitCode.genericError);
-        expect(err.output, contains('executable-check-failed'));
-      },
-    );
+      expect(code, ExitCode.genericError);
+      expect(err.output, contains('executable-check-failed'));
+    });
 
     test(
       'a failure to remove the executable reports file-access-denied',
@@ -1125,11 +1294,11 @@ void main() {
 
         final out = MemorySink();
         final err = MemorySink();
-        final code = await cli.run([
-          'uninstall',
-          '--apply',
-          '--autoapprove',
-        ], stdout: out, stderr: err);
+        final code = await cli.run(
+          ['uninstall', '--apply', '--autoapprove'],
+          stdout: out,
+          stderr: err,
+        );
 
         expect(code, ExitCode.genericError);
         expect(out.output, isNot(contains('file-access-denied')));
@@ -1191,8 +1360,7 @@ void main() {
       'the cleanup worker payload is not shell-escaped: paths with spaces, '
       'apostrophes, %, &, ! and parentheses travel through unchanged',
       () async {
-        const trickyPath =
-            "/usr/local/bin/cx that's (weird) 100% & loud!.exe";
+        const trickyPath = "/usr/local/bin/cx that's (weird) 100% & loud!.exe";
         final fileSystem = FakeFileSystem(onPath: {'cx': trickyPath});
         final processLauncher = FakeProcessLauncher(pid: 4242);
         final cli = _cliWith(
@@ -1224,35 +1392,38 @@ void main() {
     // a warning on success any more, and this step has nothing left to
     // attach.
 
-    test('on Windows, if the cleanup worker cannot be started, uninstall '
-        'fails with cleanup-start-failed instead of a silent success', () async {
-      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
-      final processLauncher = FakeProcessLauncher(
-        startError: Exception('no shell available'),
-      );
-      final cli = _cliWith(
-        _upgradePlugin(
-          fileSystem: fileSystem,
-          platform: const FakePlatform('windows'),
-          processLauncher: processLauncher,
-        ),
-      );
+    test(
+      'on Windows, if the cleanup worker cannot be started, uninstall '
+      'fails with cleanup-start-failed instead of a silent success',
+      () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final processLauncher = FakeProcessLauncher(
+          startError: Exception('no shell available'),
+        );
+        final cli = _cliWith(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            platform: const FakePlatform('windows'),
+            processLauncher: processLauncher,
+          ),
+        );
 
-      final out = MemorySink();
-      final err = MemorySink();
-      final code = await cli.run([
-        'uninstall',
-        '--apply',
-        '--autoapprove',
-      ], stdout: out, stderr: err);
+        final out = MemorySink();
+        final err = MemorySink();
+        final code = await cli.run(
+          ['uninstall', '--apply', '--autoapprove'],
+          stdout: out,
+          stderr: err,
+        );
 
-      expect(code, ExitCode.genericError);
-      expect(out.output, isNot(contains('cleanup-start-failed')));
-      expect(err.output, contains('cleanup-start-failed'));
-      // The rename already happened; the failure message says where the
-      // file ended up rather than leaving it unaccounted for.
-      expect(err.output, contains('/usr/local/bin/cx.uninstall-4242.old'));
-    });
+        expect(code, ExitCode.genericError);
+        expect(out.output, isNot(contains('cleanup-start-failed')));
+        expect(err.output, contains('cleanup-start-failed'));
+        // The rename already happened; the failure message says where the
+        // file ended up rather than leaving it unaccounted for.
+        expect(err.output, contains('/usr/local/bin/cx.uninstall-4242.old'));
+      },
+    );
 
     test('on Windows, if the cleanup worker starts but never confirms it is '
         'ready, uninstall fails with cleanup-start-failed', () async {
@@ -1268,11 +1439,11 @@ void main() {
 
       final out = MemorySink();
       final err = MemorySink();
-      final code = await cli.run([
-        'uninstall',
-        '--apply',
-        '--autoapprove',
-      ], stdout: out, stderr: err);
+      final code = await cli.run(
+        ['uninstall', '--apply', '--autoapprove'],
+        stdout: out,
+        stderr: err,
+      );
 
       expect(code, ExitCode.genericError);
       expect(out.output, isNot(contains('cleanup-start-failed')));
@@ -1286,40 +1457,42 @@ void main() {
     // rather than folding it into cleanup-start-failed, and the message
     // tells the operator the worker may still delete the renamed file
     // later, so they know not to delete it by hand.
-    test('on Windows, if it cannot be determined whether the cleanup worker '
-        'armed deletion or this process revoked its claim first, uninstall '
-        'fails with cleanup-outcome-unknown rather than cleanup-start-failed',
-        () async {
-      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
-      final processLauncher = FakeProcessLauncher(
-        startError: CliCleanupOutcomeUnknown(
-          'renaming the accepted marker kept failing unexpectedly without '
-          'resolving either way',
-        ),
-      );
-      final cli = _cliWith(
-        _upgradePlugin(
-          fileSystem: fileSystem,
-          platform: const FakePlatform('windows'),
-          processLauncher: processLauncher,
-        ),
-      );
+    test(
+      'on Windows, if it cannot be determined whether the cleanup worker '
+      'armed deletion or this process revoked its claim first, uninstall '
+      'fails with cleanup-outcome-unknown rather than cleanup-start-failed',
+      () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final processLauncher = FakeProcessLauncher(
+          startError: CliCleanupOutcomeUnknown(
+            'renaming the accepted marker kept failing unexpectedly without '
+            'resolving either way',
+          ),
+        );
+        final cli = _cliWith(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            platform: const FakePlatform('windows'),
+            processLauncher: processLauncher,
+          ),
+        );
 
-      final out = MemorySink();
-      final err = MemorySink();
-      final code = await cli.run([
-        'uninstall',
-        '--apply',
-        '--autoapprove',
-      ], stdout: out, stderr: err);
+        final out = MemorySink();
+        final err = MemorySink();
+        final code = await cli.run(
+          ['uninstall', '--apply', '--autoapprove'],
+          stdout: out,
+          stderr: err,
+        );
 
-      expect(code, ExitCode.genericError);
-      expect(out.output, isNot(contains('cleanup-outcome-unknown')));
-      expect(err.output, contains('cleanup-outcome-unknown'));
-      expect(err.output, isNot(contains('cleanup-start-failed')));
-      expect(err.output, contains('/usr/local/bin/cx.uninstall-4242.old'));
-      expect(err.output, contains('may still'));
-    });
+        expect(code, ExitCode.genericError);
+        expect(out.output, isNot(contains('cleanup-outcome-unknown')));
+        expect(err.output, contains('cleanup-outcome-unknown'));
+        expect(err.output, isNot(contains('cleanup-start-failed')));
+        expect(err.output, contains('/usr/local/bin/cx.uninstall-4242.old'));
+        expect(err.output, contains('may still'));
+      },
+    );
 
     // Finding 1 (round 9): a CliCleanupOutcomeUnknown failure reaching
     // describe() must render as the single JSON error envelope on stderr,
@@ -1346,12 +1519,11 @@ void main() {
 
       final out = MemorySink();
       final err = MemorySink();
-      final code = await cli.run([
-        'uninstall',
-        '--apply',
-        '--autoapprove',
-        '--json',
-      ], stdout: out, stderr: err);
+      final code = await cli.run(
+        ['uninstall', '--apply', '--autoapprove', '--json'],
+        stdout: out,
+        stderr: err,
+      );
 
       expect(code, ExitCode.genericError);
       // Nothing shaped like the error, or the old data envelope carrying
@@ -1375,33 +1547,30 @@ void main() {
       expect(details['scheduled'], isEmpty);
     });
 
-    test(
-      'a resolution failure while comparing the alias to the executable '
-      'reports file-access-denied rather than crashing the run',
-      () async {
-        // sameFile resolves both paths through canonicalize before comparing
-        // them; a canonicalize that cannot resolve one of them (a broken
-        // symlink chain, permission denied partway through) must not be
-        // allowed to escape as a raw, unhandled exception.
-        final fileSystem = FakeFileSystem(
-          onPath: {
-            'cx': '/usr/local/bin/cx',
-            'calculatrix': '/usr/local/bin/calculatrix',
-          },
-        )..canonicalizeError = Exception('too many levels of symbolic links');
-        final cli = _cliWith(_upgradePlugin(fileSystem: fileSystem));
+    test('a resolution failure while comparing the alias to the executable '
+        'reports file-access-denied rather than crashing the run', () async {
+      // sameFile resolves both paths through canonicalize before comparing
+      // them; a canonicalize that cannot resolve one of them (a broken
+      // symlink chain, permission denied partway through) must not be
+      // allowed to escape as a raw, unhandled exception.
+      final fileSystem = FakeFileSystem(
+        onPath: {
+          'cx': '/usr/local/bin/cx',
+          'calculatrix': '/usr/local/bin/calculatrix',
+        },
+      )..canonicalizeError = Exception('too many levels of symbolic links');
+      final cli = _cliWith(_upgradePlugin(fileSystem: fileSystem));
 
-        final err = MemorySink();
-        final code = await cli.run([
-          'uninstall',
-          '--apply',
-          '--autoapprove',
-        ], stderr: err);
+      final err = MemorySink();
+      final code = await cli.run([
+        'uninstall',
+        '--apply',
+        '--autoapprove',
+      ], stderr: err);
 
-        expect(code, ExitCode.genericError);
-        expect(err.output, contains('file-access-denied'));
-      },
-    );
+      expect(code, ExitCode.genericError);
+      expect(err.output, contains('file-access-denied'));
+    });
 
     test(
       'a real symlinked alias: removing the alias before the target avoids '
@@ -1497,46 +1666,37 @@ void main() {
       },
     );
 
-    test(
-      'the binary check itself failing reports that it could not check, '
-      'not that the binary was not found',
-      () async {
-        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
-          ..resolveOnPathError = Exception('permission denied reading PATH');
-        final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
+    test('the binary check itself failing reports that it could not check, '
+        'not that the binary was not found', () async {
+      final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'})
+        ..resolveOnPathError = Exception('permission denied reading PATH');
+      final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
 
-        final out = MemorySink();
-        final err = MemorySink();
-        final code = await cli.run(['doctor'], stdout: out, stderr: err);
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run(['doctor'], stdout: out, stderr: err);
 
-        expect(code, ExitCode.configError);
-        expect(out.output, isEmpty);
-        expect(err.output, contains('could not check'));
-        expect(err.output, isNot(contains('was not found on PATH')));
-      },
-    );
+      expect(code, ExitCode.configError);
+      expect(out.output, isEmpty);
+      expect(err.output, contains('could not check'));
+      expect(err.output, isNot(contains('was not found on PATH')));
+    });
 
-    test(
-      'the alias check itself failing reports that it could not check, not '
-      'that the alias was not found',
-      () async {
-        final fileSystem = FakeFileSystem(
-          onPath: {
-            'cx': '/usr/local/bin/cx',
-            'calculatrix': '/usr/local/bin/cx',
-          },
-        )..resolveOnPathError = Exception('permission denied reading PATH');
-        final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
+    test('the alias check itself failing reports that it could not check, not '
+        'that the alias was not found', () async {
+      final fileSystem = FakeFileSystem(
+        onPath: {'cx': '/usr/local/bin/cx', 'calculatrix': '/usr/local/bin/cx'},
+      )..resolveOnPathError = Exception('permission denied reading PATH');
+      final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
 
-        final out = MemorySink();
-        final err = MemorySink();
-        final code = await cli.run(['doctor'], stdout: out, stderr: err);
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run(['doctor'], stdout: out, stderr: err);
 
-        expect(code, ExitCode.configError);
-        expect(out.output, isEmpty);
-        expect(err.output, contains('could not check'));
-      },
-    );
+      expect(code, ExitCode.configError);
+      expect(out.output, isEmpty);
+      expect(err.output, contains('could not check'));
+    });
 
     test('alias resolving to a different binary is a doctor error', () async {
       final fileSystem = FakeFileSystem(
@@ -1551,56 +1711,43 @@ void main() {
       expect(code, ExitCode.configError);
     });
 
-    test(
-      'an alias that is a hard link to the binary, not a symlink, is a '
-      'doctor error',
-      () async {
-        final fileSystem =
-            FakeFileSystem(
-              onPath: {
-                'cx': '/usr/local/bin/cx',
-                'calculatrix': '/usr/local/bin/calculatrix',
-              },
-            )..markHardLinked(
-              '/usr/local/bin/calculatrix',
-              '/usr/local/bin/cx',
-            );
-        final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
+    test('an alias that is a hard link to the binary, not a symlink, is a '
+        'doctor error', () async {
+      final fileSystem = FakeFileSystem(
+        onPath: {
+          'cx': '/usr/local/bin/cx',
+          'calculatrix': '/usr/local/bin/calculatrix',
+        },
+      )..markHardLinked('/usr/local/bin/calculatrix', '/usr/local/bin/cx');
+      final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
 
-        final out = MemorySink();
-        final err = MemorySink();
-        final code = await cli.run(['doctor'], stdout: out, stderr: err);
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run(['doctor'], stdout: out, stderr: err);
 
-        expect(code, ExitCode.configError);
-        expect(out.output, isEmpty);
-        expect(err.output, contains('hard link'));
-      },
-    );
+      expect(code, ExitCode.configError);
+      expect(out.output, isEmpty);
+      expect(err.output, contains('hard link'));
+    });
 
-    test(
-      'the alias identity check itself failing is a doctor error, not a '
-      'silent ok',
-      () async {
-        final fileSystem =
-            FakeFileSystem(
-              onPath: {
-                'cx': '/usr/local/bin/cx',
-                'calculatrix': '/usr/local/bin/calculatrix',
-              },
-            )..sameFileError = Exception(
-              'permission denied comparing identity',
-            );
-        final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
+    test('the alias identity check itself failing is a doctor error, not a '
+        'silent ok', () async {
+      final fileSystem = FakeFileSystem(
+        onPath: {
+          'cx': '/usr/local/bin/cx',
+          'calculatrix': '/usr/local/bin/calculatrix',
+        },
+      )..sameFileError = Exception('permission denied comparing identity');
+      final cli = _cliWithDoctor(_upgradePlugin(fileSystem: fileSystem));
 
-        final out = MemorySink();
-        final err = MemorySink();
-        final code = await cli.run(['doctor'], stdout: out, stderr: err);
+      final out = MemorySink();
+      final err = MemorySink();
+      final code = await cli.run(['doctor'], stdout: out, stderr: err);
 
-        expect(code, ExitCode.configError);
-        expect(out.output, isEmpty);
-        expect(err.output, contains('could not check'));
-      },
-    );
+      expect(code, ExitCode.configError);
+      expect(out.output, isEmpty);
+      expect(err.output, contains('could not check'));
+    });
 
     test('a newer release is a warning, not an error', () async {
       final fileSystem = FakeFileSystem(
@@ -1671,6 +1818,92 @@ void main() {
       expect(code, ExitCode.ok);
       expect(out.output, contains('warning'));
     });
+
+    group('cmdShim alias strategy', () {
+      test('a shim whose content mentions the executable is ok, even though '
+          'its own content differs entirely from the binary it is not a '
+          'symlink or hard link to', () async {
+        final fileSystem = FakeFileSystem(
+          onPath: {
+            'cx': '/usr/local/bin/cx',
+            'calculatrix': '/bin/calculatrix.cmd',
+          },
+        )..fileContents['/bin/calculatrix.cmd'] = '@echo off\r\ncx %*\r\n';
+        final cli = _cliWithDoctor(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            releases: [_release('cli-v1.0.0', asset: 'cx-linux')],
+            aliasStrategies: const {'linux': CliAliasStrategy.cmdShim},
+          ),
+        );
+
+        final code = await cli.run(['doctor'], stdout: MemorySink());
+        expect(code, ExitCode.ok);
+      });
+
+      test('a shim whose content does not mention the executable is a '
+          'doctor error', () async {
+        final fileSystem =
+            FakeFileSystem(
+                onPath: {
+                  'cx': '/usr/local/bin/cx',
+                  'calculatrix': '/bin/calculatrix.cmd',
+                },
+              )
+              ..fileContents['/bin/calculatrix.cmd'] =
+                  '@echo off\r\nsomething-else %*\r\n';
+        final cli = _cliWithDoctor(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            aliasStrategies: const {'linux': CliAliasStrategy.cmdShim},
+          ),
+        );
+
+        final code = await cli.run(['doctor'], stdout: MemorySink());
+        expect(code, ExitCode.configError);
+      });
+
+      test('the alias not being on PATH at all is a doctor error, not a '
+          'shim read attempt', () async {
+        final fileSystem = FakeFileSystem(onPath: {'cx': '/usr/local/bin/cx'});
+        final cli = _cliWithDoctor(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            aliasStrategies: const {'linux': CliAliasStrategy.cmdShim},
+          ),
+        );
+
+        final out = MemorySink();
+        final err = MemorySink();
+        final code = await cli.run(['doctor'], stdout: out, stderr: err);
+
+        expect(code, ExitCode.configError);
+        expect(err.output, contains('was not found on PATH'));
+      });
+
+      test('a shim that cannot be read is a doctor error naming the failure, '
+          'not a silent ok or "not found"', () async {
+        final fileSystem = FakeFileSystem(
+          onPath: {
+            'cx': '/usr/local/bin/cx',
+            'calculatrix': '/bin/calculatrix.cmd',
+          },
+        )..readAsStringError = Exception('permission denied reading the shim');
+        final cli = _cliWithDoctor(
+          _upgradePlugin(
+            fileSystem: fileSystem,
+            aliasStrategies: const {'linux': CliAliasStrategy.cmdShim},
+          ),
+        );
+
+        final out = MemorySink();
+        final err = MemorySink();
+        final code = await cli.run(['doctor'], stdout: out, stderr: err);
+
+        expect(code, ExitCode.configError);
+        expect(err.output, contains('could not read'));
+      });
+    });
   });
 }
 
@@ -1695,6 +1928,10 @@ InstallationPlugin _upgradePlugin({
   CliPlatform? platform,
   CliProcessLauncher? processLauncher,
   String tagPrefix = 'cli-v',
+  Map<String, CliArchiveLayout> archiveLayouts = const {},
+  Map<String, CliAliasStrategy> aliasStrategies = const {},
+  CliArchiveExtractor? archiveExtractor,
+  List<Step> Function()? postUpgradeSteps,
 }) => InstallationPlugin(
   config: CliInstallationConfig(
     repository: 'ccisnedev/calculatrix',
@@ -1706,6 +1943,8 @@ InstallationPlugin _upgradePlugin({
       'macos': 'cx-macos',
       'windows': 'cx-windows.exe',
     },
+    archiveLayouts: archiveLayouts,
+    aliasStrategies: aliasStrategies,
   ),
   releaseSource: FakeReleaseSource(releases: releases, error: releaseError),
   downloader: downloader ?? FakeDownloader(),
@@ -1713,6 +1952,8 @@ InstallationPlugin _upgradePlugin({
       fileSystem ?? FakeFileSystem(onPath: const {'cx': '/usr/local/bin/cx'}),
   platform: platform ?? const FakePlatform('linux'),
   processLauncher: processLauncher,
+  archiveExtractor: archiveExtractor,
+  postUpgradeSteps: postUpgradeSteps,
 );
 
 CliRelease _release(
@@ -1754,9 +1995,8 @@ String _writeRealExecutableFixture(io.Directory dir, String name) {
 /// own sameFileError seam, propagates an identicalFiles failure through
 /// sameFile instead of reporting "no issue".
 class _RealFileSystemWithIdenticalFilesSeam extends IoCliFileSystem {
-  _RealFileSystemWithIdenticalFilesSeam({
-    required List<String> pathDirectories,
-  }) : super(pathDirectories: pathDirectories);
+  _RealFileSystemWithIdenticalFilesSeam({required List<String> pathDirectories})
+    : super(pathDirectories: pathDirectories);
 
   Object? identicalFilesError;
 
@@ -1765,5 +2005,29 @@ class _RealFileSystemWithIdenticalFilesSeam extends IoCliFileSystem {
     final error = identicalFilesError;
     if (error != null) throw error;
     return super.identicalFiles(a, b);
+  }
+}
+
+/// A [Step] a test supplies as one of [InstallationPlugin.postUpgradeSteps]'
+/// own steps: records its own [name] into [ran] when it runs, and, when
+/// [error] is set, throws it afterward, the same way a real consumer step
+/// (installing a shell completion script, say) would fail after already
+/// having done its own work.
+class _RecordingStep implements Step {
+  _RecordingStep(this.name, this.ran, {this.error});
+
+  final String name;
+  final List<String> ran;
+  final Object? error;
+
+  @override
+  Preview preview() => Preview(verb: 'run', target: name);
+
+  @override
+  Future<Outcome> perform(StepContext context) async {
+    ran.add(name);
+    final error = this.error;
+    if (error != null) throw error;
+    return Outcome(verb: 'run', target: name);
   }
 }

@@ -113,12 +113,16 @@ export 'src/plugins/installation/cli_release_source.dart'
 export 'src/plugins/installation/installation_plugin.dart'
     show
         AliasIdentityCheckFailure,
+        CliAliasStrategy,
+        CliArchiveLayout,
         CliInstallStepFailure,
         CliInstallationConfig,
         CliInvalidReleaseTag,
         DownloadAssetStep,
+        InstallArchiveStep,
         InstallExecutableStep,
         InstallationPlugin,
+        RemoveDirectoryStep,
         RemoveFileStep,
         SelfDeleteExecutableStep,
         UninstallCommand,

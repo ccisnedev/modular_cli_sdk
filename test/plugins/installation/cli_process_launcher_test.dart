@@ -1480,6 +1480,77 @@ void main() {
     );
 
     test(
+      'recursively deletes every recursivePaths directory, alongside the '
+      'plain paths files, once the parent process it was told to watch '
+      'exits',
+      () async {
+        final tempDir = io.Directory.systemTemp.createTempSync(
+          'cleanup_worker_recursive_test_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final sep = io.Platform.pathSeparator;
+        final targetPath = '${tempDir.path}${sep}victim.txt';
+        io.File(targetPath).writeAsStringSync('gone soon');
+        final assetsDir = io.Directory('${tempDir.path}${sep}assets')
+          ..createSync(recursive: true);
+        io.File(
+          '${assetsDir.path}${sep}nested.txt',
+        ).writeAsStringSync('gone too');
+
+        final parent = await io.Process.start('powershell', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Start-Sleep -Seconds 60',
+        ]);
+
+        try {
+          const launcher = IoCliProcessLauncher();
+          await launcher.startCleanupWorker({
+            'parentPid': parent.pid,
+            'paths': [targetPath],
+            'recursivePaths': [assetsDir.path],
+          });
+
+          // The worker has signalled ready, but the parent it is waiting on
+          // is still alive: nothing has been deleted yet.
+          await Future<void>.delayed(const Duration(seconds: 1));
+          expect(io.File(targetPath).existsSync(), isTrue);
+          expect(assetsDir.existsSync(), isTrue);
+
+          parent.kill();
+          await parent.exitCode;
+
+          final deadline = DateTime.now().add(const Duration(seconds: 20));
+          while ((io.File(targetPath).existsSync() || assetsDir.existsSync()) &&
+              DateTime.now().isBefore(deadline)) {
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+          }
+          expect(io.File(targetPath).existsSync(), isFalse);
+          expect(
+            assetsDir.existsSync(),
+            isFalse,
+            reason:
+                'recursivePaths deletes the whole directory, not just the '
+                'files directly under it',
+          );
+        } finally {
+          try {
+            parent.kill();
+          } on Object {
+            // Already gone; nothing left to clean up.
+          }
+        }
+      },
+      skip: io.Platform.isWindows
+          ? false
+          : 'launches a real Windows PowerShell cleanup worker',
+      timeout: const Timeout(Duration(seconds: 40)),
+    );
+
+    test(
       'the worker survives even when the process that launched it exits '
       'immediately afterwards, the way a real CLI run does',
       () async {

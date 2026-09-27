@@ -266,6 +266,28 @@ class FakeFileSystem implements CliFileSystem {
   }
 }
 
+/// Returns canned [entries] from [extract] instead of decoding real archive
+/// bytes, so a test of `InstallArchiveStep`'s own wiring (which entry goes
+/// where, what happens when the declared executable entry is missing) does
+/// not have to build a real zip or tar.gz to exercise it; those are covered
+/// separately, against real archive bytes, in `cli_archive_extractor_test`.
+class FakeArchiveExtractor implements CliArchiveExtractor {
+  FakeArchiveExtractor({this.entries = const [], this.error});
+
+  final List<CliArchiveEntry> entries;
+  final Object? error;
+
+  /// Every `(bytes, format)` pair passed to [extract], in order.
+  final List<(List<int>, CliArchiveFormat)> requested = [];
+
+  @override
+  List<CliArchiveEntry> extract(List<int> bytes, CliArchiveFormat format) {
+    requested.add((bytes, format));
+    if (error != null) throw error!;
+    return entries;
+  }
+}
+
 class FakePlatform implements CliPlatform {
   const FakePlatform(this.operatingSystem);
 

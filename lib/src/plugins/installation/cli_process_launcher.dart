@@ -288,11 +288,24 @@ const String cleanupWorkerRevokedMarkerFileName = 'revoked';
 /// rename whose source is already gone: without that distinction, a
 /// target some other, unrelated process had already removed would retry
 /// forever instead of simply being done.
+///
+/// `$recursivePaths` is read the same way `$paths` is, except for one
+/// extra guard: wrapping a PowerShell `$null` in `@()` produces a
+/// one-element array containing that `null`, not an empty array, so a
+/// payload that omits `recursivePaths` entirely (every payload built
+/// before this field existed) would otherwise queue a single `$null`
+/// path for deletion instead of none. The guard is kept to the one line
+/// below, rather than spelled out with its own comment inside the script
+/// itself, to leave the encoded command line's roughly 8191-character
+/// budget (see [cleanupWorkerCmdCommandLine]) as much room as possible
+/// for a caller like `_armBarrierScript`, in this file's own test, that
+/// appends its own text to this same script.
 const String cleanupWorkerBootstrapScript = r'''
 $ErrorActionPreference = 'Stop'
 $data = $env:CLI_CLEANUP_PAYLOAD | ConvertFrom-Json
 $parentPid = [int]$data.parentPid
 $paths = @($data.paths)
+$recursivePaths = @(); if ($data.recursivePaths) { $recursivePaths = @($data.recursivePaths) }
 $markerDeadlineUnixMs = [int64]$data.markerDeadlineUnixMs
 $claimDeadlineUnixMs = [int64]$data.claimDeadlineUnixMs
 $ReadyMarkerPath = $env:CLI_CLEANUP_READY_PATH
@@ -379,6 +392,7 @@ if ($armed) {
     foreach ($path in $paths) {
         Remove-WithRetry $path
     }
+    foreach ($path in $recursivePaths) { Remove-WithRetry $path -Recurse }
     Remove-WithRetry $PrivateDir -Recurse
 }
 ''';
