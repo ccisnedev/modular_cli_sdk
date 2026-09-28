@@ -36,10 +36,15 @@ import 'cli_release_source.dart';
 /// running executable is moved aside before Windows overwrites it; the alias
 /// is never touched by either command, only by the install script that
 /// created it. Where the two disagreed — macss verifies the new binary
-/// inline, inquiry redeploys hosts as a separate, lenient step — neither
-/// behavior is built in here: [CliInstallationConfig.postUpgradeSteps] and
-/// [CliInstallationConfig.preUninstallSteps] let each CLI supply its own,
-/// exactly as it does today. See `docs/installation-parity.md`.
+/// inline, hard-fail, right after extraction; inquiry redeploys hosts as a
+/// separate, lenient step afterward — both are expressible:
+/// [CliInstallationConfig.verifyAfterInstall] (true by default, matching
+/// macss, which needs nothing else) gates the inline check, and
+/// [CliInstallationConfig.postUpgradeSteps] /
+/// [CliInstallationConfig.preUninstallSteps] let a CLI supply its own extra
+/// steps, exactly as inquiry does today (with `verifyAfterInstall: false`,
+/// so its own lenient step is not duplicated by the hard-fail one). See
+/// `docs/installation-parity.md`.
 class InstallationPlugin implements CliPlugin {
   InstallationPlugin({
     required this.config,
@@ -179,6 +184,7 @@ class CliInstallationConfig {
     required this.assets,
     this.tagPrefix,
     this.postInstallArguments = const ['version'],
+    this.verifyAfterInstall = true,
     this.postUpgradeSteps,
     this.preUninstallSteps,
   });
@@ -211,6 +217,19 @@ class CliInstallationConfig {
   /// '--apply', '--autoapprove']` (a redeploy step supplied through
   /// [postUpgradeSteps]).
   final List<String> postInstallArguments;
+
+  /// Whether [ReplaceInstallation] runs the freshly extracted binary with
+  /// [postInstallArguments] immediately after extraction, and fails the
+  /// upgrade if that fails — exactly what macss's own `ReplaceInstallation`
+  /// does ("Verifying installation...", hard-fail, no `postUpgradeSteps`
+  /// involved).
+  ///
+  /// Defaults to true, matching macss, which needs nothing else. A CLI whose
+  /// own post-install step is lenient instead — inquiry's `RedeployHosts`,
+  /// supplied through [postUpgradeSteps], which must never fail the upgrade
+  /// over it — sets this to false, so the hard-fail check does not also run
+  /// (with the same [postInstallArguments]) before that lenient step does.
+  final bool verifyAfterInstall;
 
   /// Extra steps [UpgradeCommand] runs after [ReplaceInstallation], built
   /// from the install directory and the platform ops the upgrade itself
@@ -259,11 +278,13 @@ class UpgradeInput extends Input {
 /// megabytes. It goes to [progress] — stderr by default — so `--json` stays
 /// machine-readable.
 ///
-/// Deliberately does not call [PlatformOps.runPostInstall]: macss calls it
-/// here, inline, with hard-fail semantics ("Verifying installation...");
-/// inquiry calls it from a separate, lenient step (`RedeployHosts`) that
-/// never fails the upgrade over it. Neither is built in — a CLI supplies
-/// whichever it wants through [CliInstallationConfig.postUpgradeSteps].
+/// When [verifyAfterInstall] is true (the default), runs the freshly
+/// extracted binary with [PlatformOps.runPostInstall] immediately afterward,
+/// exactly as macss's own `ReplaceInstallation` does: hard-fail semantics,
+/// no `postUpgradeSteps` involved. A CLI that verifies (or redeploys)
+/// leniently instead, from its own [CliInstallationConfig.postUpgradeSteps]
+/// — inquiry's `RedeployHosts` — sets [verifyAfterInstall] to false so the
+/// two do not run twice.
 class ReplaceInstallation implements Step {
   ReplaceInstallation({
     required this.platformOps,
@@ -272,6 +293,7 @@ class ReplaceInstallation implements Step {
     required this.to,
     required this.asset,
     required this.downloadUrl,
+    this.verifyAfterInstall = true,
     Downloader? downloader,
     IOSink? progress,
     String? runningExecutable,
@@ -286,6 +308,9 @@ class ReplaceInstallation implements Step {
   final String to;
   final String asset;
   final String downloadUrl;
+
+  /// See [CliInstallationConfig.verifyAfterInstall].
+  final bool verifyAfterInstall;
 
   /// Where the running commentary goes. Injected so a test can read it.
   final IOSink progress;
@@ -333,6 +358,11 @@ class ReplaceInstallation implements Step {
         } on FileSystemException {
           // Still locked — cleaned up on the next upgrade.
         }
+      }
+
+      if (verifyAfterInstall) {
+        progress.writeln('Verifying installation...');
+        await platformOps.runPostInstall(installDir);
       }
     } finally {
       tempDir.deleteSync(recursive: true);
@@ -542,6 +572,7 @@ class UpgradeCommand
         to: versionString,
         asset: asset.name,
         downloadUrl: asset.downloadUrl,
+        verifyAfterInstall: config.verifyAfterInstall,
         progress: progress,
         runningExecutable: runningExecutable,
       ),

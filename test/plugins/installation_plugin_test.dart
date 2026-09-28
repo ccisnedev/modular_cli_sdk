@@ -183,15 +183,12 @@ void main() {
     // The one case where macss's own behavior is not what a CLI wants:
     // inquiry verifies leniently, from its own `postUpgradeSteps` step
     // (`RedeployHosts`), and must not also run the hard-fail check inline.
-    test(
-      'verifyAfterInstall: false skips verification entirely',
-      () async {
-        final said = await replace(verifyAfterInstall: false);
+    test('verifyAfterInstall: false skips verification entirely', () async {
+      final said = await replace(verifyAfterInstall: false);
 
-        expect(said, isNot(contains('Verifying')));
-        expect(ops.calls.any((c) => c.startsWith('runPostInstall')), isFalse);
-      },
-    );
+      expect(said, isNot(contains('Verifying')));
+      expect(ops.calls.any((c) => c.startsWith('runPostInstall')), isFalse);
+    });
 
     test('moves the outgoing binary aside and cleans it up', () async {
       await replace();
