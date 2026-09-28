@@ -18,10 +18,16 @@ import 'cli_platform_ops.dart';
 import 'cli_release_source.dart';
 
 /// `upgrade` / `uninstall`: replaces this CLI's own installation with the
-/// latest compiled release, and removes it. Also contributes three checks to
-/// `doctor.checks` (binary on `PATH`, alias, release), which is why it
-/// [CliPluginManifest.requires] `modular_cli.doctor`: those checks have
-/// nowhere to be reported without it.
+/// latest compiled release, and removes it. Also contributes one check to
+/// `doctor.checks` (release), which is why it [CliPluginManifest.requires]
+/// `modular_cli.doctor`: that check has nowhere to be reported without it.
+///
+/// `binary` and `alias` doctor checks existed here before 0.8.0 shipped and
+/// were removed: neither macss nor inquiry checks its own binary or alias is
+/// reachable (both assume it — `doctor` running at all proves it), so there
+/// was no precedent to extract, and 0.8.0 is a pure extraction. See the
+/// GitHub issue linked from docs/installation-parity.md for what they did and
+/// how to bring them back.
 ///
 /// Extracted from macss's and inquiry's own `upgrade`/`uninstall` commands,
 /// which agreed on everything both faithfully reproduce here: the install
@@ -39,7 +45,6 @@ class InstallationPlugin implements CliPlugin {
     required this.config,
     CliReleaseSource? releaseSource,
     PlatformOps? platformOps,
-    Map<String, String>? environment,
   }) : releaseSource = releaseSource ?? HttpCliReleaseSource(),
        platformOps =
            platformOps ??
@@ -47,22 +52,11 @@ class InstallationPlugin implements CliPlugin {
              executable: config.executable,
              assets: config.assets,
              postInstallArguments: config.postInstallArguments,
-           ),
-       environment = environment ?? Platform.environment;
+           );
 
   final CliInstallationConfig config;
   final CliReleaseSource releaseSource;
   final PlatformOps platformOps;
-
-  /// Where `binary`/`alias` resolve `PATH` from. Real `Platform.environment`
-  /// by default — the actual PATH a shell would resolve against, which is
-  /// why these two checks read it directly rather than through
-  /// [PlatformOps.getEnvVariable] (scoped to the persisted "User" variable on
-  /// Windows, meant for `uninstall`'s read-modify-write, not for answering
-  /// "does this resolve right now"). Injectable only so a test can supply a
-  /// fixed map instead of touching the real, shared PATH of whatever machine
-  /// runs the suite.
-  final Map<String, String> environment;
 
   @override
   CliPluginManifest get manifest => CliPluginManifest(
@@ -75,14 +69,6 @@ class InstallationPlugin implements CliPlugin {
 
   @override
   void setup(CliPluginHost host) {
-    host.contribute<CliDoctorCheck>(
-      DoctorPlugin.extensionPoint,
-      CliDoctorCheck(name: 'binary', run: _checkBinary),
-    );
-    host.contribute<CliDoctorCheck>(
-      DoctorPlugin.extensionPoint,
-      CliDoctorCheck(name: 'alias', run: _checkAlias),
-    );
     host.contribute<CliDoctorCheck>(
       DoctorPlugin.extensionPoint,
       CliDoctorCheck(name: 'release', run: () => _checkRelease(host)),
@@ -110,87 +96,6 @@ class InstallationPlugin implements CliPlugin {
       globals: true,
       description: 'Remove this CLI',
     );
-  }
-
-  Future<CliCheckResult> _checkBinary() async {
-    final path = _resolveOnPath(config.executable, environment: environment);
-    return path != null
-        ? CliCheckResult(
-            status: CliCheckStatus.ok,
-            message: '${config.executable} found at $path',
-          )
-        : CliCheckResult(
-            status: CliCheckStatus.error,
-            message: '${config.executable} was not found on PATH',
-          );
-  }
-
-  /// Verifies the alias in the shape each install script actually creates:
-  /// a `.cmd` shim on Windows (`Set-Content ... '"%~dp0<exe>" %*'` in both
-  /// macss's and inquiry's `install.ps1`), a symlink to the executable on
-  /// Linux/macOS (`ln -sf` in both `install.sh`).
-  Future<CliCheckResult> _checkAlias() async {
-    final aliasPath = _resolveOnPath(config.alias, environment: environment);
-    if (aliasPath == null) {
-      return CliCheckResult(
-        status: CliCheckStatus.error,
-        message: '${config.alias} was not found on PATH',
-      );
-    }
-
-    if (Platform.isWindows) {
-      final String content;
-      try {
-        content = File(aliasPath).readAsStringSync();
-      } on Object catch (e) {
-        return CliCheckResult(
-          status: CliCheckStatus.error,
-          message: 'could not read $aliasPath: $e',
-        );
-      }
-      final invokesExecutable =
-          content.contains(r'%~dp0') && content.contains(config.executable);
-      return invokesExecutable
-          ? CliCheckResult(
-              status: CliCheckStatus.ok,
-              message: '${config.alias} invokes ${config.executable}',
-            )
-          : CliCheckResult(
-              status: CliCheckStatus.error,
-              message:
-                  '$aliasPath does not look like a shim for '
-                  '${config.executable} (expected it to use %~dp0)',
-            );
-    }
-
-    final entity = File(aliasPath);
-    final bool isLink;
-    try {
-      isLink = FileSystemEntity.isLinkSync(aliasPath);
-    } on Object catch (e) {
-      return CliCheckResult(
-        status: CliCheckStatus.error,
-        message: 'could not check whether $aliasPath is a symlink: $e',
-      );
-    }
-    if (!isLink) {
-      return CliCheckResult(
-        status: CliCheckStatus.error,
-        message: '$aliasPath is not a symlink to ${config.executable}',
-      );
-    }
-    final target = entity.resolveSymbolicLinksSync();
-    return p.basename(target) == config.executable
-        ? CliCheckResult(
-            status: CliCheckStatus.ok,
-            message: '${config.alias} resolves to ${config.executable}',
-          )
-        : CliCheckResult(
-            status: CliCheckStatus.error,
-            message:
-                '${config.alias} resolves to $target, not '
-                '${config.executable}',
-          );
   }
 
   Future<CliCheckResult> _checkRelease(CliPluginHost host) async {
@@ -262,30 +167,6 @@ class InstallationPlugin implements CliPlugin {
             message: 'Up to date ($current).',
           );
   }
-}
-
-/// Whether [name] resolves on `PATH`, checked by filename rather than by
-/// running it: `doctor` is meant to answer instantly, and some external
-/// tools take seconds to answer `--version`. On Windows the executable can
-/// be `name`, `name.exe`, `name.cmd` or `name.bat` — a shim like the alias
-/// this plugin's own doctor check verifies. Extracted from macss's
-/// `isOnPath` in `code/cli/lib/src/tools.dart`.
-String? _resolveOnPath(String name, {Map<String, String>? environment}) {
-  final env = environment ?? Platform.environment;
-  final pathVar = env['PATH'] ?? env['Path'] ?? '';
-  if (pathVar.isEmpty) return null;
-  final sep = Platform.isWindows ? ';' : ':';
-  final candidates = Platform.isWindows
-      ? [name, '$name.exe', '$name.cmd', '$name.bat']
-      : [name];
-  for (final dir in pathVar.split(sep)) {
-    if (dir.isEmpty) continue;
-    for (final candidate in candidates) {
-      final path = p.join(dir, candidate);
-      if (File(path).existsSync()) return path;
-    }
-  }
-  return null;
 }
 
 /// What [InstallationPlugin] needs to know about this CLI's own

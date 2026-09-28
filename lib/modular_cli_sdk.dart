@@ -97,7 +97,6 @@ export 'src/plugins/installation/installation_plugin.dart'
         UpgradeInput,
         UpgradeOutput;
 export 'src/plugins/installation/linux_platform_ops.dart' show LinuxPlatformOps;
-export 'src/plugins/installation/macos_platform_ops.dart' show MacosPlatformOps;
 export 'src/plugins/installation/windows_platform_ops.dart'
     show WindowsPlatformOps;
 export 'src/plugins/version_plugin.dart'

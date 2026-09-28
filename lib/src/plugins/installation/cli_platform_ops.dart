@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'linux_platform_ops.dart';
-import 'macos_platform_ops.dart';
 import 'windows_platform_ops.dart';
 
 /// How long a post-install verification/deploy step may take before it is
@@ -85,13 +84,11 @@ abstract class PlatformOps {
         postInstallArguments: postInstallArguments,
       );
     }
-    if (Platform.isMacOS) {
-      return MacosPlatformOps(
-        binaryName: executable,
-        assetName: assetName,
-        postInstallArguments: postInstallArguments,
-      );
-    }
+    // Only Windows and Linux are supported, matching macss's and inquiry's
+    // own PlatformOps.current() factories exactly: both throw for any OS
+    // other than the two above, macOS included. Neither ships a macOS build,
+    // so there is nothing to extract, and a shared SDK plugin should not
+    // invent macOS-specific behavior no CLI depending on it actually needs.
     throw UnsupportedError('PlatformOps: unsupported OS "$os"');
   }
 }
