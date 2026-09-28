@@ -179,6 +179,7 @@ class FakeStep implements Step {
     required this.target,
     this.reportedVerb,
     this.throws,
+    this.detail,
   });
 
   final String verb;
@@ -189,6 +190,11 @@ class FakeStep implements Step {
 
   final Object? throws;
 
+  /// Carried on the returned [Outcome], standing in for a real step's own
+  /// human-readable detail — inquiry's `RedeployHosts`, for instance, sets
+  /// one naming the retry command when a redeploy comes back incomplete.
+  final String? detail;
+
   bool performed = false;
 
   @override
@@ -198,7 +204,7 @@ class FakeStep implements Step {
   Future<Outcome> perform(StepContext context) async {
     if (throws != null) throw throws!;
     performed = true;
-    return Outcome(verb: reportedVerb ?? verb, target: target);
+    return Outcome(verb: reportedVerb ?? verb, target: target, detail: detail);
   }
 }
 

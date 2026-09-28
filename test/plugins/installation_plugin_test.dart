@@ -534,6 +534,47 @@ void main() {
         {'verb': 'deploy', 'target': 'hosts'},
       ]);
     });
+
+    // Ported from inquiry's own upgrade_test.dart: when its postUpgradeSteps
+    // callback (RedeployHosts) comes back with hosts still not redeployed,
+    // inquiry's text output prints that warning and the hint to retry, not
+    // just "upgraded". Before this fix, UpgradeOutput.toText() ignored extra
+    // entirely, so only the JSON output carried this detail.
+    test(
+      'surfaces a postUpgradeSteps detail in text output, not only JSON',
+      () async {
+        final installDir = Directory.systemTemp.createTempSync(
+          'sdk_upgrade_detail_',
+        );
+        addTearDown(() {
+          if (installDir.existsSync()) installDir.deleteSync(recursive: true);
+        });
+        final binary = File(p.join(installDir.path, 'bin', 'cx.exe'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('outgoing');
+
+        final command = _upgradeCommand(
+          releases: [_release('v9.9.9', asset: _platformAsset)],
+          downloader: FakeDownloader(),
+          installDir: installDir.path,
+          runningExecutable: binary.path,
+          postUpgradeSteps: (installDir, platformOps) => [
+            FakeStep(
+              verb: 'deploy',
+              target: 'hosts',
+              detail: 'deployed: false — run `iq host get --apply` to retry.',
+            ),
+          ],
+        );
+
+        final output = await applyCommand(command);
+
+        expect(
+          output.toText(),
+          contains('run `iq host get --apply` to retry.'),
+        );
+      },
+    );
   });
 
   group('UpgradeCommand under --apply', () {
