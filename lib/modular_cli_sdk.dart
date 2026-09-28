@@ -123,4 +123,3 @@ export 'src/module_builder.dart' show ModuleBuilder;
 export 'src/output.dart' show Output;
 export 'src/plan.dart' show PlanDocument, PlanSink;
 export 'src/query.dart' show Query;
-export 'src/skips_interactive_approval.dart' show SkipsInteractiveApproval;

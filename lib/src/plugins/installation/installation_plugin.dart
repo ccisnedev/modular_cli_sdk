@@ -11,7 +11,6 @@ import '../../exit_codes.dart';
 import '../../explains_nothing_to_do.dart';
 import '../../input.dart';
 import '../../output.dart';
-import '../../skips_interactive_approval.dart';
 import '../doctor_plugin.dart';
 import 'cli_downloader.dart';
 import 'cli_platform_ops.dart';
@@ -426,10 +425,7 @@ class UpgradeOutput extends Output {
 }
 
 class UpgradeCommand
-    implements
-        Command<UpgradeInput, UpgradeOutput>,
-        ExplainsNothingToDo,
-        SkipsInteractiveApproval {
+    implements Command<UpgradeInput, UpgradeOutput>, ExplainsNothingToDo {
   UpgradeCommand(
     this.input, {
     required this.config,
@@ -717,10 +713,7 @@ class UninstallOutput extends Output {
       'Uninstalled. Restart your terminal to apply PATH changes.';
 }
 
-class UninstallCommand
-    implements
-        Command<UninstallInput, UninstallOutput>,
-        SkipsInteractiveApproval {
+class UninstallCommand implements Command<UninstallInput, UninstallOutput> {
   UninstallCommand(this.input, {required this.config, PlatformOps? platformOps})
     : platformOps =
           platformOps ??
