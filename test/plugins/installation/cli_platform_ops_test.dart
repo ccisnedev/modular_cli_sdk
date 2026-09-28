@@ -1,7 +1,7 @@
 @TestOn('mac-os')
 library;
 
-/// `PlatformOps.current()` on macOS. Only Windows and Linux are supported —
+/// `PlatformOps.current()` on macOS. Only Windows and Linux are supported;
 /// macOS was removed before 0.8.0 shipped (no macss or inquiry precedent to
 /// extract from; see docs/installation-parity.md and the open questions in
 /// PR #33). This mirrors exactly what both source CLIs' own

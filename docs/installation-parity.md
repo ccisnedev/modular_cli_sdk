@@ -34,7 +34,7 @@ only, to show why.
 | `doctor`: newer release available | Not in `doctor`; `version_check.dart`'s `VersionCheckResult` is surfaced in `tui.dart`'s banner instead, and is explicitly "Silent on network failures — returns `updateAvailable = false`" | Same `version_check.dart`, but *is* surfaced as one `doctor` check's `version` field (`doctor.dart:672`, `"$latestVersion available"`) — still silent on lookup failure | New `release` check: warns (never errors) when a newer tagged release exists; unlike both CLIs' own `version_check.dart`, a failed lookup is itself reported (as part of the check's own detail), not swallowed into "no update available" | differs (new check; differs further on lookup-failure visibility — see open questions) |
 | Error ids thrown | `StateError`/ad hoc exceptions, not a `CommandException` id scheme (macss predates that convention) | Same | `release-lookup-failed`, `asset-not-found` — the only two ids `installation_plugin.dart` throws | differs (surface, not behavior): the SDK's own error envelope replaces ad hoc exceptions, but the two conditions are the same ones each CLI already treats as fatal |
 
-`doctor`: is the binary on PATH / alias resolves — removed before 0.8.0
+`doctor`: is the binary on PATH / alias resolves: removed before 0.8.0
 shipped. Both checks were adapted, not ported (macss's `isOnPath()` in
 `code/cli/lib/src/tools.dart` exists, but is only ever used in `doctor.dart`
 to check *other* tools, never the CLI's own binary or alias; neither CLI has

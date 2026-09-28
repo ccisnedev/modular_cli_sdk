@@ -24,7 +24,7 @@ import 'cli_release_source.dart';
 ///
 /// `binary` and `alias` doctor checks existed here before 0.8.0 shipped and
 /// were removed: neither macss nor inquiry checks its own binary or alias is
-/// reachable (both assume it — `doctor` running at all proves it), so there
+/// reachable (both assume it: `doctor` running at all proves it), so there
 /// was no precedent to extract, and 0.8.0 is a pure extraction. See the
 /// GitHub issue linked from docs/installation-parity.md for what they did and
 /// how to bring them back.

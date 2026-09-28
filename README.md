@@ -486,7 +486,7 @@ Every network, download and platform access `InstallationPlugin` makes goes
 through an injectable interface (`CliReleaseSource`, `Downloader`,
 `PlatformOps`), each with a real default (`HttpCliReleaseSource`,
 `downloadOverHttp`, `PlatformOps.current()`, which resolves to
-`WindowsPlatformOps`/`LinuxPlatformOps` — macOS is not supported, and
+`WindowsPlatformOps`/`LinuxPlatformOps`; macOS is not supported, and
 `PlatformOps.current()` throws `UnsupportedError` there, the same as macss's
 and inquiry's own factories): pass your own in tests, and nothing downloads,
 extracts or touches a real PATH.
