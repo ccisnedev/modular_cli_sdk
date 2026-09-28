@@ -525,7 +525,7 @@ InstallationPlugin(
     // Optional: run after upgrade / before uninstall, built from the install
     // directory and the same PlatformOps the command itself is using. This
     // is where a CLI expresses whatever it did here before this plugin
-    // existed, such as inquiry's own host redeploy/cleanup — neither of
+    // existed, such as inquiry's own host redeploy/cleanup: neither of
     // those is, or will be, built into the plugin itself.
     postUpgradeSteps: (installDir, platformOps) => [MyRedeployStep(...)],
     preUninstallSteps: (installDir, platformOps) => [MyCleanupStep(...)],
@@ -563,12 +563,20 @@ need them back. `MacosPlatformOps` was removed the same way, for the same
 reason: see the macOS row in
 [`docs/installation-parity.md`](docs/installation-parity.md).
 
-**Breaking, from 0.7.0.** Every 0.7.0 installation type — `CliFileSystem`,
+**Breaking, from 0.7.0.** Every 0.7.0 installation type (`CliFileSystem`,
 `CliPlatform`, `CliProcessLauncher`, the cleanup-worker machinery behind
-`uninstall`, and the bare-executable (no archive) download path — is gone,
+`uninstall`, and the bare-executable, no archive, download path) is gone,
 replaced by the config shape above and a plain `platformOps.scheduleDeletion`
 call. There is no compatibility shim; a CLI on 0.7.0 upgrades by switching to
 this config.
+
+**Also breaking, from 0.7.0: approval is no longer skippable.** 0.7.0's
+`upgrade`/`uninstall` implemented `SkipsInteractiveApproval`, so `--apply`
+bypassed the approval gate even without `--autoapprove`. Neither macss's nor
+inquiry's own `upgrade`/`uninstall` ever worked that way, and 0.8.0 now
+matches them: `--apply` asks for approval unless `--autoapprove` is given,
+the same as every other command. `SkipsInteractiveApproval` itself is
+removed, since nothing in the SDK implements it any more.
 
 ---
 

@@ -19,8 +19,8 @@ only, to show why.
 
 | Row | macss (CLI today) | inquiry (CLI today) | InstallationPlugin 0.8.0 | Status |
 | --- | --- | --- | --- | --- |
-| Install directory | `p.dirname(p.dirname(Platform.resolvedExecutable))` — derived from the running binary, never looked up on `PATH` | Same derivation | Same derivation, in `installation_plugin.dart` | equal |
-| Release lookup | `GET /repos/{repo}/releases/latest`; own `upgrade.dart` throws on any non-200 response, 404 included (no tag prefix in use) | Same, `/releases/latest`, same non-200-throws behavior | `HttpCliReleaseSource.latestRelease` throws `CliReleaseLookupFailure` on any non-200 response, 404 included (no special-cased null return); `listReleases` (paginated, following `Link: rel="next"`) only when `tagPrefix` is configured, matching neither CLI's own need for one today but expressible for a CLI that does — a `tagPrefix` matching no release now throws `release-lookup-failed` from `upgrade`, per this doc's own README.md contract, rather than silently reporting nothing to do | equal (404 handling, ported from both CLIs); `tagPrefix` path itself is new surface, unexercised by either CLI, but its no-match case now honors the plugin's own documented contract |
+| Install directory | `p.dirname(p.dirname(Platform.resolvedExecutable))`, derived from the running binary, never looked up on `PATH` | Same derivation | Same derivation, in `installation_plugin.dart` | equal |
+| Release lookup | `GET /repos/{repo}/releases/latest`; own `upgrade.dart` throws on any non-200 response, 404 included (no tag prefix in use) | Same, `/releases/latest`, same non-200-throws behavior | `HttpCliReleaseSource.latestRelease` throws `CliReleaseLookupFailure` on any non-200 response, 404 included (no special-cased null return); `listReleases` (paginated, following `Link: rel="next"`) only when `tagPrefix` is configured, matching neither CLI's own need for one today but expressible for a CLI that does: a `tagPrefix` matching no release now throws `release-lookup-failed` from `upgrade`, per this doc's own README.md contract, rather than silently reporting nothing to do | equal (404 handling, ported from both CLIs); `tagPrefix` path itself is new surface, unexercised by either CLI, but its no-match case now honors the plugin's own documented contract |
 | Asset selection | Asset named for `Platform.operatingSystem`, from a per-OS name table | Same | `assetForPlatform(release, config.assets, Platform.operatingSystem)` | equal |
 | Archive extraction | `platform_ops.dart`: PowerShell `Expand-Archive` (Windows), `tar xzf` (Linux) | Same two implementations, own `platform_ops.dart` | `WindowsPlatformOps`/`LinuxPlatformOps.expandArchive`, ported | equal |
 | Post-install verification | `upgrade.dart` runs the freshly extracted binary with `postInstallArguments` (`['version']`) right after extraction, unconditionally, and fails the upgrade if that fails (`progress.writeln('Verifying installation...'); await platformOps.runPostInstall(installDir);`) | Verifies leniently instead, only through its own `RedeployHosts` postUpgradeSteps-equivalent; never a hard-fail inline check with `postInstallArguments` | `ReplaceInstallation` now runs `runPostInstall` by default, hard-failing the upgrade on error, matching macss (`CliInstallationConfig.verifyAfterInstall`, default `true`); a CLI that instead verifies leniently through `postUpgradeSteps`, like inquiry, sets `verifyAfterInstall: false` so the two checks do not both run | equal (both CLIs representable through one flag); before this fix the plugin skipped inline verification entirely, matching neither CLI |
@@ -32,8 +32,9 @@ only, to show why.
 | Directory deletion (uninstall) | `scheduleDeletion`: Windows renames the running exe aside then launches a detached batch script that `rmdir /s /q` after a short delay; Linux spawns a detached `rm -rf`, since the running binary is not locked | Same two implementations | Ported verbatim as `PlatformOps.scheduleDeletion`, wrapped in `DeleteInstallation` | equal |
 | Uninstall of a missing install | Not an error: nothing to remove from `PATH`, nothing to delete | Same | Same: `UnsetFromPath` no-ops when the bin dir is not present in `PATH`; `scheduleDeletion` no-ops on a directory that does not exist | equal |
 | Extension steps around upgrade/uninstall | None (macss's own `upgrade`/`uninstall` do nothing beyond replace/remove) | `RedeployHosts` after upgrade, `CleanDeployedHosts` before uninstall (`hosts/deployer.dart`); an incomplete redeploy prints a warning and a retry hint (`iq host get --apply`) in text output, not only structured output | `CliInstallationConfig.postUpgradeSteps`/`preUninstallSteps`: `List<Step> Function(String installDir, PlatformOps platformOps)`, folded into `UpgradeOutput.extra`/`UninstallOutput.extra`; `UpgradeOutput.toText()` also renders each extra entry's `detail` as an extra line, generically, so a callback like `RedeployHosts` can surface its own warning in text output too | equal in mechanism (a CLI plugs in exactly inquiry's own steps, and its warning now reaches text output the same way); the callback shape itself is new, since neither CLI needed one before this extraction had to serve both |
-| `doctor`: newer release available | Not in `doctor`; `version_check.dart`'s `VersionCheckResult` is surfaced in `tui.dart`'s banner instead, and is explicitly "Silent on network failures — returns `updateAvailable = false`" | Same `version_check.dart`, but *is* surfaced as one `doctor` check's `version` field (`doctor.dart:672`, `"$latestVersion available"`) — still silent on lookup failure | New `release` check: warns (never errors) when a newer tagged release exists; unlike both CLIs' own `version_check.dart`, a failed lookup is itself reported (as part of the check's own detail), not swallowed into "no update available" | differs (new check; differs further on lookup-failure visibility — see open questions) |
-| Error ids thrown | `StateError`/ad hoc exceptions, not a `CommandException` id scheme (macss predates that convention) | Same | `release-lookup-failed`, `asset-not-found` — the only two ids `installation_plugin.dart` throws | differs (surface, not behavior): the SDK's own error envelope replaces ad hoc exceptions, but the two conditions are the same ones each CLI already treats as fatal |
+| `doctor`: newer release available | Not in `doctor`; `version_check.dart`'s `VersionCheckResult` is surfaced in `tui.dart`'s banner instead, and is explicitly "Silent on network failures: returns `updateAvailable = false`" | Same `version_check.dart`, but *is* surfaced as one `doctor` check's `version` field (`doctor.dart:672`, `"$latestVersion available"`); still silent on lookup failure | New `release` check: warns (never errors) when a newer tagged release exists; unlike both CLIs' own `version_check.dart`, a failed lookup is itself reported (as part of the check's own detail), not swallowed into "no update available" | differs (new check; differs further on lookup-failure visibility, see open questions) |
+| Error ids thrown | `StateError`/ad hoc exceptions, not a `CommandException` id scheme (macss predates that convention) | Same | `release-lookup-failed`, `asset-not-found`: the only two ids `installation_plugin.dart` throws | differs (surface, not behavior): the SDK's own error envelope replaces ad hoc exceptions, but the two conditions are the same ones each CLI already treats as fatal |
+| Approval | `upgrade`/`uninstall` are ordinary `CommandException`-gated commands: `--apply` asks for interactive approval unless `--autoapprove` is given, same as every other command | Same | Same: `UpgradeCommand`/`UninstallCommand` implement only `Command<I, O>`, so `--apply` goes through `ModuleBuilder`'s normal interactive approval gate unless `--autoapprove` is given; neither command implements anything that skips it | equal (both CLIs and the plugin require approval for `--apply` unless `--autoapprove`); before this fix the plugin's own `upgrade`/`uninstall` skipped the gate entirely, matching neither CLI |
 
 `doctor`: is the binary on PATH / alias resolves: removed before 0.8.0
 shipped. Both checks were adapted, not ported (macss's `isOnPath()` in
@@ -45,7 +46,7 @@ from and 0.8.0 is a pure extraction. See
 each check did, how it was implemented, and what reintroducing them would
 take.
 
-## docmd (CLI today only — not a source for this extraction)
+## docmd (CLI today only, not a source for this extraction)
 
 docmd depends on `modular_cli_sdk` but has never adopted the plugin system
 for installation; its `upgrade`/`uninstall`/`doctor` are its own
@@ -53,8 +54,8 @@ for installation; its `upgrade`/`uninstall`/`doctor` are its own
 fixed install path rather than one derived from the running binary:
 
 - `code/cli/lib/modules/global/commands/upgrade.dart`: `UpgradeDeps` (a
-  hand-rolled DI class of function-typed fields — `fetchJson`, `downloadFile`,
-  `execFile`, `deletePath`, `ensureDirectory` — rather than `Step`-based
+  hand-rolled DI class of function-typed fields (`fetchJson`, `downloadFile`,
+  `execFile`, `deletePath`, `ensureDirectory`) rather than `Step`-based
   `Command`s) resolves a fixed managed path: `%LOCALAPPDATA%\docmd` on
   Windows, `~/.docmd` on Linux (`_resolveManagedInstallPath`); macOS is
   unsupported (returns `null`, then `UnsupportedError`)
@@ -75,11 +76,11 @@ task is extraction from macss and inquiry, and docmd's own commands keep
 working unchanged, on the SDK version they already use, independent of this
 plugin.
 
-## skillwire (CLI today only — not a source for this extraction)
+## skillwire (CLI today only, not a source for this extraction)
 
 skillwire depends on `modular_cli_sdk` `^0.5.0` (before the plugin system
 existed) and has no global `upgrade`, `uninstall`, or `doctor` command at
-all — `code/cli/lib/modules/` contains only a `skill` module. Its only
+all: `code/cli/lib/modules/` contains only a `skill` module. Its only
 installation-related files are static `install.ps1`/`install.sh` scripts
 under `code/site/`. There is nothing to compare a row against; skillwire is
 listed only to record that it has no installation lifecycle to preserve.

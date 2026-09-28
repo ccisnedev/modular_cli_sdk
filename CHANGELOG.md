@@ -38,6 +38,17 @@ per-CLI comparison this replacement is built from.
   `UnsupportedError` for macOS, the same as it does for any other OS besides
   Windows and Linux, matching macss's and inquiry's own `PlatformOps.current()`
   factories exactly
+- **`upgrade`/`uninstall` no longer skip interactive approval.** Both
+  commands implemented `SkipsInteractiveApproval` (added in 0.7.0), so their
+  own `--apply` bypassed `ModuleBuilder`'s approval gate entirely, even
+  without `--autoapprove`. Neither macss's nor inquiry's own `upgrade`/
+  `uninstall` ever did this: both go through the normal approval prompt like
+  any other command. `SkipsInteractiveApproval` is removed along with its
+  only two users, its export from `modular_cli_sdk.dart`, and its special
+  case in `ModuleBuilder`: `upgrade --apply` and `uninstall --apply` now ask
+  for approval unless `--autoapprove` is given, matching both source CLIs.
+  See the new Approval row in
+  [`docs/installation-parity.md`](docs/installation-parity.md)
 
 ### Removed
 
@@ -53,6 +64,9 @@ per-CLI comparison this replacement is built from.
 - `MacosPlatformOps`: an earlier draft added it, reusing `LinuxPlatformOps`'s
   behavior verbatim, but neither macss nor inquiry supports macOS, so there
   was no precedent to extract it from
+- `SkipsInteractiveApproval` (the marker interface, its file, and its export):
+  no command in the SDK implements it any more. See the Changed (breaking)
+  entry above
 - The `binary` and `alias` doctor checks, and the `environment` constructor
   parameter on `InstallationPlugin` that existed only to make them testable
   against a fake `PATH`: an earlier draft added both, but neither macss nor
