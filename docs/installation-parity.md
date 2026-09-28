@@ -23,7 +23,7 @@ only, to show why.
 | Release lookup | `GET /repos/{repo}/releases/latest` (no tag prefix in use) | Same, `/releases/latest` | `HttpCliReleaseSource.latestRelease`; `listReleases` (paginated, following `Link: rel="next"`) only when `tagPrefix` is configured, matching neither CLI's own need for one today but expressible for a CLI that does | equal (latest); `tagPrefix` path is new surface, unexercised by either CLI |
 | Asset selection | Asset named for `Platform.operatingSystem`, from a per-OS name table | Same | `assetForPlatform(release, config.assets, Platform.operatingSystem)` | equal |
 | Archive extraction | `platform_ops.dart`: PowerShell `Expand-Archive` (Windows), `tar xzf` (Linux) | Same two implementations, own `platform_ops.dart` | `WindowsPlatformOps`/`LinuxPlatformOps.expandArchive`, ported | equal |
-| macOS support | `PlatformOps.current()` throws `UnsupportedError` for any OS but Windows/Linux (`code/cli/lib/targets/platform_ops.dart`) | Same, throws for anything but Windows/Linux (`code/cli/lib/hosts/platform_ops.dart`) | `MacosPlatformOps` exists and reuses `LinuxPlatformOps`'s behavior (same `tar xzf` extraction, same POSIX PATH handling) | differs — new: neither CLI supports macOS today; see open questions |
+| macOS support | `PlatformOps.current()` throws `UnsupportedError` for any OS but Windows/Linux (`code/cli/lib/targets/platform_ops.dart`) | Same, throws for anything but Windows/Linux (`code/cli/lib/hosts/platform_ops.dart`) | Same: `PlatformOps.current()` throws `UnsupportedError` for any OS but Windows/Linux; no `MacosPlatformOps` | equal: unsupported |
 | Download destination | Own temp directory (`Directory.systemTemp`), never inside the install directory | Same | `ReplaceInstallation.perform()` downloads into `Directory.systemTemp.createTempSync('cli_upgrade_')`, cleaned up in a `finally` | equal |
 | PATH write (upgrade) | Not touched by upgrade; only `install.ps1`/`install.sh` write PATH once, at install time | Same | Same: `upgrade` never calls `setEnvVariable` | equal |
 | Alias/shim (`.cmd` / symlink) | Created by `install.ps1` (`.cmd` shim calling `%~dp0<exe>.exe %*`) / `install.sh` (symlink); never touched by `upgrade` or `uninstall` | Same shapes, own `install.ps1`/`install.sh` | Same: `postUpgradeSteps`/no built-in alias handling; the `alias` doctor check only verifies the shape these scripts already produce | equal |
@@ -31,10 +31,18 @@ only, to show why.
 | Directory deletion (uninstall) | `scheduleDeletion`: Windows renames the running exe aside then launches a detached batch script that `rmdir /s /q` after a short delay; Linux spawns a detached `rm -rf`, since the running binary is not locked | Same two implementations | Ported verbatim as `PlatformOps.scheduleDeletion`, wrapped in `DeleteInstallation` | equal |
 | Uninstall of a missing install | Not an error: nothing to remove from `PATH`, nothing to delete | Same | Same: `UnsetFromPath` no-ops when the bin dir is not present in `PATH`; `scheduleDeletion` no-ops on a directory that does not exist | equal |
 | Extension steps around upgrade/uninstall | None (macss's own `upgrade`/`uninstall` do nothing beyond replace/remove) | `RedeployHosts` after upgrade, `CleanDeployedHosts` before uninstall (`hosts/deployer.dart`) | `CliInstallationConfig.postUpgradeSteps`/`preUninstallSteps`: `List<Step> Function(String installDir, PlatformOps platformOps)`, folded into `UpgradeOutput.extra`/`UninstallOutput.extra` rather than a fixed field | equal in mechanism (a CLI plugs in exactly inquiry's own steps); the callback shape itself is new, since neither CLI needed one before this extraction had to serve both |
-| `doctor`: is the binary on PATH | `isOnPath()` in `code/cli/lib/src/tools.dart`, used in `doctor.dart` to check *other* tools (`git`, `gh`, ...), not the CLI's own binary | No `doctor` check for its own binary | New `binary` check, reusing `isOnPath`'s PATH-resolution logic against `config.executable` itself | differs (new) — neither CLI checks its own binary is reachable; both assume it, since `doctor` running at all proves it |
-| `doctor`: alias resolves | No such check | No such check | New `alias` check: does `config.alias` resolve to the same binary, when configured | differs (new) |
 | `doctor`: newer release available | Not in `doctor`; `version_check.dart`'s `VersionCheckResult` is surfaced in `tui.dart`'s banner instead, and is explicitly "Silent on network failures — returns `updateAvailable = false`" | Same `version_check.dart`, but *is* surfaced as one `doctor` check's `version` field (`doctor.dart:672`, `"$latestVersion available"`) — still silent on lookup failure | New `release` check: warns (never errors) when a newer tagged release exists; unlike both CLIs' own `version_check.dart`, a failed lookup is itself reported (as part of the check's own detail), not swallowed into "no update available" | differs (new check; differs further on lookup-failure visibility — see open questions) |
 | Error ids thrown | `StateError`/ad hoc exceptions, not a `CommandException` id scheme (macss predates that convention) | Same | `release-lookup-failed`, `asset-not-found` — the only two ids `installation_plugin.dart` throws | differs (surface, not behavior): the SDK's own error envelope replaces ad hoc exceptions, but the two conditions are the same ones each CLI already treats as fatal |
+
+`doctor`: is the binary on PATH / alias resolves — removed before 0.8.0
+shipped. Both checks were adapted, not ported (macss's `isOnPath()` in
+`code/cli/lib/src/tools.dart` exists, but is only ever used in `doctor.dart`
+to check *other* tools, never the CLI's own binary or alias; neither CLI has
+an equivalent `alias` check at all), so there was no precedent to extract
+from and 0.8.0 is a pure extraction. See
+[issue #34](https://github.com/ccisnedev/modular_cli_sdk/issues/34) for what
+each check did, how it was implemented, and what reintroducing them would
+take.
 
 ## docmd (CLI today only — not a source for this extraction)
 
@@ -75,44 +83,59 @@ installation-related files are static `install.ps1`/`install.sh` scripts
 under `code/site/`. There is nothing to compare a row against; skillwire is
 listed only to record that it has no installation lifecycle to preserve.
 
-## Open questions
+## Decisions (resolved)
 
-These are judgment calls made while extracting, each already flagged above
-in the table's "Status" column, gathered here for review:
+These were judgment calls made while extracting, each already flagged above
+in the table's "Status" column, gathered here as open questions during
+review and since resolved by the repository owner:
 
-1. **macOS.** Neither macss nor inquiry supports macOS; both throw
-   `UnsupportedError` from their own `PlatformOps.current()`. The SDK adds
-   `MacosPlatformOps`, reusing `LinuxPlatformOps`'s behavior verbatim (same
-   `tar xzf` extraction, same POSIX PATH handling), since a shared SDK plugin
-   cannot reasonably refuse an entire OS the way a single CLI's own
-   installer can. This is new surface with no CLI precedent to extract from.
-2. **`selfReplace`.** Neither CLI's own `PlatformOps` exercises a
+1. **macOS: removed.** Neither macss nor inquiry supports macOS; both throw
+   `UnsupportedError` from their own `PlatformOps.current()`. An earlier
+   draft added `MacosPlatformOps`, reusing `LinuxPlatformOps`'s behavior
+   verbatim, as new surface with no CLI precedent. The owner decided against
+   it: 0.8.0 is a pure extraction, and a shared SDK plugin should not invent
+   macOS-specific behavior no CLI depending on it actually needs.
+   `MacosPlatformOps` was deleted; `PlatformOps.current()` now throws
+   `UnsupportedError` for macOS the same way macss and inquiry do, falling
+   through to the same "unsupported OS" branch any other unrecognized OS
+   already hit. Only Windows and Linux are supported.
+2. **`selfReplace`: not ported.** Neither CLI's own `PlatformOps` exercises a
    self-replace path distinct from "extract the archive over the install
    directory" (`ReplaceInstallation` does not need a separate step: the
    running binary is inside the extracted archive's target either way).
    Not ported as a separate method, since there is nothing to extract.
-3. **`release` doctor check and lookup failure.** macss's and inquiry's own
-   `version_check.dart` are both explicitly silent on a failed lookup
-   (`updateAvailable = false`, no error, no warning). `InstallationPlugin`'s
-   `release` check instead reports the lookup failure itself, as part of
-   that check's own detail (still only ever a warning, never an error). This
-   is a deliberate departure from both CLIs' existing precedent, made
-   because doctor is where a person is already looking for this exact kind
-   of "something isn't right, but it isn't fatal" signal — worth a second
-   look given neither source CLI does it this way.
-4. **`postUpgradeSteps`/`preUninstallSteps` callback shape.** Built
+3. **`release` doctor check and lookup failure: kept as designed.** macss's
+   and inquiry's own `version_check.dart` are both explicitly silent on a
+   failed lookup (`updateAvailable = false`, no error, no warning).
+   `InstallationPlugin`'s `release` check instead reports the lookup failure
+   itself, as part of that check's own detail (still only ever a warning,
+   never an error). The owner confirmed this deliberate departure from both
+   CLIs' existing precedent: doctor is where a person is already looking for
+   this exact kind of "something isn't right, but it isn't fatal" signal.
+4. **`postUpgradeSteps`/`preUninstallSteps` callback shape: kept.** Built
    specifically to make inquiry's `RedeployHosts`/`CleanDeployedHosts`
    expressible, since macss needs no such thing at all. The
    `List<Step> Function(String installDir, PlatformOps platformOps)` shape
    is therefore new: it did not exist as a named mechanism in either CLI,
-   only as inline steps only inquiry happens to have.
-5. **`binary`/`alias` doctor checks.** Adapted, not ported: macss's
+   only as inline steps only inquiry happens to have. The owner confirmed
+   both extension points stay.
+5. **`binary`/`alias` doctor checks: removed.** Adapted, not ported: macss's
    `isOnPath()` (`code/cli/lib/src/tools.dart`) exists, but is only ever used
    in `doctor.dart` to check *other* tools (`git`, `gh`), never the CLI's own
-   binary or its alias. Neither CLI checks whether it can find itself.
-6. **`environment` injection on `InstallationPlugin`.** Added this
-   extraction, narrowly: the `binary`/`alias` checks need to resolve `PATH`
-   against something other than the real, shared `Platform.environment` of
-   whatever machine runs the SDK's own test suite. This is a testability seam
-   for the two SDK-original doctor checks above (item 5), not a port of
-   anything either CLI's own tests do.
+   binary or its alias. Neither CLI checks whether it can find itself, so
+   there was no precedent to extract these two checks from. The owner
+   decided to remove both, after filing
+   [issue #34](https://github.com/ccisnedev/modular_cli_sdk/issues/34)
+   describing what they did and how to bring them back.
+6. **`environment` injection on `InstallationPlugin`: removed.** Existed
+   narrowly so the `binary`/`alias` checks could resolve `PATH` against
+   something other than the real, shared `Platform.environment` of whatever
+   machine runs the SDK's own test suite. With those two checks gone, this
+   testability seam has nothing left to serve and was removed with them (see
+   issue #34 for how to restore it, if the checks come back).
+7. **`tagPrefix`: kept, unchanged.** The owner confirmed `tagPrefix` stays
+   exactly as extracted: calculatrix's own decision D19 needs `cli-v`-style
+   tags, and the `listReleases`-then-filter path it drives (see the "Release
+   lookup" row above) is exercised by `cli_release_source_test.dart`'s
+   pagination tests and by `installation_plugin_test.dart`'s `tagPrefix`
+   cases.

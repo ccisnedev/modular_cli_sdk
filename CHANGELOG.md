@@ -27,15 +27,17 @@ per-CLI comparison this replacement is built from.
   same as their own `UnsetFromPath`/`DeleteInstallation`. Neither command
   creates or rewrites the `alias` shim; that remains each CLI's own install
   script's job
-- **Doctor checks, replaced.** `InstallationPlugin` now contributes three
-  checks to `doctor.checks`: `binary` (is `executable` on `PATH`), `alias`
-  (does `alias`, if configured, resolve to the same binary), and `release`
-  (is a newer tagged release available; a warning only, including when the
-  lookup itself fails)
+- **Doctor checks, replaced.** `InstallationPlugin` now contributes one check
+  to `doctor.checks`: `release` (is a newer tagged release available; a
+  warning only, including when the lookup itself fails)
 - **Error surface, much smaller.** `upgrade`/`uninstall` now throw a plain
   `CommandException`, reported through the SDK's ordinary error envelope, not
   a dedicated `errorId` field. Only two ids are thrown by the plugin itself:
   `release-lookup-failed` and `asset-not-found`
+- **macOS is not supported.** `PlatformOps.current()` throws
+  `UnsupportedError` for macOS, the same as it does for any other OS besides
+  Windows and Linux, matching macss's and inquiry's own `PlatformOps.current()`
+  factories exactly
 
 ### Removed
 
@@ -48,13 +50,23 @@ per-CLI comparison this replacement is built from.
   `cleanup-start-failed`/`cleanup-outcome-unknown` error ids: replaced by a
   plain `platformOps.scheduleDeletion(installDir)` call, matching what both
   CLIs already do
+- `MacosPlatformOps`: an earlier draft added it, reusing `LinuxPlatformOps`'s
+  behavior verbatim, but neither macss nor inquiry supports macOS, so there
+  was no precedent to extract it from
+- The `binary` and `alias` doctor checks, and the `environment` constructor
+  parameter on `InstallationPlugin` that existed only to make them testable
+  against a fake `PATH`: an earlier draft added both, but neither macss nor
+  inquiry checks that its own binary or alias resolves on `PATH` (both simply
+  assume it), so there was no precedent to extract them from either. See
+  [issue #34](https://github.com/ccisnedev/modular_cli_sdk/issues/34) for what
+  they did and how to bring them back
 
 ### Added
 
-- `PlatformOps` (`WindowsPlatformOps`, `LinuxPlatformOps`, `MacosPlatformOps`),
-  ported from macss's and inquiry's own `platform_ops.dart`: `expandArchive`,
+- `PlatformOps` (`WindowsPlatformOps`, `LinuxPlatformOps`), ported from
+  macss's and inquiry's own `platform_ops.dart`: `expandArchive`,
   `getEnvVariable`/`setEnvVariable` (the persisted "User" PATH on Windows),
-  `runPostInstall`, `scheduleDeletion`
+  `runPostInstall`, `scheduleDeletion`. Only Windows and Linux are supported
 
 ## 0.7.0
 

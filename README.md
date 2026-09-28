@@ -428,7 +428,7 @@ final cli = ModularCli(name: 'mycli', version: '1.4.0')
       tagPrefix: 'cli-v',       // your app's own `v*` tags are left alone
       executable: 'mycli',
       alias: 'mc',
-      assets: {'linux': 'mycli-linux', 'macos': 'mycli-macos', 'windows': 'mycli-windows.exe'},
+      assets: {'linux': 'mycli-linux', 'windows': 'mycli-windows.exe'},
     ),
   ));
 
@@ -461,7 +461,7 @@ build-time `CliPluginError`, not a silently-dropped value.
 | --- | --- | --- |
 | `VersionPlugin(version:)` | `version` | `ModularCli(name:, version:)`; must match |
 | `DoctorPlugin` | `doctor`, and the `doctor.checks` extension point | (none) |
-| `InstallationPlugin` | `upgrade`, `uninstall`; contributes 3 checks to `doctor.checks` | `DoctorPlugin`, a `CliInstallationConfig` |
+| `InstallationPlugin` | `upgrade`, `uninstall`; contributes 1 check to `doctor.checks` | `DoctorPlugin`, a `CliInstallationConfig` |
 
 `doctor` runs every contributed `CliDoctorCheck` and reports them together. A
 run where nothing errored (warnings are fine) reports `{"checks": [...]}` on
@@ -471,11 +471,9 @@ reports the single error shape instead, on stderr: `{"error": {"id":
 "exitCode": 78, "checks": [...]}}`, the `checks` array being every check's
 result, in run order, exactly as the success shape would have shown it, not
 only the failed ones. Text mode writes the same check lines, then the error
-line, both on stderr, nothing on stdout. `InstallationPlugin`'s three checks
-are `binary` (is `executable` on `PATH`), `alias` (does `alias`, if present,
-resolve to the same binary) and `release` (is a newer tagged release
-available), the first two error when wrong, the third only ever warns,
-including when the lookup itself fails.
+line, both on stderr, nothing on stdout. `InstallationPlugin` contributes one
+check, `release` (is a newer tagged release available), which only ever
+warns, including when the lookup itself fails, and never errors.
 
 `upgrade` and `uninstall` are ordinary `Command`s: `--plan` shows what would
 happen, `--apply` (with approval, or `--autoapprove`) does it, and a step that
@@ -488,15 +486,19 @@ Every network, download and platform access `InstallationPlugin` makes goes
 through an injectable interface (`CliReleaseSource`, `Downloader`,
 `PlatformOps`), each with a real default (`HttpCliReleaseSource`,
 `downloadOverHttp`, `PlatformOps.current()`, which resolves to
-`WindowsPlatformOps`/`LinuxPlatformOps`/`MacosPlatformOps`): pass your own in
-tests, and nothing downloads, extracts or touches a real PATH.
+`WindowsPlatformOps`/`LinuxPlatformOps` — macOS is not supported, and
+`PlatformOps.current()` throws `UnsupportedError` there, the same as macss's
+and inquiry's own factories): pass your own in tests, and nothing downloads,
+extracts or touches a real PATH.
 
 ### Adopting InstallationPlugin
 
 `InstallationPlugin` is extracted from macss's and inquiry's own
 `upgrade`/`uninstall` commands (see
 [`docs/installation-parity.md`](docs/installation-parity.md) for what each
-CLI did before, and what it does through this plugin now). Adopting it means
+CLI did before, and what it does through this plugin now). Only Windows and
+Linux are supported; macOS is not, and `PlatformOps.current()` throws
+`UnsupportedError` there, the same as both source CLIs. Adopting it means
 configuring it, not writing an upgrade or uninstall command of your own:
 
 ```dart
@@ -507,7 +509,6 @@ InstallationPlugin(
     alias: 'mc',                   // a second name expected to resolve the same way
     assets: {
       'linux': 'mycli-linux',
-      'macos': 'mycli-macos',
       'windows': 'mycli-windows.exe',
     },
     // Optional: only when this repository's releases share tags with a
@@ -532,16 +533,23 @@ release lookup still happens once, while the plan is built, so the
 version/asset/URL a person approves under `--plan` are exactly the ones
 downloaded under `--apply`. The alias is still never created or rewritten by
 `upgrade`/`uninstall` themselves, only by each CLI's own install script
-(`install.ps1`/`install.sh`); this plugin's `alias` doctor check only
-verifies the shape that script already produces (a `.cmd` shim on Windows, a
-symlink on Linux/macOS).
+(`install.ps1`/`install.sh`).
 
-**What is new.** `binary`, `alias` and `release` as doctor checks are new:
-neither macss's nor inquiry's own `doctor.dart` runs any of the three today.
-`postUpgradeSteps`/`preUninstallSteps` are new as a named extension
-mechanism, though what they let a CLI express (a redeploy, a cleanup, or
-nothing at all) is exactly what each CLI's own upgrade/uninstall code already
-did inline before this plugin existed.
+**What is new.** `release` as a doctor check is new: neither macss's nor
+inquiry's own `doctor.dart` runs it today. `postUpgradeSteps`/
+`preUninstallSteps` are new as a named extension mechanism, though what they
+let a CLI express (a redeploy, a cleanup, or nothing at all) is exactly what
+each CLI's own upgrade/uninstall code already did inline before this plugin
+existed.
+
+**What was tried and removed.** `binary` and `alias` doctor checks (is the
+executable/alias reachable on `PATH`) existed in an earlier draft and were
+removed: neither macss nor inquiry checks its own binary or alias this way,
+so there was no precedent to extract. See
+[issue #34](https://github.com/ccisnedev/modular_cli_sdk/issues/34) if you
+need them back. `MacosPlatformOps` was removed the same way, for the same
+reason: see the macOS row in
+[`docs/installation-parity.md`](docs/installation-parity.md).
 
 **Breaking, from 0.7.0.** Every 0.7.0 installation type — `CliFileSystem`,
 `CliPlatform`, `CliProcessLauncher`, the cleanup-worker machinery behind
