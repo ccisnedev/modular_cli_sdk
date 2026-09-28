@@ -74,6 +74,8 @@ class FakePlatformOps implements PlatformOps {
     this.expandArchiveError,
     this.setEnvVariableError,
     this.scheduleDeletionError,
+    this.runPostInstallError,
+    this.postInstallResult,
   });
 
   @override
@@ -93,6 +95,16 @@ class FakePlatformOps implements PlatformOps {
   final Object? expandArchiveError;
   final Object? setEnvVariableError;
   final Object? scheduleDeletionError;
+
+  /// Thrown by [runPostInstall] instead of returning, standing in for macss's
+  /// own failure mode: the freshly extracted binary cannot even be launched
+  /// (`ProcessException`), which is what makes its inline verification a hard
+  /// failure rather than a check whose result is inspected.
+  final Object? runPostInstallError;
+
+  /// What [runPostInstall] returns when it does not throw. Defaults to a
+  /// clean exit, matching a verification that passes.
+  final ProcessResult? postInstallResult;
 
   /// Every call this fake received, in order, as a human-readable line —
   /// exactly macss's and inquiry's own `FakePlatformOps.calls` shape.
@@ -119,7 +131,8 @@ class FakePlatformOps implements PlatformOps {
   @override
   Future<ProcessResult> runPostInstall(String installDir) async {
     calls.add('runPostInstall($installDir)');
-    return ProcessResult(0, 0, '', '');
+    if (runPostInstallError != null) throw runPostInstallError!;
+    return postInstallResult ?? ProcessResult(0, 0, '', '');
   }
 
   @override

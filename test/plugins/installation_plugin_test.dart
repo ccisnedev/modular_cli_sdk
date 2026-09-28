@@ -105,7 +105,7 @@ void main() {
     /// executable aside.
     late String fakeBinary;
 
-    Future<String> replace() async {
+    Future<String> replace({bool verifyAfterInstall = true}) async {
       fakeBinary = p.join(root.path, 'bin', 'cx.exe');
       File(fakeBinary)
         ..createSync(recursive: true)
@@ -118,6 +118,7 @@ void main() {
         to: '1.1.0',
         asset: 'cx-windows.zip',
         downloadUrl: 'https://example.invalid/cx-windows.zip',
+        verifyAfterInstall: verifyAfterInstall,
         downloader: (url, destination) async =>
             File(destination).writeAsStringSync('an archive'),
         progress: progress,
@@ -145,7 +146,52 @@ void main() {
       final said = await replace();
 
       expect(said.indexOf('Downloading'), lessThan(said.indexOf('Extracting')));
+      expect(said.indexOf('Extracting'), lessThan(said.indexOf('Verifying')));
     });
+
+    // Ported from macss's own "says when it verifies" test
+    // (code/cli/test/upgrade_test.dart): macss's `ReplaceInstallation` runs
+    // the freshly extracted binary inline, unconditionally, right after
+    // extraction — not from a `postUpgradeSteps` callback a CLI might leave
+    // unset.
+    test('says when it verifies, by default (matching macss)', () async {
+      expect(await replace(), contains('Verifying installation'));
+    });
+
+    test('calls runPostInstall with the install directory', () async {
+      await replace();
+
+      expect(
+        ops.calls,
+        contains('runPostInstall(${p.join(root.path, 'install')})'),
+      );
+    });
+
+    // macss's own `runPostInstall` never inspects the child's exit code, but
+    // nothing catches a failure to even launch it (a missing binary throws
+    // `ProcessException`) — which is what makes the check a hard failure in
+    // practice, not a check whose result is silently discarded.
+    test(
+      'a failed verification fails the upgrade, hard-fail like macss',
+      () async {
+        ops = FakePlatformOps(runPostInstallError: Exception('no such file'));
+
+        expect(() => replace(), throwsA(isA<Exception>()));
+      },
+    );
+
+    // The one case where macss's own behavior is not what a CLI wants:
+    // inquiry verifies leniently, from its own `postUpgradeSteps` step
+    // (`RedeployHosts`), and must not also run the hard-fail check inline.
+    test(
+      'verifyAfterInstall: false skips verification entirely',
+      () async {
+        final said = await replace(verifyAfterInstall: false);
+
+        expect(said, isNot(contains('Verifying')));
+        expect(ops.calls.any((c) => c.startsWith('runPostInstall')), isFalse);
+      },
+    );
 
     test('moves the outgoing binary aside and cleans it up', () async {
       await replace();
@@ -483,6 +529,10 @@ void main() {
       final call = ops.calls.singleWhere((c) => c.startsWith('expandArchive('));
       expect(call, contains(_platformAsset));
       expect(call, endsWith(', ${installDir.path})'));
+      // Verification runs by default, matching macss: this config sets no
+      // `verifyAfterInstall`, so `CliInstallationConfig`'s own default (true)
+      // must have carried all the way from the config to the step.
+      expect(ops.calls, contains('runPostInstall(${installDir.path})'));
     });
 
     test(
