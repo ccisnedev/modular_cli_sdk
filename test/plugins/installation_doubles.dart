@@ -129,8 +129,15 @@ class FakePlatformOps implements PlatformOps {
   }
 
   @override
-  Future<ProcessResult> runPostInstall(String installDir) async {
-    calls.add('runPostInstall($installDir)');
+  Future<ProcessResult> runPostInstall(
+    String installDir, {
+    Duration? timeout,
+  }) async {
+    calls.add(
+      timeout == null
+          ? 'runPostInstall($installDir)'
+          : 'runPostInstall($installDir, timeout: $timeout)',
+    );
     if (runPostInstallError != null) throw runPostInstallError!;
     return postInstallResult ?? ProcessResult(0, 0, '', '');
   }

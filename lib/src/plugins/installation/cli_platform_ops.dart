@@ -3,9 +3,15 @@ import 'dart:io';
 import 'linux_platform_ops.dart';
 import 'windows_platform_ops.dart';
 
-/// How long a post-install verification/deploy step may take before it is
-/// abandoned. Generous enough for a cold filesystem, short enough that a
-/// stalled step reports rather than hanging the terminal.
+/// How long a best-effort post-install step, such as inquiry's own host
+/// redeploy, may take before it is abandoned. Generous enough for a cold
+/// filesystem, short enough that a stalled step reports rather than hanging
+/// the terminal.
+///
+/// Not applied automatically: pass it as [PlatformOps.runPostInstall]'s
+/// `timeout` from a step that wants it bounded. The hard-fail verification
+/// this SDK runs by default (`CliInstallationConfig.verifyAfterInstall`)
+/// does not — matching macss, which never bounds it.
 const postInstallTimeout = Duration(seconds: 60);
 
 /// Cross-platform abstraction for the OS-specific shell operations `upgrade`
@@ -38,13 +44,18 @@ abstract class PlatformOps {
   Future<void> setEnvVariable(String name, String value);
 
   /// Run the freshly installed binary at `<installDir>/bin/<binaryName>`
-  /// with this configuration's post-install arguments, bounded by
-  /// [postInstallTimeout].
+  /// with this configuration's post-install arguments.
+  ///
+  /// With no [timeout] (the default), waits for the child to finish, exactly
+  /// as macss's own hard-fail verification does — there is nothing
+  /// best-effort about it, so nothing here should be abandoned early. Pass
+  /// [postInstallTimeout], or any other bound, for a best-effort step like
+  /// inquiry's own host redeploy, which must never hang the terminal.
   ///
   /// Returns the child's result so the caller can report what actually
   /// happened: a step whose output is swallowed is indistinguishable from
   /// one that did nothing.
-  Future<ProcessResult> runPostInstall(String installDir);
+  Future<ProcessResult> runPostInstall(String installDir, {Duration? timeout});
 
   /// Schedule deletion of a directory after the current process exits.
   ///

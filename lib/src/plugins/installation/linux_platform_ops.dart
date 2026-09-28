@@ -54,14 +54,16 @@ class LinuxPlatformOps implements PlatformOps {
   }
 
   @override
-  Future<ProcessResult> runPostInstall(String installDir) {
-    return Process.run(
+  Future<ProcessResult> runPostInstall(String installDir, {Duration? timeout}) {
+    final result = Process.run(
       p.join(installDir, 'bin', binaryName),
       postInstallArguments,
-    ).timeout(
-      postInstallTimeout,
+    );
+    if (timeout == null) return result;
+    return result.timeout(
+      timeout,
       onTimeout: () => throw TimeoutException(
-        '$binaryName did not finish within ${postInstallTimeout.inSeconds}s',
+        '$binaryName did not finish within ${timeout.inSeconds}s',
       ),
     );
   }
