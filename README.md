@@ -515,6 +515,13 @@ InstallationPlugin(
     // different series, e.g. 'cli-v' when the CLI is tagged 'cli-v1.2.3'
     // inside a repo whose other tags are plain 'v1.2.3'.
     tagPrefix: 'cli-v',
+    // Optional: whether the freshly extracted binary is run with
+    // postInstallArguments (default ['version']) right after extraction,
+    // failing the upgrade if that fails. Defaults to true, matching macss.
+    // A CLI that verifies leniently instead, through its own
+    // postUpgradeSteps (inquiry's host redeploy), sets this to false so the
+    // two checks do not both run.
+    verifyAfterInstall: true,
     // Optional: run after upgrade / before uninstall, built from the install
     // directory and the same PlatformOps the command itself is using. This
     // is where a CLI expresses whatever it did here before this plugin
@@ -533,7 +540,12 @@ release lookup still happens once, while the plan is built, so the
 version/asset/URL a person approves under `--plan` are exactly the ones
 downloaded under `--apply`. The alias is still never created or rewritten by
 `upgrade`/`uninstall` themselves, only by each CLI's own install script
-(`install.ps1`/`install.sh`).
+(`install.ps1`/`install.sh`). The freshly extracted binary is still run with
+`postInstallArguments` right after extraction by default, failing the
+upgrade if that fails, the same hard-fail check macss's own `upgrade`
+command always ran (`verifyAfterInstall`, default `true`); a CLI that
+verifies leniently instead, only through its own `postUpgradeSteps`, sets it
+to `false`.
 
 **What is new.** `release` as a doctor check is new: neither macss's nor
 inquiry's own `doctor.dart` runs it today. `postUpgradeSteps`/
