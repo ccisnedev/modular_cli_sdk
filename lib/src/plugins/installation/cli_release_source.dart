@@ -12,7 +12,12 @@ abstract class CliReleaseSource {
   /// `GET /repos/{repository}/releases/latest` — the single call macss and
   /// inquiry both make when a CLI's tags are not shared with anything else
   /// in the same repository ([CliInstallationConfig.tagPrefix] absent).
-  /// Null when the repository has no releases at all.
+  ///
+  /// A null return is part of this interface's contract for callers to
+  /// handle, but [HttpCliReleaseSource] itself never produces one: matching
+  /// both CLIs, it throws [CliReleaseLookupFailure] on any non-200 response,
+  /// 404 included, rather than treating "no releases" as a distinct,
+  /// successful outcome.
   Future<CliRelease?> latestRelease(String repository);
 
   /// Every release of [repository], in whatever order the source returns
@@ -91,8 +96,10 @@ class HttpCliReleaseSource implements CliReleaseSource {
       throw CliReleaseLookupFailure('Could not reach $uri: $e');
     }
 
-    if (response.statusCode == 404) return null;
     if (response.statusCode != 200) {
+      // Both macss's and inquiry's own upgrade commands fail on any non-200
+      // response here, 404 included: neither treats "no releases" as a
+      // distinct, successful outcome of this call.
       throw CliReleaseLookupFailure(
         'GitHub returned ${response.statusCode} for $uri.',
       );

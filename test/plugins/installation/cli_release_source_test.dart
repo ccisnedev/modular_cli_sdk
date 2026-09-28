@@ -37,15 +37,18 @@ void main() {
     // (metaResponse.statusCode != 200) throw CommandException(...)`). A 404
     // is not "no releases, successfully determined"; it is a failed lookup,
     // exactly like a 503.
-    test('a 404 throws CliReleaseLookupFailure, same as any other non-200', () async {
-      final client = MockClient((request) async => http.Response('', 404));
-      final source = HttpCliReleaseSource(client: client);
+    test(
+      'a 404 throws CliReleaseLookupFailure, same as any other non-200',
+      () async {
+        final client = MockClient((request) async => http.Response('', 404));
+        final source = HttpCliReleaseSource(client: client);
 
-      expect(
-        () => source.latestRelease('ccisnedev/calculatrix'),
-        throwsA(isA<CliReleaseLookupFailure>()),
-      );
-    });
+        expect(
+          () => source.latestRelease('ccisnedev/calculatrix'),
+          throwsA(isA<CliReleaseLookupFailure>()),
+        );
+      },
+    );
 
     test('a non-200 response throws CliReleaseLookupFailure', () async {
       final client = MockClient((request) async => http.Response('', 503));
