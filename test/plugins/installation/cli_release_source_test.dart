@@ -12,6 +12,90 @@ import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 import 'package:test/test.dart';
 
 void main() {
+  group('HttpCliReleaseSource.latestRelease', () {
+    test('asks /releases/latest, not the paginated list', () async {
+      final client = MockClient((request) async {
+        expect(
+          request.url,
+          Uri.https(
+            'api.github.com',
+            '/repos/ccisnedev/calculatrix/releases/latest',
+          ),
+        );
+        return http.Response(jsonEncode(_releaseJson('v1.0.0')), 200);
+      });
+      final source = HttpCliReleaseSource(client: client);
+
+      final release = await source.latestRelease('ccisnedev/calculatrix');
+
+      expect(release?.tagName, 'v1.0.0');
+    });
+
+    // Both macss's and inquiry's own upgrade commands fail on any non-200
+    // response from `/releases/latest` (404 included), no special case for
+    // it (`code/cli/lib/modules/global/commands/upgrade.dart` in each: `if
+    // (metaResponse.statusCode != 200) throw CommandException(...)`). A 404
+    // is not "no releases, successfully determined"; it is a failed lookup,
+    // exactly like a 503.
+    test(
+      'a 404 throws CliReleaseLookupFailure, same as any other non-200',
+      () async {
+        final client = MockClient((request) async => http.Response('', 404));
+        final source = HttpCliReleaseSource(client: client);
+
+        expect(
+          () => source.latestRelease('ccisnedev/calculatrix'),
+          throwsA(isA<CliReleaseLookupFailure>()),
+        );
+      },
+    );
+
+    test('a non-200 response throws CliReleaseLookupFailure', () async {
+      final client = MockClient((request) async => http.Response('', 503));
+      final source = HttpCliReleaseSource(client: client);
+
+      expect(
+        () => source.latestRelease('ccisnedev/calculatrix'),
+        throwsA(isA<CliReleaseLookupFailure>()),
+      );
+    });
+
+    test('a body that does not parse throws CliReleaseLookupFailure', () async {
+      final client = MockClient((request) async => http.Response('{', 200));
+      final source = HttpCliReleaseSource(client: client);
+
+      expect(
+        () => source.latestRelease('ccisnedev/calculatrix'),
+        throwsA(isA<CliReleaseLookupFailure>()),
+      );
+    });
+
+    test('reads prerelease off the response', () async {
+      final client = MockClient((request) async {
+        final body = _releaseJson('v1.0.0');
+        body['prerelease'] = true;
+        return http.Response(jsonEncode(body), 200);
+      });
+      final source = HttpCliReleaseSource(client: client);
+
+      final release = await source.latestRelease('ccisnedev/calculatrix');
+
+      expect(release?.prerelease, isTrue);
+    });
+
+    test('absent from the response, prerelease defaults to false', () async {
+      final client = MockClient(
+        (request) async =>
+            http.Response(jsonEncode(_releaseJson('v1.0.0')), 200),
+      );
+      final source = HttpCliReleaseSource(client: client);
+
+      final release = await source.latestRelease('ccisnedev/calculatrix');
+
+      expect(release?.prerelease, isFalse);
+    });
+  });
+
   test('a single page with no Link header returns just that page', () async {
     final client = MockClient((request) async {
       expect(request.url.path, '/repos/ccisnedev/calculatrix/releases');

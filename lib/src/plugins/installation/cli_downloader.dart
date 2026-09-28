@@ -1,37 +1,30 @@
-import 'package:http/http.dart' as http;
+import 'dart:io';
 
-/// Downloads a release asset. Injectable for the same reason
-/// [CliReleaseSource] is: no test downloads anything real.
-abstract class CliDownloader {
-  Future<List<int>> download(String url);
-}
+/// Fetches [url] into the file at [destination].
+///
+/// A function rather than an `HttpClient`, so [ReplaceInstallation] does not
+/// have to know how bytes arrive, and so a test can stand in for the
+/// network without faking an interface it never uses. Extracted from
+/// macss's and inquiry's own `Downloader` typedef in `upgrade.dart`, which
+/// agreed on this shape: a destination path, not bytes in memory, since the
+/// asset is an archive downloaded straight to a temp file.
+typedef Downloader = Future<void> Function(String url, String destination);
 
-/// Thrown by [CliDownloader.download] when the download itself failed.
-class CliDownloadFailure implements Exception {
-  const CliDownloadFailure(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
-}
-
-class HttpCliDownloader implements CliDownloader {
-  HttpCliDownloader({http.Client? client}) : _client = client ?? http.Client();
-
-  final http.Client _client;
-
-  @override
-  Future<List<int>> download(String url) async {
-    final http.Response response;
-    try {
-      response = await _client.get(Uri.parse(url));
-    } on Object catch (e) {
-      throw CliDownloadFailure('Could not download $url: $e');
+/// Downloads over HTTP, which is how it happens outside a test.
+Future<void> downloadOverHttp(
+  String url,
+  String destination, {
+  String? userAgent,
+}) async {
+  final client = HttpClient();
+  try {
+    final request = await client.getUrl(Uri.parse(url));
+    if (userAgent != null) {
+      request.headers.set('User-Agent', userAgent);
     }
-    if (response.statusCode != 200) {
-      throw CliDownloadFailure('Download of $url returned ${response.statusCode}.');
-    }
-    return response.bodyBytes;
+    final response = await request.close();
+    await response.pipe(File(destination).openWrite());
+  } finally {
+    client.close();
   }
 }

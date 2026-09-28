@@ -4,6 +4,84 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.8.0
+
+`InstallationPlugin` shipped in 0.7.0 as a new design, built for this SDK
+rather than extracted from anywhere. Issue
+[#31](https://github.com/macss-dev/modular_cli_sdk/issues/31) asked for the
+opposite: replace it with what macss's and inquiry's own `upgrade` and
+`uninstall` commands actually do, since both already work today. See
+[`docs/installation-parity.md`](docs/installation-parity.md) for the full
+per-CLI comparison this replacement is built from.
+
+### Changed (breaking)
+
+- **`InstallationPlugin` is replaced.** `CliInstallationConfig` now takes
+  `repository`, `executable`, `alias`, `assets` (a release asset name per
+  `Platform.operatingSystem`), an optional `tagPrefix`, and the extension
+  points `postUpgradeSteps`/`preUninstallSteps`. `upgrade` downloads and
+  extracts an archive over the install directory derived from
+  `Platform.resolvedExecutable`, the same as macss's and inquiry's own
+  `ReplaceInstallation`; `uninstall` removes the install directory's `bin`
+  from `PATH` (only if present) and schedules the directory's deletion, the
+  same as their own `UnsetFromPath`/`DeleteInstallation`. Neither command
+  creates or rewrites the `alias` shim; that remains each CLI's own install
+  script's job
+- **Doctor checks, replaced.** `InstallationPlugin` now contributes one check
+  to `doctor.checks`: `release` (is a newer tagged release available; a
+  warning only, including when the lookup itself fails)
+- **Error surface, much smaller.** `upgrade`/`uninstall` now throw a plain
+  `CommandException`, reported through the SDK's ordinary error envelope, not
+  a dedicated `errorId` field. Only two ids are thrown by the plugin itself:
+  `release-lookup-failed` and `asset-not-found`
+- **macOS is not supported.** `PlatformOps.current()` throws
+  `UnsupportedError` for macOS, the same as it does for any other OS besides
+  Windows and Linux, matching macss's and inquiry's own `PlatformOps.current()`
+  factories exactly
+- **`upgrade`/`uninstall` no longer skip interactive approval.** Both
+  commands implemented `SkipsInteractiveApproval` (added in 0.7.0), so their
+  own `--apply` bypassed `ModuleBuilder`'s approval gate entirely, even
+  without `--autoapprove`. Neither macss's nor inquiry's own `upgrade`/
+  `uninstall` ever did this: both go through the normal approval prompt like
+  any other command. `SkipsInteractiveApproval` is removed along with its
+  only two users, its export from `modular_cli_sdk.dart`, and its special
+  case in `ModuleBuilder`: `upgrade --apply` and `uninstall --apply` now ask
+  for approval unless `--autoapprove` is given, matching both source CLIs.
+  See the new Approval row in
+  [`docs/installation-parity.md`](docs/installation-parity.md)
+
+### Removed
+
+- `CliFileSystem`, `CliPlatform`, `CliProcessLauncher` and their tests: no
+  counterpart in macss's or inquiry's own upgrade/uninstall code
+- The bare-executable (no archive) download path, and Windows
+  symlink/hard-link handling for a bare executable: neither CLI's release
+  process publishes a bare executable
+- The cleanup-worker process behind the old `uninstall`, and its
+  `cleanup-start-failed`/`cleanup-outcome-unknown` error ids: replaced by a
+  plain `platformOps.scheduleDeletion(installDir)` call, matching what both
+  CLIs already do
+- `MacosPlatformOps`: an earlier draft added it, reusing `LinuxPlatformOps`'s
+  behavior verbatim, but neither macss nor inquiry supports macOS, so there
+  was no precedent to extract it from
+- `SkipsInteractiveApproval` (the marker interface, its file, and its export):
+  no command in the SDK implements it any more. See the Changed (breaking)
+  entry above
+- The `binary` and `alias` doctor checks, and the `environment` constructor
+  parameter on `InstallationPlugin` that existed only to make them testable
+  against a fake `PATH`: an earlier draft added both, but neither macss nor
+  inquiry checks that its own binary or alias resolves on `PATH` (both simply
+  assume it), so there was no precedent to extract them from either. See
+  [issue #34](https://github.com/ccisnedev/modular_cli_sdk/issues/34) for what
+  they did and how to bring them back
+
+### Added
+
+- `PlatformOps` (`WindowsPlatformOps`, `LinuxPlatformOps`), ported from
+  macss's and inquiry's own `platform_ops.dart`: `expandArchive`,
+  `getEnvVariable`/`setEnvVariable` (the persisted "User" PATH on Windows),
+  `runPostInstall`, `scheduleDeletion`. Only Windows and Linux are supported
+
 ## 0.7.0
 
 A CLI built on this SDK had no way to let another package add commands to it.

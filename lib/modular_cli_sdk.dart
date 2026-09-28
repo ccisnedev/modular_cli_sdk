@@ -70,59 +70,35 @@ export 'src/plugins/doctor_plugin.dart'
         DoctorPlugin,
         DoctorQuery;
 export 'src/plugins/installation/cli_downloader.dart'
-    show CliDownloadFailure, CliDownloader, HttpCliDownloader;
-export 'src/plugins/installation/cli_file_system.dart'
-    show
-        CliExecutableCheckFailure,
-        CliExecutableChecker,
-        CliFileSystem,
-        IoCliExecutableChecker,
-        IoCliFileSystem;
-export 'src/plugins/installation/cli_platform.dart'
-    show CliPlatform, IoCliPlatform;
-export 'src/plugins/installation/cli_process_launcher.dart'
-    show
-        CliCleanupOutcomeUnknown,
-        CliCleanupWorkerStartFailure,
-        CliProcessLauncher,
-        IoCliProcessLauncher,
-        cleanupWorkerAckTimeout,
-        cleanupWorkerBootstrapScript,
-        cleanupWorkerMarkerDeadlineSafetyMargin,
-        cleanupWorkerPayloadEnvVar,
-        cleanupWorkerReadyMarkerPathEnvVar,
-        cleanupWorkerReadyPollInterval,
-        cleanupWorkerRevokeTimeout,
-        cleanupWorkerStartupTimeout,
-        cmdExecutablePath,
-        powershellExecutablePath;
+    show Downloader, downloadOverHttp;
+export 'src/plugins/installation/cli_platform_ops.dart'
+    show PlatformOps, postInstallTimeout;
 export 'src/plugins/installation/cli_release_source.dart'
     show
+        CliInvalidReleaseTag,
         CliRelease,
         CliReleaseAsset,
         CliReleaseLookupFailure,
         CliReleaseSource,
-        HttpCliReleaseSource;
+        HttpCliReleaseSource,
+        assetForPlatform,
+        latestTaggedRelease;
 export 'src/plugins/installation/installation_plugin.dart'
     show
-        AliasIdentityCheckFailure,
-        CliInstallStepFailure,
         CliInstallationConfig,
-        CliInvalidReleaseTag,
-        DownloadAssetStep,
-        InstallExecutableStep,
+        DeleteInstallation,
         InstallationPlugin,
-        RemoveFileStep,
-        SelfDeleteExecutableStep,
+        ReplaceInstallation,
         UninstallCommand,
         UninstallInput,
         UninstallOutput,
+        UnsetFromPath,
         UpgradeCommand,
         UpgradeInput,
-        UpgradeOutput,
-        assetForPlatform,
-        hardLinkedAliasIssue,
-        latestTaggedRelease;
+        UpgradeOutput;
+export 'src/plugins/installation/linux_platform_ops.dart' show LinuxPlatformOps;
+export 'src/plugins/installation/windows_platform_ops.dart'
+    show WindowsPlatformOps;
 export 'src/plugins/version_plugin.dart'
     show VersionInput, VersionOutput, VersionPlugin, VersionQuery;
 export 'src/cli_output.dart' show CliOutput;
@@ -147,4 +123,3 @@ export 'src/module_builder.dart' show ModuleBuilder;
 export 'src/output.dart' show Output;
 export 'src/plan.dart' show PlanDocument, PlanSink;
 export 'src/query.dart' show Query;
-export 'src/skips_interactive_approval.dart' show SkipsInteractiveApproval;

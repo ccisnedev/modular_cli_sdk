@@ -428,7 +428,7 @@ final cli = ModularCli(name: 'mycli', version: '1.4.0')
       tagPrefix: 'cli-v',       // your app's own `v*` tags are left alone
       executable: 'mycli',
       alias: 'mc',
-      assets: {'linux': 'mycli-linux', 'macos': 'mycli-macos', 'windows': 'mycli-windows.exe'},
+      assets: {'linux': 'mycli-linux', 'windows': 'mycli-windows.exe'},
     ),
   ));
 
@@ -461,7 +461,7 @@ build-time `CliPluginError`, not a silently-dropped value.
 | --- | --- | --- |
 | `VersionPlugin(version:)` | `version` | `ModularCli(name:, version:)`; must match |
 | `DoctorPlugin` | `doctor`, and the `doctor.checks` extension point | (none) |
-| `InstallationPlugin` | `upgrade`, `uninstall`; contributes 3 checks to `doctor.checks` | `DoctorPlugin`, a `CliInstallationConfig` |
+| `InstallationPlugin` | `upgrade`, `uninstall`; contributes 1 check to `doctor.checks` | `DoctorPlugin`, a `CliInstallationConfig` |
 
 `doctor` runs every contributed `CliDoctorCheck` and reports them together. A
 run where nothing errored (warnings are fine) reports `{"checks": [...]}` on
@@ -471,11 +471,9 @@ reports the single error shape instead, on stderr: `{"error": {"id":
 "exitCode": 78, "checks": [...]}}`, the `checks` array being every check's
 result, in run order, exactly as the success shape would have shown it, not
 only the failed ones. Text mode writes the same check lines, then the error
-line, both on stderr, nothing on stdout. `InstallationPlugin`'s three checks
-are `binary` (is `executable` on `PATH`), `alias` (does `alias`, if present,
-resolve to the same binary) and `release` (is a newer tagged release
-available), the first two error when wrong, the third only ever warns,
-including when the lookup itself fails.
+line, both on stderr, nothing on stdout. `InstallationPlugin` contributes one
+check, `release` (is a newer tagged release available), which only ever
+warns, including when the lookup itself fails, and never errors.
 
 `upgrade` and `uninstall` are ordinary `Command`s: `--plan` shows what would
 happen, `--apply` (with approval, or `--autoapprove`) does it, and a step that
@@ -484,10 +482,101 @@ every command in this SDK already has. Looking up the release happens before
 either flag is branched on, so a failed lookup reports
 `release-lookup-failed` and exits `1` under `--plan` too, not only `--apply`.
 
-Every network, filesystem and platform access `InstallationPlugin` makes goes
-through an injectable interface (`CliReleaseSource`, `CliDownloader`,
-`CliFileSystem`, `CliPlatform`), each with a real (`Http*`/`Io*`) default:
-pass your own in tests, and nothing downloads or touches a real install path.
+Every network, download and platform access `InstallationPlugin` makes goes
+through an injectable interface (`CliReleaseSource`, `Downloader`,
+`PlatformOps`), each with a real default (`HttpCliReleaseSource`,
+`downloadOverHttp`, `PlatformOps.current()`, which resolves to
+`WindowsPlatformOps`/`LinuxPlatformOps`; macOS is not supported, and
+`PlatformOps.current()` throws `UnsupportedError` there, the same as macss's
+and inquiry's own factories): pass your own in tests, and nothing downloads,
+extracts or touches a real PATH.
+
+### Adopting InstallationPlugin
+
+`InstallationPlugin` is extracted from macss's and inquiry's own
+`upgrade`/`uninstall` commands (see
+[`docs/installation-parity.md`](docs/installation-parity.md) for what each
+CLI did before, and what it does through this plugin now). Only Windows and
+Linux are supported; macOS is not, and `PlatformOps.current()` throws
+`UnsupportedError` there, the same as both source CLIs. Adopting it means
+configuring it, not writing an upgrade or uninstall command of your own:
+
+```dart
+InstallationPlugin(
+  config: CliInstallationConfig(
+    repository: 'you/mycli',       // owner/repo on GitHub
+    executable: 'mycli',           // the binary's name on PATH
+    alias: 'mc',                   // a second name expected to resolve the same way
+    assets: {
+      'linux': 'mycli-linux',
+      'windows': 'mycli-windows.exe',
+    },
+    // Optional: only when this repository's releases share tags with a
+    // different series, e.g. 'cli-v' when the CLI is tagged 'cli-v1.2.3'
+    // inside a repo whose other tags are plain 'v1.2.3'.
+    tagPrefix: 'cli-v',
+    // Optional: whether the freshly extracted binary is run with
+    // postInstallArguments (default ['version']) right after extraction,
+    // failing the upgrade if that fails. Defaults to true, matching macss.
+    // A CLI that verifies leniently instead, through its own
+    // postUpgradeSteps (inquiry's host redeploy), sets this to false so the
+    // two checks do not both run.
+    verifyAfterInstall: true,
+    // Optional: run after upgrade / before uninstall, built from the install
+    // directory and the same PlatformOps the command itself is using. This
+    // is where a CLI expresses whatever it did here before this plugin
+    // existed, such as inquiry's own host redeploy/cleanup: neither of
+    // those is, or will be, built into the plugin itself.
+    postUpgradeSteps: (installDir, platformOps) => [MyRedeployStep(...)],
+    preUninstallSteps: (installDir, platformOps) => [MyCleanupStep(...)],
+  ),
+)
+```
+
+**What carried over unchanged.** The install directory is still derived from
+`Platform.resolvedExecutable`, never looked up on `PATH`: an upgrade always
+replaces the binary that is actually running, the same as before. The
+release lookup still happens once, while the plan is built, so the
+version/asset/URL a person approves under `--plan` are exactly the ones
+downloaded under `--apply`. The alias is still never created or rewritten by
+`upgrade`/`uninstall` themselves, only by each CLI's own install script
+(`install.ps1`/`install.sh`). The freshly extracted binary is still run with
+`postInstallArguments` right after extraction by default, failing the
+upgrade if that fails, the same hard-fail check macss's own `upgrade`
+command always ran (`verifyAfterInstall`, default `true`); a CLI that
+verifies leniently instead, only through its own `postUpgradeSteps`, sets it
+to `false`.
+
+**What is new.** `release` as a doctor check is new: neither macss's nor
+inquiry's own `doctor.dart` runs it today. `postUpgradeSteps`/
+`preUninstallSteps` are new as a named extension mechanism, though what they
+let a CLI express (a redeploy, a cleanup, or nothing at all) is exactly what
+each CLI's own upgrade/uninstall code already did inline before this plugin
+existed.
+
+**What was tried and removed.** `binary` and `alias` doctor checks (is the
+executable/alias reachable on `PATH`) existed in an earlier draft and were
+removed: neither macss nor inquiry checks its own binary or alias this way,
+so there was no precedent to extract. See
+[issue #34](https://github.com/ccisnedev/modular_cli_sdk/issues/34) if you
+need them back. `MacosPlatformOps` was removed the same way, for the same
+reason: see the macOS row in
+[`docs/installation-parity.md`](docs/installation-parity.md).
+
+**Breaking, from 0.7.0.** Every 0.7.0 installation type (`CliFileSystem`,
+`CliPlatform`, `CliProcessLauncher`, the cleanup-worker machinery behind
+`uninstall`, and the bare-executable, no archive, download path) is gone,
+replaced by the config shape above and a plain `platformOps.scheduleDeletion`
+call. There is no compatibility shim; a CLI on 0.7.0 upgrades by switching to
+this config.
+
+**Also breaking, from 0.7.0: approval is no longer skippable.** 0.7.0's
+`upgrade`/`uninstall` implemented `SkipsInteractiveApproval`, so `--apply`
+bypassed the approval gate even without `--autoapprove`. Neither macss's nor
+inquiry's own `upgrade`/`uninstall` ever worked that way, and 0.8.0 now
+matches them: `--apply` asks for approval unless `--autoapprove` is given,
+the same as every other command. `SkipsInteractiveApproval` itself is
+removed, since nothing in the SDK implements it any more.
 
 ---
 
@@ -603,22 +692,21 @@ escaping `run()` as an uncaught exception.
 
 ### InstallationPlugin error ids
 
-`upgrade` and `uninstall` report one of the ids below through `UpgradeOutput.errorId` /
-`UninstallOutput.errorId` (and as `"error"` under `--json`) whenever a step fails.
-Each row is what actually happens in `installation_plugin.dart`, not an aspiration.
+`upgrade` and `uninstall` are ordinary `Command`s: a failing step raises an
+ordinary `CommandException`, reported through the same envelope as any other
+command's (see [Error handling](#error-handling) above), not through a
+field of its own on `UpgradeOutput`/`UninstallOutput` (neither has one).
+`installation_plugin.dart` throws exactly two ids itself:
 
 | id | reported when |
 | --- | --- |
-| `release-lookup-failed` | the release source could not be queried, a release's tag does not parse as semver once the tag prefix is stripped, no release with the configured tag prefix exists, or the latest release has no asset for the current platform |
-| `executable-check-failed` | resolving `config.executable` or `config.alias` on PATH itself threw, before it could even be determined whether either is present; or, after writing the downloaded executable, checking whether it actually ended up executable could not be answered at all (the checker itself failed to start, or exited with a code other than the one that means "not executable") |
-| `file-access-denied` | `config.executable` is not on PATH, a resolved PATH entry could not be canonicalized to an install target, or moving the running executable aside for `uninstall` failed |
-| `alias-hard-link-unsupported` | `config.alias` resolves to a hard link to the executable rather than a symlink, a shape this plugin will not create or rewrite |
-| `download-failed` | the release asset could not be downloaded, or an `--apply` run failed at a point where no `CliInstallStepFailure` was thrown (the default id for an otherwise-untyped step failure) |
-| `install-target-changed` | immediately before writing the downloaded binary, re-resolving `config.executable` no longer matches the target `--apply`'s own plan showed: it fell off PATH, now resolves elsewhere, or is no longer a plain file |
-| `cleanup-start-failed` | `uninstall` renamed the running executable aside successfully, but the worker process that deletes it once this process exits could not be started, did not confirm it was ready in time, never won the phase 1 claim over its own ready marker (it abandoned the claim, or the claim deadline passed first), or, having won that claim, never armed deletion before this process's own ack deadline passed, and this process's own revoke rename of the now-unclaimed accepted marker then succeeded cleanly. Arming is a second single-winner rename: the worker renames its accepted marker to armed only after seeing this process claim it, and this process reports `scheduled` only once it has observed that armed marker itself, through `pollForArm`. If the ack deadline passes first with no armed marker observed, this process attempts that revoke rename; a worker that loses it finds the revoked marker and exits without touching the target paths, so a claim alone is never enough to report success. The renamed file is left behind and named in the message so it can be removed by hand. Whenever this process's own attempt to remove the worker's now-unclaimed private temporary directory also fails, that failure is folded into the same message rather than reported separately. Once the worker does win the arming rename, removing the target paths and that directory becomes its own responsibility, not this process's, so a cleanup failure after arming is never reported this way. If the revoke rename instead keeps failing unexpectedly rather than resolving cleanly either way, `cleanup-outcome-unknown` is reported instead of this id; see that row |
-| `cleanup-outcome-unknown` | `uninstall` renamed the running executable aside successfully and this process's own claim over the worker's ready marker succeeded, but once the worker failed to arm deletion within the ack deadline, this process's own attempt to revoke that claim (renaming the accepted marker to revoked) kept failing with an unexpected error, such as a real sharing violation on the accepted marker, on every retry for the whole of a further, separate revoke deadline, without ever resolving into either an observed armed marker or a clean revoke. This is reported as its own distinct id rather than folded into `cleanup-start-failed`, because which side actually won is genuinely unknown: the worker may still be alive, may still win the arming rename once the failure clears, and may still delete the renamed file later. The message names the renamed file and the accepted marker path, and says not to delete the file by hand unless the worker is confirmed to no longer be running. Unlike every other id in this table, this one leaves the worker's private temporary directory in place rather than removing it: removing it here, while the worker might still be alive and using it, would only trade one race for another |
+| `release-lookup-failed` | the release source could not be queried, a release's tag does not parse as semver once `tagPrefix` is stripped, or (with `tagPrefix` set) no release with that prefix exists |
+| `asset-not-found` | the release found has no asset named for the current platform in `config.assets` |
 
-Once the worker wins the arming rename, this process is no longer involved at all: the worker alone is now responsible for deleting the target paths and its own private directory, and it has no process left to report a later failure to. If deleting the target then fails on the worker's own side (the file is locked by something else at the moment the parent finally exits, say), nothing here surfaces that: there is no other process still running to receive a diagnostic from it, and no marker file anything reads after arming for it to write one into either. This is an accepted limitation of a worker that, by design, keeps running after every other process from this run has already exited, not a gap this project intends to close with a further diagnostic channel; a worker failure after arming is visible only as a renamed file that never disappeared.
+`uninstall` never fails this way over PATH or the install directory: removing
+an entry `PATH` does not contain, or an install directory that no longer
+exists, is a no-op, not an error, matching the installations both source CLIs
+actually run against.
 
 ---
 
