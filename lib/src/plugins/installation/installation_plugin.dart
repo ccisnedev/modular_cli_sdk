@@ -34,9 +34,9 @@ import 'cli_release_source.dart';
 /// `PATH`; the releases API is asked once while the plan is built; the
 /// running executable is moved aside before Windows overwrites it; the alias
 /// is never touched by either command, only by the install script that
-/// created it. Where the two disagreed — macss verifies the new binary
+/// created it. Where the two disagreed (macss verifies the new binary
 /// inline, hard-fail, right after extraction; inquiry redeploys hosts as a
-/// separate, lenient step afterward — both are expressible:
+/// separate, lenient step afterward), both are expressible:
 /// [CliInstallationConfig.verifyAfterInstall] (true by default, matching
 /// macss, which needs nothing else) gates the inline check, and
 /// [CliInstallationConfig.postUpgradeSteps] /
@@ -206,7 +206,7 @@ class CliInstallationConfig {
   /// shape both macss and inquiry use) means this CLI's tags are not shared
   /// with anything else in the repository, and the single `/releases/latest`
   /// call answers directly. Present means only tags starting with it are
-  /// considered, and the newest one among them wins — a repository-sharing
+  /// considered, and the newest one among them wins: a repository-sharing
   /// mechanism that predates this issue and is kept because dropping it
   /// would regress any CLI relying on it.
   final String? tagPrefix;
@@ -219,21 +219,21 @@ class CliInstallationConfig {
 
   /// Whether [ReplaceInstallation] runs the freshly extracted binary with
   /// [postInstallArguments] immediately after extraction, and fails the
-  /// upgrade if that fails — exactly what macss's own `ReplaceInstallation`
+  /// upgrade if that fails, exactly what macss's own `ReplaceInstallation`
   /// does ("Verifying installation...", hard-fail, no `postUpgradeSteps`
   /// involved).
   ///
   /// Defaults to true, matching macss, which needs nothing else. A CLI whose
-  /// own post-install step is lenient instead — inquiry's `RedeployHosts`,
+  /// own post-install step is lenient instead (inquiry's `RedeployHosts`,
   /// supplied through [postUpgradeSteps], which must never fail the upgrade
-  /// over it — sets this to false, so the hard-fail check does not also run
+  /// over it) sets this to false, so the hard-fail check does not also run
   /// (with the same [postInstallArguments]) before that lenient step does.
   final bool verifyAfterInstall;
 
   /// Extra steps [UpgradeCommand] runs after [ReplaceInstallation], built
   /// from the install directory and the platform ops the upgrade itself
-  /// used. This is where inquiry's `RedeployHosts` — a best-effort
-  /// redeploy that never fails the upgrade — is expressed; a CLI with
+  /// used. This is where inquiry's `RedeployHosts`, a best-effort
+  /// redeploy that never fails the upgrade, is expressed; a CLI with
   /// nothing to add after an upgrade, like macss, leaves this null.
   final List<Step> Function(String installDir, PlatformOps platformOps)?
   postUpgradeSteps;
@@ -253,7 +253,7 @@ class UpgradeInput extends Input {
           installDir ?? p.dirname(p.dirname(Platform.resolvedExecutable));
 
   /// Derived from the running executable's own location, exactly as macss's
-  /// and inquiry's `UpgradeInput.fromCliRequest` do — never looked up on
+  /// and inquiry's `UpgradeInput.fromCliRequest` do: never looked up on
   /// `PATH`, so an upgrade always replaces the binary that is actually
   /// running rather than some other installation that happens to resolve
   /// first.
@@ -265,7 +265,7 @@ class UpgradeInput extends Input {
 
 /// Downloads a release and extracts it over the installation.
 ///
-/// Everything this needs — which version, which asset, which URL — was
+/// Everything this needs (which version, which asset, which URL) was
 /// settled when the step was built, from **one** call to the releases API.
 /// Asking again at perform time could answer differently: a release
 /// published in between would be downloaded without ever having been
@@ -274,7 +274,7 @@ class UpgradeInput extends Input {
 /// **It says what it is doing while it does it.** The plan states what
 /// *will* happen; this states that it *is* happening, which is a different
 /// thing and the only one that helps during a download of several
-/// megabytes. It goes to [progress] — stderr by default — so `--json` stays
+/// megabytes. It goes to [progress] (stderr by default), so `--json` stays
 /// machine-readable.
 ///
 /// When [verifyAfterInstall] is true (the default), runs the freshly
@@ -282,7 +282,7 @@ class UpgradeInput extends Input {
 /// exactly as macss's own `ReplaceInstallation` does: hard-fail semantics,
 /// no `postUpgradeSteps` involved. A CLI that verifies (or redeploys)
 /// leniently instead, from its own [CliInstallationConfig.postUpgradeSteps]
-/// — inquiry's `RedeployHosts` — sets [verifyAfterInstall] to false so the
+/// (inquiry's `RedeployHosts`) sets [verifyAfterInstall] to false so the
 /// two do not run twice.
 class ReplaceInstallation implements Step {
   ReplaceInstallation({
@@ -319,7 +319,7 @@ class ReplaceInstallation implements Step {
   ///
   /// **Injected, and that is not optional.** `Platform.resolvedExecutable`
   /// is this CLI's own compiled binary only when a compiled binary is what
-  /// is running. Under `dart test` it is the Dart VM — so a test that
+  /// is running. Under `dart test` it is the Dart VM, so a test that
   /// reached the default would rename the Dart SDK's own executable.
   final String runningExecutable;
 
@@ -340,7 +340,7 @@ class ReplaceInstallation implements Step {
 
       if (Platform.isWindows) {
         // The running executable cannot be overwritten in place, so it is
-        // moved aside first and cleaned up on the way out — or on the next
+        // moved aside first and cleaned up on the way out, or on the next
         // upgrade, if the file is still locked.
         final bak = File('$runningExecutable.bak');
         if (bak.existsSync()) bak.deleteSync();
@@ -355,7 +355,7 @@ class ReplaceInstallation implements Step {
           final bak = File('$runningExecutable.bak');
           if (bak.existsSync()) bak.deleteSync();
         } on FileSystemException {
-          // Still locked — cleaned up on the next upgrade.
+          // Still locked, cleaned up on the next upgrade.
         }
       }
 
@@ -392,7 +392,7 @@ class UpgradeOutput extends Output {
   final String? reason;
 
   /// Outcomes from any [CliInstallationConfig.postUpgradeSteps], reported
-  /// generically — the SDK does not know what a CLI's own steps do (an
+  /// generically: the SDK does not know what a CLI's own steps do (an
   /// inquiry-style host redeploy, for instance), only that they ran.
   final List<Map<String, dynamic>> extra;
 
@@ -460,7 +460,7 @@ class UpgradeCommand
   final IOSink? progress;
 
   /// The binary being replaced. A seam for the tests, and never defaulted
-  /// here — see [ReplaceInstallation.runningExecutable].
+  /// here, see [ReplaceInstallation.runningExecutable].
   final String? runningExecutable;
 
   String? _reason;
@@ -530,7 +530,7 @@ class UpgradeCommand
     // only on the tagPrefix-absent path, which is the one both CLIs
     // actually use (a single `/releases/latest` call, exactly like macss's).
     if (tagPrefix == null && latest.prerelease) {
-      _reason = 'Latest release is a prerelease — skipping.';
+      _reason = 'Latest release is a prerelease, skipping.';
       return const [];
     }
 
@@ -680,7 +680,7 @@ class DeleteInstallation implements Step {
     target: installDir,
     detail:
         'requisitions, projects and anything under version control are not '
-        'touched — this removes the tool, not your work',
+        'touched: this removes the tool, not your work',
   );
 
   @override
@@ -696,7 +696,7 @@ class UninstallOutput extends Output {
   final String installDir;
 
   /// Outcomes from any [CliInstallationConfig.preUninstallSteps], reported
-  /// generically — see [UpgradeOutput.extra].
+  /// generically, see [UpgradeOutput.extra].
   final List<Map<String, dynamic>> extra;
 
   @override

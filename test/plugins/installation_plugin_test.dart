@@ -22,7 +22,7 @@ import 'package:test/test.dart';
 import '../doubles.dart';
 import 'installation_doubles.dart';
 
-/// The asset name for whatever platform these tests actually run on —
+/// The asset name for whatever platform these tests actually run on:
 /// asset lookup is keyed by `Platform.operatingSystem` in production
 /// (`assetForPlatform` in `cli_release_source.dart`), so a release's asset
 /// must be named for the real platform running the suite, not a hardcoded
@@ -152,7 +152,7 @@ void main() {
     // Ported from macss's own "says when it verifies" test
     // (code/cli/test/upgrade_test.dart): macss's `ReplaceInstallation` runs
     // the freshly extracted binary inline, unconditionally, right after
-    // extraction — not from a `postUpgradeSteps` callback a CLI might leave
+    // extraction, not from a `postUpgradeSteps` callback a CLI might leave
     // unset.
     test('says when it verifies, by default (matching macss)', () async {
       expect(await replace(), contains('Verifying installation'));
@@ -169,7 +169,7 @@ void main() {
 
     // macss's own `runPostInstall` never inspects the child's exit code, but
     // nothing catches a failure to even launch it (a missing binary throws
-    // `ProcessException`) — which is what makes the check a hard failure in
+    // `ProcessException`), which is what makes the check a hard failure in
     // practice, not a check whose result is silently discarded.
     test(
       'a failed verification fails the upgrade, hard-fail like macss',
@@ -211,7 +211,7 @@ void main() {
         await replace();
 
         // The archive is downloaded into its own throwaway temp directory
-        // (cleaned up once perform() returns), not into installDir itself —
+        // (cleaned up once perform() returns), not into installDir itself:
         // only the extraction destination is installDir. The temp directory's
         // exact name is randomized by createTempSync, so this matches on the
         // asset name and the destination rather than the full source path.
@@ -562,7 +562,7 @@ void main() {
             FakeStep(
               verb: 'deploy',
               target: 'hosts',
-              detail: 'deployed: false — run `iq host get --apply` to retry.',
+              detail: 'deployed: false, run `iq host get --apply` to retry.',
             ),
           ],
         );

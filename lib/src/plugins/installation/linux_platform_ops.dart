@@ -49,7 +49,7 @@ class LinuxPlatformOps implements PlatformOps {
   @override
   Future<void> setEnvVariable(String name, String value) async {
     // Persistent env vars on Linux require modifying shell profiles. This is
-    // a no-op at runtime — the install script handles PATH setup during
+    // a no-op at runtime: the install script handles PATH setup during
     // installation.
   }
 
@@ -70,7 +70,7 @@ class LinuxPlatformOps implements PlatformOps {
 
   @override
   Future<void> scheduleDeletion(String dir) async {
-    // The running binary is not locked on Linux — delete directly.
+    // The running binary is not locked on Linux, so delete directly.
     await Process.start('rm', ['-rf', dir], mode: ProcessStartMode.detached);
   }
 }

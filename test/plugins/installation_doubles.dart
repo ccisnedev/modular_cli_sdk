@@ -12,7 +12,7 @@ import 'dart:io';
 
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
 
-/// Serves canned releases, and counts how each lookup method was asked —
+/// Serves canned releases, and counts how each lookup method was asked:
 /// [latestRelease] (the no-`tagPrefix` path both macss and inquiry actually
 /// use) and [listReleases] (the `tagPrefix` path) separately, so a test can
 /// assert the plugin asked the one it meant to and not the other.
@@ -106,7 +106,7 @@ class FakePlatformOps implements PlatformOps {
   /// clean exit, matching a verification that passes.
   final ProcessResult? postInstallResult;
 
-  /// Every call this fake received, in order, as a human-readable line —
+  /// Every call this fake received, in order, as a human-readable line,
   /// exactly macss's and inquiry's own `FakePlatformOps.calls` shape.
   final List<String> calls = [];
 

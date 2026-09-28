@@ -11,7 +11,7 @@ import 'windows_platform_ops.dart';
 /// Not applied automatically: pass it as [PlatformOps.runPostInstall]'s
 /// `timeout` from a step that wants it bounded. The hard-fail verification
 /// this SDK runs by default (`CliInstallationConfig.verifyAfterInstall`)
-/// does not — matching macss, which never bounds it.
+/// does not, matching macss, which never bounds it.
 const postInstallTimeout = Duration(seconds: 60);
 
 /// Cross-platform abstraction for the OS-specific shell operations `upgrade`
@@ -20,7 +20,7 @@ const postInstallTimeout = Duration(seconds: 60);
 ///
 /// Extracted from macss's `targets/platform_ops.dart` and inquiry's
 /// `hosts/platform_ops.dart`, which agreed on every member here. Path
-/// manipulation is NOT part of this abstraction — use `package:path`.
+/// manipulation is NOT part of this abstraction: use `package:path`.
 abstract class PlatformOps {
   /// The compiled binary name for this platform (e.g. `macss.exe` or
   /// `macss`).
@@ -47,7 +47,7 @@ abstract class PlatformOps {
   /// with this configuration's post-install arguments.
   ///
   /// With no [timeout] (the default), waits for the child to finish, exactly
-  /// as macss's own hard-fail verification does — there is nothing
+  /// as macss's own hard-fail verification does: there is nothing
   /// best-effort about it, so nothing here should be abandoned early. Pass
   /// [postInstallTimeout], or any other bound, for a best-effort step like
   /// inquiry's own host redeploy, which must never hang the terminal.

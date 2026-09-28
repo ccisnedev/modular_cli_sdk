@@ -87,7 +87,7 @@ class WindowsPlatformOps implements PlatformOps {
     try {
       currentExe.renameSync(bakPath);
     } on FileSystemException {
-      // Best effort — may already be renamed by an earlier attempt.
+      // Best effort: may already be renamed by an earlier attempt.
     }
 
     // A temp batch script, to avoid cmd.exe quoting issues: Dart escapes "

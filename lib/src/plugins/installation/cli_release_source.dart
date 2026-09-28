@@ -9,7 +9,7 @@ import 'package:pub_semver/pub_semver.dart' as semver;
 /// [HttpCliReleaseSource], a test supplies its own implementation returning
 /// canned [CliRelease]s.
 abstract class CliReleaseSource {
-  /// `GET /repos/{repository}/releases/latest` — the single call macss and
+  /// `GET /repos/{repository}/releases/latest`: the single call macss and
   /// inquiry both make when a CLI's tags are not shared with anything else
   /// in the same repository ([CliInstallationConfig.tagPrefix] absent).
   ///

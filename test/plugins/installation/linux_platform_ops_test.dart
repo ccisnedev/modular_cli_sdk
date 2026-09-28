@@ -5,7 +5,7 @@ library;
 ///
 /// See `windows_platform_ops_test.dart` for why this matters: macss's own
 /// `runPostInstall` never bounds the wait, and extracting it alongside
-/// inquiry's — whose own best-effort host redeploy does bound it — wired
+/// inquiry's (whose own best-effort host redeploy does bound it) wired
 /// that bound in unconditionally, which the verification path this SDK runs
 /// by default (matching macss) should never have inherited.
 ///

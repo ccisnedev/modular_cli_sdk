@@ -4,12 +4,12 @@ library;
 /// `WindowsPlatformOps.runPostInstall`'s wait, against a real slow process.
 ///
 /// macss's own `runPostInstall` (`code/cli/lib/targets/windows_platform_ops.dart`)
-/// runs the freshly installed binary and awaits it with no timeout at all —
+/// runs the freshly installed binary and awaits it with no timeout at all:
 /// it is a hard-fail verification step, not a best-effort one, so there is
 /// nothing to bound. Extracting it alongside inquiry's `runPostInstall`
 /// (`code/cli/lib/hosts/windows_platform_ops.dart`), which does apply a 60s
 /// timeout because it drives inquiry's best-effort host redeploy, wired the
-/// timeout in unconditionally — so the verification path this SDK runs by
+/// timeout in unconditionally, so the verification path this SDK runs by
 /// default (`CliInstallationConfig.verifyAfterInstall`, matching macss)
 /// inherited a bound macss's own code never had.
 ///

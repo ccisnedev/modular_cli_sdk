@@ -126,7 +126,7 @@ class TouchCommand
   /// framework's wording.
   final String? explanation;
 
-  /// Whether the framework asked, and when — a reason read before `steps()`
+  /// Whether the framework asked, and when: a reason read before `steps()`
   /// would be read before the command had worked it out.
   bool askedBeforeSteps = false;
   bool _stepsBuilt = false;
@@ -185,13 +185,13 @@ class FakeStep implements Step {
   final String verb;
   final String target;
 
-  /// When set, what the step reports doing — which is not what it claimed.
+  /// When set, what the step reports doing, which is not what it claimed.
   final String? reportedVerb;
 
   final Object? throws;
 
   /// Carried on the returned [Outcome], standing in for a real step's own
-  /// human-readable detail — inquiry's `RedeployHosts`, for instance, sets
+  /// human-readable detail, inquiry's `RedeployHosts`, for instance, sets
   /// one naming the retry command when a redeploy comes back incomplete.
   final String? detail;
 

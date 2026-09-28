@@ -5,7 +5,7 @@
 /// `docs/installation-parity.md`.
 ///
 /// These drive a real [ModularCli] end to end (`cli.run(...)`), not
-/// [applyCommand] — `applyCommand` performs a command's steps directly and
+/// [applyCommand]: `applyCommand` performs a command's steps directly and
 /// never reaches the approval gate in `ModuleBuilder` at all, so it cannot
 /// tell a command that is asked and approved from one that was never asked
 /// in the first place. Only a real run through the CLI can.
@@ -55,7 +55,7 @@ void main() {
     test('with --autoapprove it proceeds', () async {
       // A real file stands in for the running executable: on Windows,
       // ReplaceInstallation renames it aside before extracting, and that
-      // rename is not faked — only PlatformOps and the download are.
+      // rename is not faked, only PlatformOps and the download are.
       final root = Directory.systemTemp.createTempSync('sdk_upgrade_apply_');
       addTearDown(() {
         if (root.existsSync()) root.deleteSync(recursive: true);
@@ -95,23 +95,20 @@ void main() {
   });
 
   group('uninstall --apply', () {
-    test(
-      'a refusing approver performs no mutation: no PATH change, no '
-      'scheduled deletion',
-      () async {
-        final ops = FakePlatformOps();
-        final cli = _cliWithUninstall(
-          uninstall: _uninstallCommand(installDir: '/fake/dir', platformOps: ops),
-          approver: (_) async => false,
-        );
+    test('a refusing approver performs no mutation: no PATH change, no '
+        'scheduled deletion', () async {
+      final ops = FakePlatformOps();
+      final cli = _cliWithUninstall(
+        uninstall: _uninstallCommand(installDir: '/fake/dir', platformOps: ops),
+        approver: (_) async => false,
+      );
 
-        final err = MemorySink();
-        final code = await cli.run(['uninstall', '--apply'], stderr: err);
+      final err = MemorySink();
+      final code = await cli.run(['uninstall', '--apply'], stderr: err);
 
-        expect(ops.calls, isEmpty);
-        expect(code, isNot(ExitCode.ok));
-      },
-    );
+      expect(ops.calls, isEmpty);
+      expect(code, isNot(ExitCode.ok));
+    });
 
     test('with --autoapprove it proceeds', () async {
       final ops = FakePlatformOps();

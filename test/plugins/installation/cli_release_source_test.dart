@@ -32,7 +32,7 @@ void main() {
     });
 
     // Both macss's and inquiry's own upgrade commands fail on any non-200
-    // response from `/releases/latest` — 404 included, no special case for
+    // response from `/releases/latest` (404 included), no special case for
     // it (`code/cli/lib/modules/global/commands/upgrade.dart` in each: `if
     // (metaResponse.statusCode != 200) throw CommandException(...)`). A 404
     // is not "no releases, successfully determined"; it is a failed lookup,
