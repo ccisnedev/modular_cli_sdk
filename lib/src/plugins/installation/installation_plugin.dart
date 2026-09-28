@@ -410,9 +410,19 @@ class UpgradeOutput extends Output {
   int get exitCode => ExitCode.ok;
 
   @override
-  String? toText() => upgraded
-      ? '✓ Upgraded: $previousVersion → $newVersion'
-      : (reason ?? 'Already on the latest version');
+  String? toText() {
+    if (!upgraded) return reason ?? 'Already on the latest version';
+    final lines = ['✓ Upgraded: $previousVersion → $newVersion'];
+    // Generic, not inquiry-specific: whatever detail a postUpgradeSteps
+    // outcome carries (inquiry's RedeployHosts, when a redeploy comes back
+    // incomplete, sets one naming the retry command) is worth a line here
+    // too, not only under extra in the structured output.
+    for (final entry in extra) {
+      final detail = entry['detail'] as String?;
+      if (detail != null) lines.add(detail);
+    }
+    return lines.join('\n');
+  }
 }
 
 class UpgradeCommand
