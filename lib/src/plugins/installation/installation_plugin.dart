@@ -502,10 +502,20 @@ class UpgradeCommand
     }
 
     if (latest == null) {
-      _reason = tagPrefix == null
-          ? '${config.repository} has no releases.'
-          : 'No release with tag prefix "$tagPrefix" was found in '
-                '${config.repository}.';
+      if (tagPrefix != null) {
+        // Unlike "the repository has no releases at all" below, this is not
+        // a legitimate steady state to report and stop at: a tagPrefix that
+        // matches nothing is a configuration or repository problem, and
+        // README.md documents release-lookup-failed for it.
+        throw CommandException(
+          id: 'release-lookup-failed',
+          message:
+              'No release with tag prefix "$tagPrefix" was found in '
+              '${config.repository}.',
+          exitCode: ExitCode.apiError,
+        );
+      }
+      _reason = '${config.repository} has no releases.';
       return const [];
     }
 
