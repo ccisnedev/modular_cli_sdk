@@ -438,6 +438,48 @@ void main() {
       },
     );
 
+    // Neither macss nor inquiry uses tagPrefix, so there is no CLI behavior
+    // to match here; the contract is the one this SDK already documents in
+    // README.md ("no release with that prefix exists" reports
+    // release-lookup-failed). Before this fix, a tagPrefix with no matching
+    // release fell into the same silent "no releases" success path as the
+    // no-tagPrefix case, contradicting that documented contract.
+    test(
+      'a tagPrefix with no matching release throws a structured error under --plan',
+      () async {
+        final command = _upgradeCommand(tagPrefix: 'cli-v', releases: const []);
+
+        expect(
+          () => previewCommand(command),
+          throwsA(
+            isA<CommandException>().having(
+              (e) => e.id,
+              'id',
+              'release-lookup-failed',
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'a tagPrefix with no matching release throws a structured error under --apply',
+      () async {
+        final command = _upgradeCommand(tagPrefix: 'cli-v', releases: const []);
+
+        expect(
+          () => applyCommand(command),
+          throwsA(
+            isA<CommandException>().having(
+              (e) => e.id,
+              'id',
+              'release-lookup-failed',
+            ),
+          ),
+        );
+      },
+    );
+
     test(
       'includes any postUpgradeSteps after the replace step, built from the '
       'install directory and the platform ops the upgrade itself used',
