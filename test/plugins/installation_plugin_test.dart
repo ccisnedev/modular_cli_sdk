@@ -1,14 +1,17 @@
-/// `InstallationPlugin`: `upgrade` / `uninstall`, and the doctor checks it
-/// contributes (`binary`, `alias`, `release`). Every network and platform
-/// access goes through a fake from `installation_doubles.dart`: nothing
-/// here downloads a real archive, extracts one, or touches a real PATH.
+/// `InstallationPlugin`: `upgrade` / `uninstall`, and the doctor check it
+/// contributes (`release`). Every network and platform access goes through a
+/// fake from `installation_doubles.dart`: nothing here downloads a real
+/// archive, extracts one, or touches a real PATH.
 ///
 /// Ported from macss's and inquiry's own `upgrade_test.dart`/
 /// `uninstall_test.dart` (`code/cli/test/` in each), adapted only in names
-/// and config, plus new tests for the three doctor checks this plugin
-/// contributes. See docs/installation-parity.md.
+/// and config, plus new tests for the `release` doctor check this plugin
+/// contributes. Only Windows and Linux are supported: macOS, and the
+/// `binary`/`alias` doctor checks, were removed before 0.8.0 shipped. See
+/// docs/installation-parity.md.
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
@@ -645,87 +648,39 @@ void main() {
   });
 
   group('doctor checks contributed by InstallationPlugin', () {
-    test('binary found, alias correct, up to date: everything ok', () async {
-      final tempDir = Directory.systemTemp.createTempSync('sdk_doctor_');
-      addTearDown(() {
-        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-      });
-      _writeExecutableFixture(tempDir, 'cx');
-      _writeAliasShim(tempDir, alias: 'calculatrix', executable: 'cx');
-
+    // `binary` and `alias` were removed before 0.8.0 shipped: see
+    // https://github.com/ccisnedev/modular_cli_sdk/issues (linked from
+    // docs/installation-parity.md) for what they checked and why they were
+    // deferred. `release` is the only check this plugin contributes now.
+    test('contributes exactly one check, named "release"', () async {
       final cli = _cliWith(
-        _plugin(
-          releases: [_release('v1.0.0', asset: _platformAsset)],
-          environment: {'PATH': tempDir.path},
-        ),
+        _plugin(releases: [_release('v1.0.0', asset: _platformAsset)]),
+      );
+
+      final out = MemorySink();
+      final code = await cli.run(['doctor', '--json'], stdout: out);
+
+      expect(code, ExitCode.ok);
+      final decoded = jsonDecode(out.output) as Map<String, dynamic>;
+      final checks = decoded['checks'] as List;
+      expect(checks.map((c) => c['name']).toList(), ['release']);
+    });
+
+    test('up to date is ok, not a warning', () async {
+      final cli = _cliWith(
+        _plugin(releases: [_release('v1.0.0', asset: _platformAsset)]),
       );
 
       final out = MemorySink();
       final code = await cli.run(['doctor'], stdout: out);
 
       expect(code, ExitCode.ok);
-      expect(out.output, contains('cx found at'));
+      expect(out.output, contains('Up to date'));
     });
-
-    test('binary missing from PATH is a doctor error', () async {
-      final cli = _cliWith(_plugin(environment: {'PATH': ''}));
-
-      final code = await cli.run(['doctor'], stdout: MemorySink());
-      expect(code, ExitCode.configError);
-    });
-
-    test('alias missing from PATH is a doctor error', () async {
-      final tempDir = Directory.systemTemp.createTempSync('sdk_doctor_');
-      addTearDown(() {
-        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-      });
-      _writeExecutableFixture(tempDir, 'cx');
-
-      final cli = _cliWith(_plugin(environment: {'PATH': tempDir.path}));
-
-      final out = MemorySink();
-      final err = MemorySink();
-      final code = await cli.run(['doctor'], stdout: out, stderr: err);
-
-      expect(code, ExitCode.configError);
-      expect(err.output, contains('calculatrix was not found on PATH'));
-    });
-
-    test('alias resolving to a different binary is a doctor error', () async {
-      final tempDir = Directory.systemTemp.createTempSync('sdk_doctor_');
-      addTearDown(() {
-        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-      });
-      _writeExecutableFixture(tempDir, 'cx');
-      _writeAliasShim(
-        tempDir,
-        alias: 'calculatrix',
-        executable: 'someone-else',
-      );
-
-      final cli = _cliWith(_plugin(environment: {'PATH': tempDir.path}));
-
-      final out = MemorySink();
-      final err = MemorySink();
-      final code = await cli.run(['doctor'], stdout: out, stderr: err);
-
-      expect(code, ExitCode.configError);
-      expect(err.output, contains('does not look like a shim'));
-    }, testOn: 'windows');
 
     test('a newer release is a warning, not an error', () async {
-      final tempDir = Directory.systemTemp.createTempSync('sdk_doctor_');
-      addTearDown(() {
-        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-      });
-      _writeExecutableFixture(tempDir, 'cx');
-      _writeAliasShim(tempDir, alias: 'calculatrix', executable: 'cx');
-
       final cli = _cliWith(
-        _plugin(
-          releases: [_release('v9.9.9', asset: _platformAsset)],
-          environment: {'PATH': tempDir.path},
-        ),
+        _plugin(releases: [_release('v9.9.9', asset: _platformAsset)]),
       );
 
       final out = MemorySink();
@@ -745,18 +700,10 @@ void main() {
     test(
       'a release tag that does not parse as semver is a doctor warning naming the tag',
       () async {
-        final tempDir = Directory.systemTemp.createTempSync('sdk_doctor_');
-        addTearDown(() {
-          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-        });
-        _writeExecutableFixture(tempDir, 'cx');
-        _writeAliasShim(tempDir, alias: 'calculatrix', executable: 'cx');
-
         final cli = _cliWith(
           _plugin(
             tagPrefix: 'cli-v',
             releases: [_release('cli-vnightly', asset: _platformAsset)],
-            environment: {'PATH': tempDir.path},
           ),
         );
 
@@ -770,18 +717,8 @@ void main() {
     );
 
     test('a failed release lookup is a warning, not an error', () async {
-      final tempDir = Directory.systemTemp.createTempSync('sdk_doctor_');
-      addTearDown(() {
-        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-      });
-      _writeExecutableFixture(tempDir, 'cx');
-      _writeAliasShim(tempDir, alias: 'calculatrix', executable: 'cx');
-
       final cli = _cliWith(
-        _plugin(
-          releaseError: const CliReleaseLookupFailure('no network'),
-          environment: {'PATH': tempDir.path},
-        ),
+        _plugin(releaseError: const CliReleaseLookupFailure('no network')),
       );
 
       final out = MemorySink();
@@ -792,16 +729,7 @@ void main() {
     });
 
     test('a repository with no releases is a doctor warning', () async {
-      final tempDir = Directory.systemTemp.createTempSync('sdk_doctor_');
-      addTearDown(() {
-        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
-      });
-      _writeExecutableFixture(tempDir, 'cx');
-      _writeAliasShim(tempDir, alias: 'calculatrix', executable: 'cx');
-
-      final cli = _cliWith(
-        _plugin(releases: const [], environment: {'PATH': tempDir.path}),
-      );
+      final cli = _cliWith(_plugin(releases: const []));
 
       final out = MemorySink();
       final code = await cli.run(['doctor'], stdout: out);
@@ -822,11 +750,7 @@ CliInstallationConfig _config({
   tagPrefix: tagPrefix,
   executable: 'cx',
   alias: 'calculatrix',
-  assets: const {
-    'linux': 'cx-linux',
-    'macos': 'cx-macos',
-    'windows': 'cx-windows.exe',
-  },
+  assets: const {'linux': 'cx-linux', 'windows': 'cx-windows.exe'},
   postUpgradeSteps: postUpgradeSteps,
 );
 
@@ -871,11 +795,7 @@ UninstallCommand _uninstallCommand({
     repository: 'ccisnedev/calculatrix',
     executable: 'cx',
     alias: 'calculatrix',
-    assets: const {
-      'linux': 'cx-linux',
-      'macos': 'cx-macos',
-      'windows': 'cx-windows.exe',
-    },
+    assets: const {'linux': 'cx-linux', 'windows': 'cx-windows.exe'},
     preUninstallSteps: preUninstallSteps,
   ),
   platformOps: platformOps ?? FakePlatformOps(),
@@ -885,52 +805,19 @@ InstallationPlugin _plugin({
   String? tagPrefix,
   List<CliRelease> releases = const [],
   Object? releaseError,
-  Map<String, String> environment = const {},
 }) => InstallationPlugin(
   config: CliInstallationConfig(
     repository: 'ccisnedev/calculatrix',
     tagPrefix: tagPrefix,
     executable: 'cx',
     alias: 'calculatrix',
-    assets: const {
-      'linux': 'cx-linux',
-      'macos': 'cx-macos',
-      'windows': 'cx-windows.exe',
-    },
+    assets: const {'linux': 'cx-linux', 'windows': 'cx-windows.exe'},
   ),
   releaseSource: FakeReleaseSource(releases: releases, error: releaseError),
   platformOps: FakePlatformOps(assetName: _platformAsset),
-  environment: environment,
 );
 
 ModularCli _cliWith(InstallationPlugin plugin) =>
     ModularCli(suggestionDistance: 2, name: 'cx', version: '1.0.0')
       ..plugin(const DoctorPlugin())
       ..plugin(plugin);
-
-/// Writes an executable fixture named [name] into [dir] so the doctor
-/// "binary on PATH" check (which walks `Platform.environment['PATH']`
-/// looking for a regular file) finds it there. Returns the full path.
-String _writeExecutableFixture(Directory dir, String name) {
-  final path =
-      '${dir.path}${Platform.pathSeparator}'
-      '${Platform.isWindows ? '$name.exe' : name}';
-  File(path).writeAsBytesSync([1, 2, 3]);
-  return path;
-}
-
-/// Writes the alias shim the doctor "alias" check expects: on Windows, a
-/// `.cmd` file invoking [executable] via `%~dp0`, exactly the shape macss's
-/// and inquiry's own `install.ps1` produce. Non-Windows is not exercised by
-/// this fixture (the alias check there is a symlink check, covered directly
-/// against `FileSystemEntity`, not against a `PATH` fixture).
-void _writeAliasShim(
-  Directory dir, {
-  required String alias,
-  required String executable,
-}) {
-  if (!Platform.isWindows) return;
-  File(
-    '${dir.path}${Platform.pathSeparator}$alias.cmd',
-  ).writeAsStringSync('@echo off\r\n"%~dp0$executable.exe" %*\r\n');
-}
