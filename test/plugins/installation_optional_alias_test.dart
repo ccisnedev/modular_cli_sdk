@@ -41,9 +41,7 @@ void main() {
   group('upgrade with no alias', () {
     test('still plans the replacement', () async {
       final previews = await previewCommand(
-        _upgradeCommand(
-          releases: [_release('v9.9.9', asset: _platformAsset)],
-        ),
+        _upgradeCommand(releases: [_release('v9.9.9', asset: _platformAsset)]),
       );
 
       expect(previews.map((p) => p.verb).toList(), ['replace']);
@@ -99,10 +97,7 @@ void main() {
       // Same shape of calls either way: nothing alias-specific was ever
       // called, so an absent alias changes nothing about what PlatformOps is
       // asked to do.
-      expect(
-        withoutAlias.calls.map(_callName),
-        withAlias.calls.map(_callName),
-      );
+      expect(withoutAlias.calls.map(_callName), withAlias.calls.map(_callName));
     });
   });
 
@@ -146,10 +141,7 @@ void main() {
         _uninstallCommand(installDir: '/fake/dir', platformOps: withoutAlias),
       );
 
-      expect(
-        withoutAlias.calls.map(_callName),
-        withAlias.calls.map(_callName),
-      );
+      expect(withoutAlias.calls.map(_callName), withAlias.calls.map(_callName));
     });
   });
 
@@ -179,10 +171,7 @@ void main() {
       final code = await cli.run(['doctor'], stdout: out);
 
       expect(code, ExitCode.ok);
-      expect(
-        out.output,
-        contains('Run "cx upgrade --apply" to install it.'),
-      );
+      expect(out.output, contains('Run "cx upgrade --apply" to install it.'));
       expect(out.output, isNot(contains('Run "calculatrix')));
     });
   });

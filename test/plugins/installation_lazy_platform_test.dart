@@ -84,30 +84,33 @@ void main() {
   });
 
   group('upgrade on an OS with no asset configured', () {
-    test('fails with a structured, unsupported-platform CommandException, '
-        'not the plain UnsupportedError PlatformOps.current() throws', () async {
-      final command = UpgradeCommand(
-        UpgradeInput(installDir: '/fake/dir'),
-        config: CliInstallationConfig(
-          repository: 'ccisnedev/calculatrix',
-          executable: 'cx',
-          assets: _noAssetForThisOS,
-        ),
-        currentVersion: '1.0.0',
-        releaseSource: FakeReleaseSource(
-          releases: [_release('v9.9.9', asset: 'cx-anything')],
-        ),
-      );
+    test(
+      'fails with a structured, unsupported-platform CommandException, '
+      'not the plain UnsupportedError PlatformOps.current() throws',
+      () async {
+        final command = UpgradeCommand(
+          UpgradeInput(installDir: '/fake/dir'),
+          config: CliInstallationConfig(
+            repository: 'ccisnedev/calculatrix',
+            executable: 'cx',
+            assets: _noAssetForThisOS,
+          ),
+          currentVersion: '1.0.0',
+          releaseSource: FakeReleaseSource(
+            releases: [_release('v9.9.9', asset: 'cx-anything')],
+          ),
+        );
 
-      await expectLater(
-        () => previewCommand(command),
-        throwsA(
-          isA<CommandException>()
-              .having((e) => e.id, 'id', 'platform-not-supported')
-              .having((e) => e.exitCode, 'exitCode', ExitCode.configError),
-        ),
-      );
-    });
+        await expectLater(
+          () => previewCommand(command),
+          throwsA(
+            isA<CommandException>()
+                .having((e) => e.id, 'id', 'platform-not-supported')
+                .having((e) => e.exitCode, 'exitCode', ExitCode.configError),
+          ),
+        );
+      },
+    );
 
     test('through a real CLI run, exits with the unsupported-platform code, '
         'not a crash', () async {
@@ -198,7 +201,10 @@ void main() {
       );
     });
 
-    test('upgrade succeeds using the injected fake', () async {
+    test('upgrade succeeds using the injected fake, on a config that does '
+        'support this OS: an injected PlatformOps bypasses PlatformOps.current, '
+        'nothing more, asset lookup is still config.assets doing its own, '
+        'unrelated job', () async {
       final ops = FakePlatformOps();
       final installDir = Directory.systemTemp.createTempSync(
         'sdk_upgrade_lazy_',
@@ -206,19 +212,24 @@ void main() {
       addTearDown(() {
         if (installDir.existsSync()) installDir.deleteSync(recursive: true);
       });
-      final binary = File(
-        '${installDir.path}${Platform.pathSeparator}bin'
-        '${Platform.pathSeparator}cx.exe',
-      )
-        ..createSync(recursive: true)
-        ..writeAsStringSync('outgoing');
+      final binary =
+          File(
+              '${installDir.path}${Platform.pathSeparator}bin'
+              '${Platform.pathSeparator}cx.exe',
+            )
+            ..createSync(recursive: true)
+            ..writeAsStringSync('outgoing');
 
       final command = UpgradeCommand(
         UpgradeInput(installDir: installDir.path),
         config: CliInstallationConfig(
           repository: 'ccisnedev/calculatrix',
           executable: 'cx',
-          assets: _noAssetForThisOS,
+          assets: const {
+            'linux': 'cx-linux',
+            'macos': 'cx-macos',
+            'windows': 'cx-windows.exe',
+          },
         ),
         currentVersion: '1.0.0',
         releaseSource: FakeReleaseSource(
