@@ -20,7 +20,9 @@ Issue [#40](https://github.com/macss-dev/modular_cli_sdk/issues/40).
   slow exit, antivirus, an indexer) was left behind for good. It now retries
   up to 40 times, 250 ms apart, about 10 s in total, stopping as soon as the
   directory is gone: parity with docmd's own pre-`InstallationPlugin`
-  cleanup script. `WindowsPlatformOps` also gains an injectable
+  cleanup script. The loop runs in one hidden PowerShell process that reads
+  the path from an environment variable, because cmd.exe has no sub-second
+  sleep and `ping -n 1 -w 250` returns at once on localhost. `WindowsPlatformOps` also gains an injectable
   `currentExecutable` constructor parameter (mirroring
   `ReplaceInstallation.runningExecutable`), so this is testable against a
   real locked file instead of `Platform.resolvedExecutable`

@@ -127,9 +127,16 @@ class WindowsPlatformOps implements PlatformOps {
   /// carries over unchanged (issue #40, defect 2). The previous version of
   /// this script waited `timeout /t 2` exactly once, so an executable still
   /// locked past that single 2 s window (a slow exit, antivirus, an
-  /// indexer) was left behind for good; `ping -n 1 -w 250 127.0.0.1` here
-  /// stands in for a sub-second sleep, which cmd.exe has no built-in
-  /// command for.
+  /// indexer) was left behind for good.
+  ///
+  /// The loop runs in a single PowerShell process because cmd.exe has no
+  /// sub-second sleep. `ping -n 1 -w 250 127.0.0.1` does not wait 250 ms
+  /// (`-w` is a reply timeout and localhost replies at once), so 40 of
+  /// them cost only process startup: under 1 s from a console and 7.7 to
+  /// 9.5 s from a detached process. PowerShell reads the path from the
+  /// `target` environment variable the script sets, never from its own
+  /// command text, so no PowerShell quoting is involved, and
+  /// `-LiteralPath` keeps `[`, `]` and `*` literal.
   ///
   /// [dir] is embedded directly in the script text, not passed as a
   /// argument on the command line: this is an internal cleanup script on a
@@ -148,12 +155,12 @@ class WindowsPlatformOps implements PlatformOps {
     return '@echo off\r\n'
         'setlocal\r\n'
         'set "target=$escaped"\r\n'
-        'for /L %%i in (1,1,40) do (\r\n'
-        '  rmdir /s /q "%target%" 2>nul\r\n'
-        '  if not exist "%target%" goto :cleanup_done\r\n'
-        '  ping -n 1 -w 250 127.0.0.1 >nul\r\n'
-        ')\r\n'
-        ':cleanup_done\r\n'
+        'powershell -NoProfile -NonInteractive -WindowStyle Hidden -Command "'
+        r'for ($i = 0; $i -lt 40; $i++) { '
+        r'Remove-Item -LiteralPath $env:target -Recurse -Force '
+        '-ErrorAction SilentlyContinue; '
+        r'if (-not (Test-Path -LiteralPath $env:target)) { break }; '
+        'Start-Sleep -Milliseconds 250 }"\r\n'
         'del "%~f0"\r\n';
   }
 }

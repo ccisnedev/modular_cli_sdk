@@ -59,7 +59,14 @@ void main() {
     tempRoot = Directory.systemTemp.createTempSync('mcs_win_cleanup_test_');
   });
 
-  tearDown(() {
+  tearDown(() async {
+    // Every test shares one script path (`cx.exe_cleanup.cmd` in the temp
+    // directory). A script still finishing from one test would otherwise
+    // run its closing `del "%~f0"` against the next test's freshly written
+    // script, so each test waits for its own script to be gone first.
+    await _waitUntilGone(
+      File(p.join(Directory.systemTemp.path, 'cx.exe_cleanup.cmd')),
+    );
     if (tempRoot.existsSync()) {
       try {
         tempRoot.deleteSync(recursive: true);
