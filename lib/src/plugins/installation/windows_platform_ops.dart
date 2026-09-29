@@ -16,7 +16,8 @@ class WindowsPlatformOps implements PlatformOps {
     required this.binaryName,
     required this.assetName,
     this.postInstallArguments = const ['version'],
-  });
+    String? currentExecutable,
+  }) : currentExecutable = currentExecutable ?? Platform.resolvedExecutable;
 
   @override
   final String binaryName;
@@ -25,6 +26,17 @@ class WindowsPlatformOps implements PlatformOps {
   final String assetName;
 
   final List<String> postInstallArguments;
+
+  /// The executable [scheduleDeletion] renames aside before scheduling the
+  /// directory that contains it for deletion.
+  ///
+  /// **Injected, and that is not optional.** `Platform.resolvedExecutable`
+  /// is this CLI's own compiled binary only when a compiled binary is what
+  /// is running. Under `dart test` it is the Dart VM, so a test that
+  /// reached the default would rename the Dart SDK's own executable. See
+  /// [ReplaceInstallation.runningExecutable] in installation_plugin.dart,
+  /// which the same reasoning already applies to.
+  final String currentExecutable;
 
   @override
   Future<void> expandArchive(String archivePath, String destDir) async {
@@ -82,8 +94,8 @@ class WindowsPlatformOps implements PlatformOps {
   @override
   Future<void> scheduleDeletion(String dir) async {
     // Rename the running exe so the directory can be deleted.
-    final currentExe = File(Platform.resolvedExecutable);
-    final bakPath = '${Platform.resolvedExecutable}.bak';
+    final currentExe = File(currentExecutable);
+    final bakPath = '$currentExecutable.bak';
     try {
       currentExe.renameSync(bakPath);
     } on FileSystemException {
@@ -91,20 +103,57 @@ class WindowsPlatformOps implements PlatformOps {
     }
 
     // A temp batch script, to avoid cmd.exe quoting issues: Dart escapes "
-    // in Process.start args, but cmd doesn't understand \".
+    // in Process.start args, but cmd doesn't understand \". The directory
+    // is written directly into the script rather than passed as an
+    // argument, for the same reason.
     final bat = File(
       p.join(Directory.systemTemp.path, '${binaryName}_cleanup.cmd'),
     );
-    bat.writeAsStringSync(
-      '@echo off\r\n'
-      'timeout /t 2 /nobreak >nul\r\n'
-      'rmdir /s /q "$dir"\r\n'
-      'del "%~f0"\r\n',
-    );
+    bat.writeAsStringSync(_cleanupScript(dir));
 
     await Process.start('cmd.exe', [
       '/c',
       bat.path,
     ], mode: ProcessStartMode.detached);
+  }
+
+  /// The cleanup script [scheduleDeletion] writes and runs.
+  ///
+  /// Retries up to 40 times, 250 ms apart (about 10 s in total), stopping
+  /// as soon as the directory is gone: parity with docmd's own
+  /// pre-InstallationPlugin cleanup script (a PowerShell equivalent — see
+  /// `uninstall.dart`'s `_windowsUninstallScript` before commit
+  /// `7055232`), which used the same 40-attempts/250ms budget and this
+  /// carries over unchanged (issue #40, defect 2). The previous version of
+  /// this script waited `timeout /t 2` exactly once, so an executable still
+  /// locked past that single 2 s window (a slow exit, antivirus, an
+  /// indexer) was left behind for good; `ping -n 1 -w 250 127.0.0.1` here
+  /// stands in for a sub-second sleep, which cmd.exe has no built-in
+  /// command for.
+  ///
+  /// [dir] is embedded directly in the script text, not passed as a
+  /// argument on the command line: this is an internal cleanup script on a
+  /// path the SDK itself controls, not a user-facing alias shim (the #37
+  /// concerns do not apply), but the value still has to be escaped
+  /// correctly for the batch language it is written in. `%` is doubled to
+  /// `%%`, the standard way to write a literal percent sign in a `.cmd`
+  /// file (an unescaped `%word%` is read as an environment variable
+  /// reference, silently substituting whatever that variable holds, or
+  /// nothing at all, in place of a real path segment). Wrapping every use
+  /// of the resulting `%target%` value in double quotes is enough to make
+  /// spaces, `&` and `^` literal: cmd.exe's line parser treats all three as
+  /// plain characters inside a quoted string.
+  static String _cleanupScript(String dir) {
+    final escaped = dir.replaceAll('%', '%%');
+    return '@echo off\r\n'
+        'setlocal\r\n'
+        'set "target=$escaped"\r\n'
+        'for /L %%i in (1,1,40) do (\r\n'
+        '  rmdir /s /q "%target%" 2>nul\r\n'
+        '  if not exist "%target%" goto :cleanup_done\r\n'
+        '  ping -n 1 -w 250 127.0.0.1 >nul\r\n'
+        ')\r\n'
+        ':cleanup_done\r\n'
+        'del "%~f0"\r\n';
   }
 }

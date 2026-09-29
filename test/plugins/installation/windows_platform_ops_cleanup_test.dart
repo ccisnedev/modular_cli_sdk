@@ -76,38 +76,35 @@ void main() {
         currentExecutable: currentExecutable,
       );
 
-  test(
-    'retries past the old 2 s budget and still deletes once the lock '
-    'clears',
-    () async {
-      final installDir = Directory(p.join(tempRoot.path, 'install'))
-        ..createSync(recursive: true);
-      final fakeExe = File(p.join(installDir.path, 'cx.exe'))
-        ..writeAsStringSync('fake');
-      final lockedFile = File(p.join(installDir.path, 'locked.bin'))
-        ..writeAsStringSync('locked');
+  test('retries past the old 2 s budget and still deletes once the lock '
+      'clears', () async {
+    final installDir = Directory(p.join(tempRoot.path, 'install'))
+      ..createSync(recursive: true);
+    final fakeExe = File(p.join(installDir.path, 'cx.exe'))
+      ..writeAsStringSync('fake');
+    final lockedFile = File(p.join(installDir.path, 'locked.bin'))
+      ..writeAsStringSync('locked');
 
-      // Holds an exclusive (no-share) handle on lockedFile for 3s: longer
-      // than the old script's single 2s wait, comfortably inside the new
-      // ~10s retry budget.
-      final locker = await Process.start('powershell', [
-        '-NoProfile',
-        '-Command',
-        '\$fs = [System.IO.File]::Open('
-            "'${lockedFile.path}', 'Open', 'Read', 'None'"
-            '); '
-            'Start-Sleep -Milliseconds 3000; '
-            r'$fs.Close()',
-      ]);
+    // Holds an exclusive (no-share) handle on lockedFile for 3s: longer
+    // than the old script's single 2s wait, comfortably inside the new
+    // ~10s retry budget.
+    final locker = await Process.start('powershell', [
+      '-NoProfile',
+      '-Command',
+      '\$fs = [System.IO.File]::Open('
+          "'${lockedFile.path}', 'Open', 'Read', 'None'"
+          '); '
+          'Start-Sleep -Milliseconds 3000; '
+          r'$fs.Close()',
+    ]);
 
-      await ops(
-        currentExecutable: fakeExe.path,
-      ).scheduleDeletion(installDir.path);
+    await ops(
+      currentExecutable: fakeExe.path,
+    ).scheduleDeletion(installDir.path);
 
-      await _waitUntilGone(installDir);
-      await locker.exitCode;
-    },
-  );
+    await _waitUntilGone(installDir);
+    await locker.exitCode;
+  });
 
   test('the cleanup script deletes itself once it is done', () async {
     final installDir = Directory(p.join(tempRoot.path, 'install'))
@@ -115,9 +112,9 @@ void main() {
     final fakeExe = File(p.join(installDir.path, 'cx.exe'))
       ..writeAsStringSync('fake');
 
-    await ops(currentExecutable: fakeExe.path).scheduleDeletion(
-      installDir.path,
-    );
+    await ops(
+      currentExecutable: fakeExe.path,
+    ).scheduleDeletion(installDir.path);
 
     await _waitUntilGone(installDir);
     await _waitUntilGone(
