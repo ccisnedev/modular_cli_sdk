@@ -50,17 +50,24 @@ class InstallationPlugin implements CliPlugin {
     CliReleaseSource? releaseSource,
     PlatformOps? platformOps,
   }) : releaseSource = releaseSource ?? HttpCliReleaseSource(),
-       platformOps =
-           platformOps ??
-           PlatformOps.current(
-             executable: config.executable,
-             assets: config.assets,
-             postInstallArguments: config.postInstallArguments,
-           );
+       _injectedPlatformOps = platformOps;
 
   final CliInstallationConfig config;
   final CliReleaseSource releaseSource;
-  final PlatformOps platformOps;
+
+  final PlatformOps? _injectedPlatformOps;
+  PlatformOps? _resolvedPlatformOps;
+
+  /// Resolved lazily (issue #35): never at construction, only the first time
+  /// `upgrade` or `uninstall` actually runs (from inside the
+  /// `registerCommand` factories in [setup], not here). This is what lets a
+  /// CLI start, and run every other command, on an OS its own
+  /// [CliInstallationConfig.assets] has nothing configured for; only
+  /// `upgrade`/`uninstall` themselves need it, and only when they run. See
+  /// [resolvePlatformOps] for how an unsupported OS is reported.
+  PlatformOps get platformOps =>
+      _injectedPlatformOps ??
+      (_resolvedPlatformOps ??= resolvePlatformOps(config));
 
   @override
   CliPluginManifest get manifest => CliPluginManifest(
@@ -164,12 +171,43 @@ class InstallationPlugin implements CliPlugin {
             status: CliCheckStatus.warning,
             message:
                 'A newer release is available: $rawTag (current: $current). '
-                'Run "${config.alias} upgrade --apply" to install it.',
+                'Run "${config.alias ?? config.executable} upgrade --apply" '
+                'to install it.',
           )
         : CliCheckResult(
             status: CliCheckStatus.ok,
             message: 'Up to date ($current).',
           );
+  }
+}
+
+/// Resolves [PlatformOps.current] for [config], the one place `upgrade` and
+/// `uninstall` actually ask for it (issue #35: lazy platform resolution).
+///
+/// [PlatformOps.current] itself keeps throwing the plain [UnsupportedError]
+/// it always has, unchanged, so a direct caller (and the existing
+/// `@TestOn('mac-os')` test) sees exactly the same thing as before. This
+/// wrapper is what turns that into a [CommandException] with
+/// [ExitCode.configError], the SDK's normal error/exit-code path, so a run on
+/// an OS this CLI's own [CliInstallationConfig.assets] does not cover (or
+/// that this SDK has no [PlatformOps] implementation for at all) fails
+/// cleanly, with a clear message and no stack trace, instead of an uncaught
+/// error.
+PlatformOps resolvePlatformOps(CliInstallationConfig config) {
+  try {
+    return PlatformOps.current(
+      executable: config.executable,
+      assets: config.assets,
+      postInstallArguments: config.postInstallArguments,
+    );
+  } on UnsupportedError catch (e) {
+    throw CommandException(
+      id: 'platform-not-supported',
+      message:
+          'upgrade and uninstall are not supported on this platform: '
+          '${e.message}',
+      exitCode: ExitCode.configError,
+    );
   }
 }
 
@@ -179,7 +217,7 @@ class CliInstallationConfig {
   const CliInstallationConfig({
     required this.repository,
     required this.executable,
-    required this.alias,
+    this.alias,
     required this.assets,
     this.tagPrefix,
     this.postInstallArguments = const ['version'],
@@ -195,7 +233,15 @@ class CliInstallationConfig {
   final String executable;
 
   /// A second name this CLI is also expected to resolve under, e.g. `'ma'`.
-  final String alias;
+  ///
+  /// Optional (issue #35): a CLI with no alias, like docmd, leaves this
+  /// null. Neither `upgrade` nor `uninstall` ever created or removed the
+  /// shim for it anyway (that remains each CLI's own install script's job,
+  /// see `docs/installation-parity.md`), so the only thing that changes when
+  /// this is null is which name a user-facing message uses: [executable]
+  /// instead of the alias. With an alias set, behavior is identical to
+  /// 0.8.0.
+  final String? alias;
 
   /// [Platform.operatingSystem] → the name of the release asset for that
   /// platform, e.g. `{'windows': 'macss-windows-x64.zip'}`.
@@ -436,13 +482,7 @@ class UpgradeCommand
     this.progress,
     this.runningExecutable,
   }) : releaseSource = releaseSource ?? HttpCliReleaseSource(),
-       platformOps =
-           platformOps ??
-           PlatformOps.current(
-             executable: config.executable,
-             assets: config.assets,
-             postInstallArguments: config.postInstallArguments,
-           );
+       _injectedPlatformOps = platformOps;
 
   @override
   final UpgradeInput input;
@@ -450,7 +490,15 @@ class UpgradeCommand
   final CliInstallationConfig config;
   final String currentVersion;
   final CliReleaseSource releaseSource;
-  final PlatformOps platformOps;
+
+  final PlatformOps? _injectedPlatformOps;
+  PlatformOps? _resolvedPlatformOps;
+
+  /// Resolved lazily, the first thing [steps] does, not at construction: see
+  /// [resolvePlatformOps] and issue #35.
+  PlatformOps get platformOps =>
+      _injectedPlatformOps ??
+      (_resolvedPlatformOps ??= resolvePlatformOps(config));
 
   /// How the release archive is fetched. A seam for the tests, and the
   /// reason [ReplaceInstallation] itself knows nothing about HTTP.
@@ -482,6 +530,11 @@ class UpgradeCommand
   /// the one that was shown.
   @override
   Future<List<Step>> steps() async {
+    // Resolved first (issue #35): an OS this CLI has no PlatformOps for
+    // fails fast, before a release is even looked up, rather than after an
+    // API call whose answer would then go unused.
+    final ops = platformOps;
+
     final tagPrefix = config.tagPrefix;
     final CliRelease? latest;
     try {
@@ -581,7 +634,7 @@ class UpgradeCommand
     final installDir = input.installDir;
     return [
       ReplaceInstallation(
-        platformOps: platformOps,
+        platformOps: ops,
         downloader: downloader,
         installDir: installDir,
         from: currentVersion,
@@ -592,7 +645,7 @@ class UpgradeCommand
         progress: progress,
         runningExecutable: runningExecutable,
       ),
-      ...?config.postUpgradeSteps?.call(installDir, platformOps),
+      ...?config.postUpgradeSteps?.call(installDir, ops),
     ];
   }
 
@@ -715,19 +768,21 @@ class UninstallOutput extends Output {
 
 class UninstallCommand implements Command<UninstallInput, UninstallOutput> {
   UninstallCommand(this.input, {required this.config, PlatformOps? platformOps})
-    : platformOps =
-          platformOps ??
-          PlatformOps.current(
-            executable: config.executable,
-            assets: config.assets,
-            postInstallArguments: config.postInstallArguments,
-          );
+    : _injectedPlatformOps = platformOps;
 
   @override
   final UninstallInput input;
 
   final CliInstallationConfig config;
-  final PlatformOps platformOps;
+
+  final PlatformOps? _injectedPlatformOps;
+  PlatformOps? _resolvedPlatformOps;
+
+  /// Resolved lazily, the first thing [steps] does, not at construction: see
+  /// [resolvePlatformOps] and issue #35.
+  PlatformOps get platformOps =>
+      _injectedPlatformOps ??
+      (_resolvedPlatformOps ??= resolvePlatformOps(config));
 
   @override
   String? validate() => null;
@@ -740,14 +795,14 @@ class UninstallCommand implements Command<UninstallInput, UninstallOutput> {
   /// already on its way out.
   @override
   Future<List<Step>> steps() async {
+    // Resolved first (issue #35), before any of the steps below are built.
+    final ops = platformOps;
+
     final installDir = input.installDir;
     return [
-      ...?config.preUninstallSteps?.call(installDir, platformOps),
-      UnsetFromPath(
-        platformOps: platformOps,
-        binDir: p.join(installDir, 'bin'),
-      ),
-      DeleteInstallation(platformOps: platformOps, installDir: installDir),
+      ...?config.preUninstallSteps?.call(installDir, ops),
+      UnsetFromPath(platformOps: ops, binDir: p.join(installDir, 'bin')),
+      DeleteInstallation(platformOps: ops, installDir: installDir),
     ];
   }
 
