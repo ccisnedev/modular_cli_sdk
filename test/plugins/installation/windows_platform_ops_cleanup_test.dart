@@ -30,6 +30,7 @@ library;
 /// `ReplaceInstallation.runningExecutable`, see installation_plugin.dart)
 /// so this never touches `Platform.resolvedExecutable`, which under `dart
 /// test` is the Dart VM actually running the suite.
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:modular_cli_sdk/modular_cli_sdk.dart';
@@ -76,8 +77,7 @@ void main() {
         currentExecutable: currentExecutable,
       );
 
-  test('retries past the old 2 s budget and still deletes once the lock '
-      'clears', () async {
+  Future<void> deletesOnceLockClears(int lockMs) async {
     final installDir = Directory(p.join(tempRoot.path, 'install'))
       ..createSync(recursive: true);
     final fakeExe = File(p.join(installDir.path, 'cx.exe'))
@@ -86,25 +86,55 @@ void main() {
       ..writeAsStringSync('locked');
 
     // Holds an exclusive (no-share) handle on lockedFile for 3s: longer
-    // than the old script's single 2s wait, comfortably inside the new
-    // ~10s retry budget.
+    // than the old script's single 2s wait, and longer than 40 attempts
+    // whose "250 ms" wait does not actually wait, but comfortably inside
+    // the real ~10s retry budget. The locker prints `locked` only once the
+    // handle is open, and the test waits for that line, so the deletion
+    // is guaranteed to start against a file that is really locked.
     final locker = await Process.start('powershell', [
       '-NoProfile',
       '-Command',
       '\$fs = [System.IO.File]::Open('
           "'${lockedFile.path}', 'Open', 'Read', 'None'"
           '); '
-          'Start-Sleep -Milliseconds 3000; '
+          "Write-Output 'locked'; "
+          'Start-Sleep -Milliseconds $lockMs; '
           r'$fs.Close()',
     ]);
+    final lines = locker.stdout
+        .transform(const SystemEncoding().decoder)
+        .transform(const LineSplitter());
+    await lines.firstWhere((line) => line.trim() == 'locked');
+    expect(
+      () => lockedFile.openSync(mode: FileMode.append).closeSync(),
+      throwsA(isA<FileSystemException>()),
+      reason: 'the locker must really hold the file before deletion starts',
+    );
 
     await ops(
       currentExecutable: fakeExe.path,
     ).scheduleDeletion(installDir.path);
 
     await _waitUntilGone(installDir);
-    await locker.exitCode;
-  });
+    expect(await locker.exitCode, 0);
+  }
+
+  test(
+    'retries past the old 2 s budget and still deletes once the lock '
+    'clears',
+    () => deletesOnceLockClears(3000),
+  );
+
+  // 9 s: past what 40 back-to-back `ping -n 1 -w 250 127.0.0.1` calls
+  // actually wait (`-w` is a reply timeout, and localhost replies at once,
+  // so each call costs only its own startup: under a second in total from
+  // a console, about 7.7 s from a detached process), but inside a real
+  // 40 x 250 ms = 10 s of sleeping. Pins that the wait between attempts
+  // is a real sleep, not a side effect of process startup cost.
+  test(
+    'waits a real 250 ms between attempts, about 10 s in total',
+    () => deletesOnceLockClears(9000),
+  );
 
   test('the cleanup script deletes itself once it is done', () async {
     final installDir = Directory(p.join(tempRoot.path, 'install'))
