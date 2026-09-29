@@ -6,12 +6,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## 0.8.1
 
-Issue [#35](https://github.com/macss-dev/modular_cli_sdk/issues/35), items 1
-and 2. Item 3 (raising the minimum `cli_router` version) is deferred to a
-follow-up commit on the same pull request once `cli_router` 0.2.1 is
-published.
+Issue [#35](https://github.com/macss-dev/modular_cli_sdk/issues/35).
 
 ### Changed
+
+- **Requires `cli_router` ^0.2.1.** Options may now follow operands (GNU
+  permutation): `show 1 --verbose` is accepted where 0.2.0 rejected it as
+  `misplaced-option`. Setting `POSIXLY_CORRECT` in the environment restores
+  strict POSIX order, and `misplaced-option` with it
+- **`ModularCli.run` takes an optional `environment` map**, forwarded to
+  the router, so tests can pick either ordering without touching the real
+  process environment. It defaults to the process environment
 
 - **`CliInstallationConfig.alias` is now optional.** Neither `upgrade` nor
   `uninstall` ever created or removed the alias shim to begin with (that
