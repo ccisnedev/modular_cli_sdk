@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.8.2
+
+Issue [#40](https://github.com/macss-dev/modular_cli_sdk/issues/40).
+
+### Fixed
+
+- **`LinuxPlatformOps.scheduleDeletion` no longer spawns a detached `rm -rf`
+  and returns as soon as it started.** `uninstall` could report success, or
+  swallow a real deletion error such as a permission problem, before the
+  directory was actually gone. It now deletes synchronously and lets a real
+  failure propagate to the caller
+- **`WindowsPlatformOps`'s cleanup script no longer waits `timeout /t 2`
+  exactly once.** An executable still locked past that single 2 s window (a
+  slow exit, antivirus, an indexer) was left behind for good. It now retries
+  up to 40 times, 250 ms apart, about 10 s in total, stopping as soon as the
+  directory is gone: parity with docmd's own pre-`InstallationPlugin`
+  cleanup script. `WindowsPlatformOps` also gains an injectable
+  `currentExecutable` constructor parameter (mirroring
+  `ReplaceInstallation.runningExecutable`), so this is testable against a
+  real locked file instead of `Platform.resolvedExecutable`
+
+A Linux end-to-end pass through the real `UpgradeCommand`/`UninstallCommand`
+(exec bit after extraction, `upgrade --plan` touching nothing, an immediate
+directory check after `uninstall`, and the `cli-v` tag prefix) surfaced no
+further defect.
+
 ## 0.8.1
 
 Issue [#35](https://github.com/macss-dev/modular_cli_sdk/issues/35).

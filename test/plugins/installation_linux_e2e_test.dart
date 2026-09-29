@@ -88,56 +88,11 @@ void main() {
     return archive;
   }
 
-  test('upgrade --plan looks up the release but never touches installDir', () async {
-    final installDir = Directory(p.join(tempRoot.path, 'install'))
-      ..createSync(recursive: true);
-
-    final command = UpgradeCommand(
-      UpgradeInput(installDir: installDir.path),
-      config: config(),
-      currentVersion: '1.0.0',
-      releaseSource: FakeReleaseSource(
-        releases: [
-          CliRelease(
-            tagName: 'v2.0.0',
-            assets: [
-              CliReleaseAsset(
-                name: 'cx-linux.tar.gz',
-                downloadUrl: 'https://example.invalid/cx-linux.tar.gz',
-              ),
-            ],
-          ),
-        ],
-      ),
-      platformOps: LinuxPlatformOps(
-        binaryName: 'cx',
-        assetName: 'cx-linux.tar.gz',
-      ),
-      runningExecutable: p.join(installDir.path, 'bin', 'cx_running_stub'),
-    );
-
-    final previews = await previewCommand(command);
-
-    expect(previews, isNotEmpty);
-    expect(previews.first.detail, contains('cx-linux.tar.gz'));
-    // A plan is a description, not an action: nothing was extracted.
-    expect(Directory(p.join(installDir.path, 'bin')).existsSync(), isFalse);
-  });
-
   test(
-    'upgrade --apply downloads through the injected downloader (no '
-    'network), extracts with the real tar-based LinuxPlatformOps, and '
-    'leaves the installed binary executable',
+    'upgrade --plan looks up the release but never touches installDir',
     () async {
       final installDir = Directory(p.join(tempRoot.path, 'install'))
         ..createSync(recursive: true);
-      final archive = await buildFixtureArchive(tempRoot, '2.0.0');
-
-      final requested = <String>[];
-      Future<void> copyFixture(String url, String destination) async {
-        requested.add(url);
-        await archive.copy(destination);
-      }
 
       final command = UpgradeCommand(
         UpgradeInput(installDir: installDir.path),
@@ -160,118 +115,153 @@ void main() {
           binaryName: 'cx',
           assetName: 'cx-linux.tar.gz',
         ),
-        downloader: copyFixture,
         runningExecutable: p.join(installDir.path, 'bin', 'cx_running_stub'),
       );
 
-      final output = await applyCommand(command);
+      final previews = await previewCommand(command);
 
-      expect(output.upgraded, isTrue);
-      expect(output.newVersion, '2.0.0');
-      expect(requested, ['https://example.invalid/cx-linux.tar.gz']);
-
-      final installedBinary = File(p.join(installDir.path, 'bin', 'cx'));
-      expect(installedBinary.existsSync(), isTrue);
-      // Owner execute bit (0o100 = 0x40): preserved by tar itself, not set by
-      // any code in LinuxPlatformOps, which never chmods anything. This pins
-      // that the real extraction path in fact produces a binary that can be
-      // run, which is what "verifyAfterInstall" (default true, exercised
-      // implicitly: this command would already have failed above if the
-      // freshly extracted binary could not be launched) actually depends on.
-      final mode = installedBinary.statSync().mode;
-      expect(
-        mode & 0x40,
-        isNot(0),
-        reason: 'installed binary is not executable',
-      );
+      expect(previews, isNotEmpty);
+      expect(previews.first.detail, contains('cx-linux.tar.gz'));
+      // A plan is a description, not an action: nothing was extracted.
+      expect(Directory(p.join(installDir.path, 'bin')).existsSync(), isFalse);
     },
   );
 
-  test(
-    'uninstall deletes the install directory synchronously: gone by the '
-    'time the command finishes, not eventually (issue #40, defect 1, at '
-    'the full command level)',
-    () async {
-      final installDir = Directory(p.join(tempRoot.path, 'install'))
-        ..createSync(recursive: true);
-      for (var i = 0; i < 4000; i++) {
-        File(p.join(installDir.path, 'file_$i.txt')).writeAsStringSync('x');
-      }
+  test('upgrade --apply downloads through the injected downloader (no '
+      'network), extracts with the real tar-based LinuxPlatformOps, and '
+      'leaves the installed binary executable', () async {
+    final installDir = Directory(p.join(tempRoot.path, 'install'))
+      ..createSync(recursive: true);
+    final archive = await buildFixtureArchive(tempRoot, '2.0.0');
 
-      final command = UninstallCommand(
-        UninstallInput(installDir: installDir.path),
-        config: config(),
-        platformOps: LinuxPlatformOps(
-          binaryName: 'cx',
-          assetName: 'cx-linux.tar.gz',
-        ),
-      );
+    final requested = <String>[];
+    Future<void> copyFixture(String url, String destination) async {
+      requested.add(url);
+      await archive.copy(destination);
+    }
 
-      await applyCommand(command);
+    final command = UpgradeCommand(
+      UpgradeInput(installDir: installDir.path),
+      config: config(),
+      currentVersion: '1.0.0',
+      releaseSource: FakeReleaseSource(
+        releases: [
+          CliRelease(
+            tagName: 'v2.0.0',
+            assets: [
+              CliReleaseAsset(
+                name: 'cx-linux.tar.gz',
+                downloadUrl: 'https://example.invalid/cx-linux.tar.gz',
+              ),
+            ],
+          ),
+        ],
+      ),
+      platformOps: LinuxPlatformOps(
+        binaryName: 'cx',
+        assetName: 'cx-linux.tar.gz',
+      ),
+      downloader: copyFixture,
+      runningExecutable: p.join(installDir.path, 'bin', 'cx_running_stub'),
+    );
 
-      // No polling: the exact "immediate directory check" the issue asks
-      // for, now at the full uninstall-command level rather than just
-      // scheduleDeletion in isolation.
-      expect(installDir.existsSync(), isFalse);
-    },
-  );
+    final output = await applyCommand(command);
 
-  test(
-    "the cli-v tag prefix picks this CLI's own release, skipping an "
-    'application tag that shares the same repository',
-    () async {
-      final installDir = Directory(p.join(tempRoot.path, 'install'))
-        ..createSync(recursive: true);
-      final archive = await buildFixtureArchive(tempRoot, '1.5.0');
+    expect(output.upgraded, isTrue);
+    expect(output.newVersion, '2.0.0');
+    expect(requested, ['https://example.invalid/cx-linux.tar.gz']);
 
-      final requested = <String>[];
-      Future<void> copyFixture(String url, String destination) async {
-        requested.add(url);
-        await archive.copy(destination);
-      }
+    final installedBinary = File(p.join(installDir.path, 'bin', 'cx'));
+    expect(installedBinary.existsSync(), isTrue);
+    // Owner execute bit (0o100 = 0x40): preserved by tar itself, not set by
+    // any code in LinuxPlatformOps, which never chmods anything. This pins
+    // that the real extraction path in fact produces a binary that can be
+    // run, which is what "verifyAfterInstall" (default true, exercised
+    // implicitly: this command would already have failed above if the
+    // freshly extracted binary could not be launched) actually depends on.
+    final mode = installedBinary.statSync().mode;
+    expect(mode & 0x40, isNot(0), reason: 'installed binary is not executable');
+  });
 
-      final command = UpgradeCommand(
-        UpgradeInput(installDir: installDir.path),
-        config: config(tagPrefix: 'cli-v'),
-        currentVersion: '1.0.0',
-        releaseSource: FakeReleaseSource(
-          releases: [
-            // The application's own tag in the same repository: no prefix
-            // match, not a candidate, and its (much higher) version must
-            // not win.
-            CliRelease(
-              tagName: 'v9.0.0',
-              assets: [
-                CliReleaseAsset(
-                  name: 'cx-linux.tar.gz',
-                  downloadUrl: 'https://example.invalid/app.tar.gz',
-                ),
-              ],
-            ),
-            CliRelease(
-              tagName: 'cli-v1.5.0',
-              assets: [
-                CliReleaseAsset(
-                  name: 'cx-linux.tar.gz',
-                  downloadUrl: 'https://example.invalid/cli.tar.gz',
-                ),
-              ],
-            ),
-          ],
-        ),
-        platformOps: LinuxPlatformOps(
-          binaryName: 'cx',
-          assetName: 'cx-linux.tar.gz',
-        ),
-        downloader: copyFixture,
-        runningExecutable: p.join(installDir.path, 'bin', 'cx_running_stub'),
-      );
+  test('uninstall deletes the install directory synchronously: gone by the '
+      'time the command finishes, not eventually (issue #40, defect 1, at '
+      'the full command level)', () async {
+    final installDir = Directory(p.join(tempRoot.path, 'install'))
+      ..createSync(recursive: true);
+    for (var i = 0; i < 4000; i++) {
+      File(p.join(installDir.path, 'file_$i.txt')).writeAsStringSync('x');
+    }
 
-      final output = await applyCommand(command);
+    final command = UninstallCommand(
+      UninstallInput(installDir: installDir.path),
+      config: config(),
+      platformOps: LinuxPlatformOps(
+        binaryName: 'cx',
+        assetName: 'cx-linux.tar.gz',
+      ),
+    );
 
-      expect(output.upgraded, isTrue);
-      expect(output.newVersion, '1.5.0');
-      expect(requested, ['https://example.invalid/cli.tar.gz']);
-    },
-  );
+    await applyCommand(command);
+
+    // No polling: the exact "immediate directory check" the issue asks
+    // for, now at the full uninstall-command level rather than just
+    // scheduleDeletion in isolation.
+    expect(installDir.existsSync(), isFalse);
+  });
+
+  test("the cli-v tag prefix picks this CLI's own release, skipping an "
+      'application tag that shares the same repository', () async {
+    final installDir = Directory(p.join(tempRoot.path, 'install'))
+      ..createSync(recursive: true);
+    final archive = await buildFixtureArchive(tempRoot, '1.5.0');
+
+    final requested = <String>[];
+    Future<void> copyFixture(String url, String destination) async {
+      requested.add(url);
+      await archive.copy(destination);
+    }
+
+    final command = UpgradeCommand(
+      UpgradeInput(installDir: installDir.path),
+      config: config(tagPrefix: 'cli-v'),
+      currentVersion: '1.0.0',
+      releaseSource: FakeReleaseSource(
+        releases: [
+          // The application's own tag in the same repository: no prefix
+          // match, not a candidate, and its (much higher) version must
+          // not win.
+          CliRelease(
+            tagName: 'v9.0.0',
+            assets: [
+              CliReleaseAsset(
+                name: 'cx-linux.tar.gz',
+                downloadUrl: 'https://example.invalid/app.tar.gz',
+              ),
+            ],
+          ),
+          CliRelease(
+            tagName: 'cli-v1.5.0',
+            assets: [
+              CliReleaseAsset(
+                name: 'cx-linux.tar.gz',
+                downloadUrl: 'https://example.invalid/cli.tar.gz',
+              ),
+            ],
+          ),
+        ],
+      ),
+      platformOps: LinuxPlatformOps(
+        binaryName: 'cx',
+        assetName: 'cx-linux.tar.gz',
+      ),
+      downloader: copyFixture,
+      runningExecutable: p.join(installDir.path, 'bin', 'cx_running_stub'),
+    );
+
+    final output = await applyCommand(command);
+
+    expect(output.upgraded, isTrue);
+    expect(output.newVersion, '1.5.0');
+    expect(requested, ['https://example.invalid/cli.tar.gz']);
+  });
 }
