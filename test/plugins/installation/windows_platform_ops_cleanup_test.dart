@@ -77,25 +77,16 @@ void main() {
         currentExecutable: currentExecutable,
       );
 
-  Future<void> deletesOnceLockClears(int lockMs) async {
-    final installDir = Directory(p.join(tempRoot.path, 'install'))
-      ..createSync(recursive: true);
-    final fakeExe = File(p.join(installDir.path, 'cx.exe'))
-      ..writeAsStringSync('fake');
-    final lockedFile = File(p.join(installDir.path, 'locked.bin'))
-      ..writeAsStringSync('locked');
-
-    // Holds an exclusive (no-share) handle on lockedFile for 3s: longer
-    // than the old script's single 2s wait, and longer than 40 attempts
-    // whose "250 ms" wait does not actually wait, but comfortably inside
-    // the real ~10s retry budget. The locker prints `locked` only once the
-    // handle is open, and the test waits for that line, so the deletion
-    // is guaranteed to start against a file that is really locked.
+  /// Holds an exclusive (no-share) handle on [file] for [lockMs] in a
+  /// separate PowerShell process. The locker prints `locked` only once the
+  /// handle is open, and this waits for that line, so a deletion started
+  /// afterwards is guaranteed to meet a file that is really locked.
+  Future<Process> lockFile(File file, int lockMs) async {
     final locker = await Process.start('powershell', [
       '-NoProfile',
       '-Command',
       '\$fs = [System.IO.File]::Open('
-          "'${lockedFile.path}', 'Open', 'Read', 'None'"
+          "'${file.path}', 'Open', 'Read', 'None'"
           '); '
           "Write-Output 'locked'; "
           'Start-Sleep -Milliseconds $lockMs; '
@@ -106,10 +97,25 @@ void main() {
         .transform(const LineSplitter());
     await lines.firstWhere((line) => line.trim() == 'locked');
     expect(
-      () => lockedFile.openSync(mode: FileMode.append).closeSync(),
+      () => file.openSync(mode: FileMode.append).closeSync(),
       throwsA(isA<FileSystemException>()),
       reason: 'the locker must really hold the file before deletion starts',
     );
+    return locker;
+  }
+
+  test('retries past the old 2 s budget and still deletes once the lock '
+      'clears', () async {
+    final installDir = Directory(p.join(tempRoot.path, 'install'))
+      ..createSync(recursive: true);
+    final fakeExe = File(p.join(installDir.path, 'cx.exe'))
+      ..writeAsStringSync('fake');
+    final lockedFile = File(p.join(installDir.path, 'locked.bin'))
+      ..writeAsStringSync('locked');
+
+    // 3 s: longer than the old script's single 2 s wait, comfortably
+    // inside the ~10 s retry budget.
+    final locker = await lockFile(lockedFile, 3000);
 
     await ops(
       currentExecutable: fakeExe.path,
@@ -117,24 +123,39 @@ void main() {
 
     await _waitUntilGone(installDir);
     expect(await locker.exitCode, 0);
-  }
+  });
 
-  test(
-    'retries past the old 2 s budget and still deletes once the lock '
-    'clears',
-    () => deletesOnceLockClears(3000),
-  );
+  // `ping -n 1 -w 250 127.0.0.1` does not wait 250 ms: `-w` is a reply
+  // timeout and localhost replies at once, so 40 of them cost only process
+  // startup (under 1 s from a console, 7.7 to 9.5 s measured from a
+  // detached process). With the directory locked for longer than the
+  // whole budget, the script must keep retrying for at least 40 x 250 ms
+  // of real sleep before it gives up and deletes itself.
+  test('waits a real 250 ms between attempts: a directory that stays '
+      'locked keeps the script retrying for at least 10 s', () async {
+    final installDir = Directory(p.join(tempRoot.path, 'install'))
+      ..createSync(recursive: true);
+    final fakeExe = File(p.join(installDir.path, 'cx.exe'))
+      ..writeAsStringSync('fake');
+    final lockedFile = File(p.join(installDir.path, 'locked.bin'))
+      ..writeAsStringSync('locked');
+    final script = File(
+      p.join(Directory.systemTemp.path, 'cx.exe_cleanup.cmd'),
+    );
 
-  // 9 s: past what 40 back-to-back `ping -n 1 -w 250 127.0.0.1` calls
-  // actually wait (`-w` is a reply timeout, and localhost replies at once,
-  // so each call costs only its own startup: under a second in total from
-  // a console, about 7.7 s from a detached process), but inside a real
-  // 40 x 250 ms = 10 s of sleeping. Pins that the wait between attempts
-  // is a real sleep, not a side effect of process startup cost.
-  test(
-    'waits a real 250 ms between attempts, about 10 s in total',
-    () => deletesOnceLockClears(9000),
-  );
+    final locker = await lockFile(lockedFile, 16000);
+
+    final clock = Stopwatch()..start();
+    await ops(
+      currentExecutable: fakeExe.path,
+    ).scheduleDeletion(installDir.path);
+    await _waitUntilGone(script, timeout: const Duration(seconds: 15));
+    clock.stop();
+
+    expect(clock.elapsed, greaterThanOrEqualTo(const Duration(seconds: 10)));
+    expect(installDir.existsSync(), isTrue);
+    expect(await locker.exitCode, 0);
+  });
 
   test('the cleanup script deletes itself once it is done', () async {
     final installDir = Directory(p.join(tempRoot.path, 'install'))
