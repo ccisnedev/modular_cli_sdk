@@ -585,6 +585,11 @@ class ModularCli {
   ///
   /// Pass custom [stdout] / [stderr] sinks for testing.
   ///
+  /// Options may follow operands (GNU permutation) unless the environment
+  /// holds `POSIXLY_CORRECT`, which restores strict POSIX order: cli_router
+  /// makes that choice from [environment], which defaults to the real process
+  /// environment. Pass a map explicitly to test either mode.
+  ///
   /// The whole dispatch runs inside a fresh [InvocationOutcome], reachable
   /// only through the [Zone] [runWithInvocationOutcome] establishes for
   /// this one call (round-6 review findings 1 through 3): no SDK path
@@ -600,7 +605,12 @@ class ModularCli {
   /// recorded last (see [use]'s own doc comment for why "last recorded" is
   /// exactly "outermost thrown"), exactly once, in the mode ([--json] or
   /// text) the request that recorded it was running under.
-  Future<int> run(List<String> args, {io.IOSink? stdout, io.IOSink? stderr}) {
+  Future<int> run(
+    List<String> args, {
+    io.IOSink? stdout,
+    io.IOSink? stderr,
+    Map<String, String>? environment,
+  }) {
     return runWithInvocationOutcome(() async {
       // Plugins are built first, so a `help` a plugin registers counts as
       // the CLI's own when [_resolveHelpProvenance] classifies it below.
@@ -667,6 +677,7 @@ class ModularCli {
         onReject: (rejection) => _handleRejection(rejection, out),
         stdout: out,
         stderr: err,
+        environment: environment,
       );
 
       if (exitCode != ExitCode.ok) {

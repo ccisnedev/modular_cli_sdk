@@ -214,7 +214,8 @@ class _TagInput extends Input {
           'target-default',
           reason: "the target's own default",
         ),
-        description: 'A tag, defaulted differently by the target and a '
+        description:
+            'A tag, defaulted differently by the target and a '
             'shortcut to it',
       ),
     ],
@@ -278,7 +279,8 @@ ModularCli _buildTagShortcutCli() {
             'shortcut-default',
             reason: "the shortcut's own default",
           ),
-          description: 'The same tag, defaulted differently by the '
+          description:
+              'The same tag, defaulted differently by the '
               'shortcut',
         ),
       ],
@@ -560,11 +562,17 @@ ModularCli _buildRejectionMatrixCli() {
 
 Future<({int exitCode, String stdout, String stderr})> _runWith(
   ModularCli cli,
-  List<String> args,
-) async {
+  List<String> args, {
+  Map<String, String>? environment,
+}) async {
   final out = _TestSink();
   final err = _TestSink();
-  final code = await cli.run(args, stdout: out, stderr: err);
+  final code = await cli.run(
+    args,
+    stdout: out,
+    stderr: err,
+    environment: environment,
+  );
   return (exitCode: code, stdout: out.toString(), stderr: err.toString());
 }
 
@@ -642,17 +650,14 @@ void main() {
     // (built by ModuleBuilder.shortcut, never the target's) declares
     // 'shortcut-default'. Seeing the shortcut's own default in the output
     // is the only thing that can prove the shortcut's own contract ran.
-    test(
-      'a bare invocation the router accepts identically under either '
-      "contract still runs under the shortcut's own contract: its own "
-      "declared default reaches the handler, not the target's",
-      () async {
-        final result = await _runWith(_buildTagShortcutCli(), ['lbl']);
+    test('a bare invocation the router accepts identically under either '
+        "contract still runs under the shortcut's own contract: its own "
+        "declared default reaches the handler, not the target's", () async {
+      final result = await _runWith(_buildTagShortcutCli(), ['lbl']);
 
-        expect(result.exitCode, equals(ExitCode.ok));
-        expect(result.stdout, contains('tag: shortcut-default'));
-      },
-    );
+      expect(result.exitCode, equals(ExitCode.ok));
+      expect(result.stdout, contains('tag: shortcut-default'));
+    });
 
     test(
       'globals: false rejects a global option the target itself accepts',
@@ -682,20 +687,23 @@ void main() {
     // query() and command() require it: no undeclared, defaulted contract.
     // `program` is still derived from the target and rebound `required` by
     // the route pattern.
-    test('the exact issue #27 example runs, contract named explicitly', () async {
-      final cli = _buildConstraintCli();
-      cli.shortcut(
-        '<program>',
-        target: 'eval rpn',
-        globals: false,
-        contract: CliContract.none,
-      );
+    test(
+      'the exact issue #27 example runs, contract named explicitly',
+      () async {
+        final cli = _buildConstraintCli();
+        cli.shortcut(
+          '<program>',
+          target: 'eval rpn',
+          globals: false,
+          contract: CliContract.none,
+        );
 
-      final result = await _runWith(cli, ['1 2 +']);
+        final result = await _runWith(cli, ['1 2 +']);
 
-      expect(result.exitCode, equals(ExitCode.ok));
-      expect(result.stdout, contains('source: program'));
-    });
+        expect(result.exitCode, equals(ExitCode.ok));
+        expect(result.stdout, contains('source: program'));
+      },
+    );
   });
 
   // ── 3. cli.module('', ...) ────────────────────────────────────────────────
@@ -1119,101 +1127,93 @@ void main() {
   // immediately. Every other case places --json right after the full
   // route-word sequence (`math add`, `show`) once resolution has already
   // committed to that route, which is always a safe position.
-  group(
-    'finding 7 (second review): every rejection id under --json',
-    () {
-      final cases = <String, ({List<String> args, String id, int exitCode})>{
-        'unknown-command': (
-          args: ['--json', 'bogus'],
-          id: 'unknown-command',
-          exitCode: ExitCode.invalidUsage,
-        ),
-        'incomplete-command': (
-          args: ['math', '--json'],
-          id: 'incomplete-command',
-          exitCode: ExitCode.invalidUsage,
-        ),
-        'missing-argument': (
-          args: ['show', '--json'],
-          id: 'missing-argument',
-          exitCode: ExitCode.invalidUsage,
-        ),
-        'extra-argument': (
-          args: ['show', '--json', '1', '2'],
-          id: 'extra-argument',
-          exitCode: ExitCode.invalidUsage,
-        ),
-        'unknown-option': (
-          args: ['math', 'add', '--json', '--nope'],
-          id: 'unknown-option',
-          exitCode: ExitCode.validationFailed,
-        ),
-        'misplaced-option': (
-          args: ['show', '--json', '1', '--verbose'],
-          id: 'misplaced-option',
-          exitCode: ExitCode.validationFailed,
-        ),
-        'missing-required-option': (
-          args: ['math', 'add', '--json', '--b', '3'],
-          id: 'missing-required-option',
-          exitCode: ExitCode.validationFailed,
-        ),
-        'repeated-option': (
-          args: [
-            'math',
-            'add',
-            '--json',
-            '--a',
-            '1',
-            '--a',
-            '2',
-            '--b',
-            '3',
-          ],
-          id: 'repeated-option',
-          exitCode: ExitCode.validationFailed,
-        ),
-        'invalid-short-option': (
-          args: ['math', 'add', '--json', '-xy'],
-          id: 'invalid-short-option',
-          exitCode: ExitCode.validationFailed,
-        ),
-        'missing-value': (
-          args: ['math', 'add', '--json', '--a'],
-          id: 'missing-value',
-          exitCode: ExitCode.validationFailed,
-        ),
-        'unexpected-value': (
-          args: ['show', '--json', '--verbose=yes', '1'],
-          id: 'unexpected-value',
-          exitCode: ExitCode.validationFailed,
-        ),
-        'validation-failed': (
-          args: ['math', 'add', '--json', '--a', 'nope', '--b', '3'],
-          id: 'validation-failed',
-          exitCode: ExitCode.validationFailed,
-        ),
-      };
+  group('finding 7 (second review): every rejection id under --json', () {
+    final cases = <String, ({List<String> args, String id, int exitCode})>{
+      'unknown-command': (
+        args: ['--json', 'bogus'],
+        id: 'unknown-command',
+        exitCode: ExitCode.invalidUsage,
+      ),
+      'incomplete-command': (
+        args: ['math', '--json'],
+        id: 'incomplete-command',
+        exitCode: ExitCode.invalidUsage,
+      ),
+      'missing-argument': (
+        args: ['show', '--json'],
+        id: 'missing-argument',
+        exitCode: ExitCode.invalidUsage,
+      ),
+      'extra-argument': (
+        args: ['show', '--json', '1', '2'],
+        id: 'extra-argument',
+        exitCode: ExitCode.invalidUsage,
+      ),
+      'unknown-option': (
+        args: ['math', 'add', '--json', '--nope'],
+        id: 'unknown-option',
+        exitCode: ExitCode.validationFailed,
+      ),
+      'misplaced-option': (
+        args: ['show', '--json', '1', '--verbose'],
+        id: 'misplaced-option',
+        exitCode: ExitCode.validationFailed,
+      ),
+      'missing-required-option': (
+        args: ['math', 'add', '--json', '--b', '3'],
+        id: 'missing-required-option',
+        exitCode: ExitCode.validationFailed,
+      ),
+      'repeated-option': (
+        args: ['math', 'add', '--json', '--a', '1', '--a', '2', '--b', '3'],
+        id: 'repeated-option',
+        exitCode: ExitCode.validationFailed,
+      ),
+      'invalid-short-option': (
+        args: ['math', 'add', '--json', '-xy'],
+        id: 'invalid-short-option',
+        exitCode: ExitCode.validationFailed,
+      ),
+      'missing-value': (
+        args: ['math', 'add', '--json', '--a'],
+        id: 'missing-value',
+        exitCode: ExitCode.validationFailed,
+      ),
+      'unexpected-value': (
+        args: ['show', '--json', '--verbose=yes', '1'],
+        id: 'unexpected-value',
+        exitCode: ExitCode.validationFailed,
+      ),
+      'validation-failed': (
+        args: ['math', 'add', '--json', '--a', 'nope', '--b', '3'],
+        id: 'validation-failed',
+        exitCode: ExitCode.validationFailed,
+      ),
+    };
 
-      for (final entry in cases.entries) {
-        test(entry.key, () async {
-          final expected = entry.value;
-          final result = await _runWith(
-            _buildRejectionMatrixCli(),
-            expected.args,
-          );
+    for (final entry in cases.entries) {
+      test(entry.key, () async {
+        final expected = entry.value;
+        // cli_router 0.2.1 only rejects an option after an operand in
+        // strict POSIX mode; every other kind is the same in both modes.
+        final result = await _runWith(
+          _buildRejectionMatrixCli(),
+          expected.args,
+          environment: entry.key == 'misplaced-option'
+              ? const {'POSIXLY_CORRECT': '1'}
+              : const {},
+        );
 
-          expect(result.exitCode, equals(expected.exitCode));
-          final envelope = jsonDecode(result.stderr) as Map<String, dynamic>;
-          final error = envelope['error'] as Map<String, dynamic>;
-          expect(error['id'], equals(expected.id));
-          expect(error['exitCode'], equals(expected.exitCode));
-          expect(error['message'], isA<String>());
-          expect((error['message'] as String).isNotEmpty, isTrue);
-        });
-      }
-    },
-  );
+        expect(result.exitCode, equals(expected.exitCode));
+        final envelope = jsonDecode(result.stderr) as Map<String, dynamic>;
+        final error = envelope['error'] as Map<String, dynamic>;
+        expect(error['id'], equals(expected.id));
+        expect(error['exitCode'], equals(expected.exitCode));
+        expect(error['message'], isA<String>());
+        expect((error['message'] as String).isNotEmpty, isTrue);
+      });
+    }
+  });
 }
 
 class _TestSink implements IOSink {
