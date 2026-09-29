@@ -506,7 +506,7 @@ InstallationPlugin(
   config: CliInstallationConfig(
     repository: 'you/mycli',       // owner/repo on GitHub
     executable: 'mycli',           // the binary's name on PATH
-    alias: 'mc',                   // a second name expected to resolve the same way
+    alias: 'mc',                   // optional: a second name expected to resolve the same way
     assets: {
       'linux': 'mycli-linux',
       'windows': 'mycli-windows.exe',
@@ -532,6 +532,14 @@ InstallationPlugin(
   ),
 )
 ```
+
+`alias` is optional; a CLI with no second name to resolve can leave it out,
+and only the doctor `release` check's upgrade hint changes (it names
+`executable` instead). `PlatformOps` is resolved lazily: `upgrade` and
+`uninstall` on a platform with no configured asset fail with a
+`platform-not-supported` `CommandException` when the command actually runs,
+not at plugin construction, and any other command keeps working normally on
+such a platform.
 
 **What carried over unchanged.** The install directory is still derived from
 `Platform.resolvedExecutable`, never looked up on `PATH`: an upgrade always

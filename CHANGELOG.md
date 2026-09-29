@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.8.1
+
+Issue [#35](https://github.com/macss-dev/modular_cli_sdk/issues/35), items 1
+and 2. Item 3 (raising the minimum `cli_router` version) is deferred to a
+follow-up commit on the same pull request once `cli_router` 0.2.1 is
+published.
+
+### Changed
+
+- **`CliInstallationConfig.alias` is now optional.** Neither `upgrade` nor
+  `uninstall` ever created or removed the alias shim to begin with (that
+  remains each CLI's own install script's job, see
+  [`docs/installation-parity.md`](docs/installation-parity.md)), so a CLI
+  with no alias can now omit it. The only place it was referenced, the
+  doctor `release` check's upgrade hint, names `executable` instead when no
+  alias is configured
+- **`PlatformOps` is resolved lazily.** `InstallationPlugin`,
+  `UpgradeCommand` and `UninstallCommand` no longer call
+  `PlatformOps.current()` at construction; it is resolved only when
+  `upgrade` or `uninstall` actually runs. On an OS with no configured release
+  asset, both commands now fail with a `CommandException` (id
+  `platform-not-supported`, exit code `configError`), reported through the
+  SDK's ordinary error envelope, instead of an uncaught `UnsupportedError`.
+  Injected `PlatformOps` (as tests do) is unaffected and still bypasses this
+  resolution entirely
+
 ## 0.8.0
 
 `InstallationPlugin` shipped in 0.7.0 as a new design, built for this SDK
