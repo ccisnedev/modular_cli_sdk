@@ -70,7 +70,19 @@ class LinuxPlatformOps implements PlatformOps {
 
   @override
   Future<void> scheduleDeletion(String dir) async {
-    // The running binary is not locked on Linux, so delete directly.
-    await Process.start('rm', ['-rf', dir], mode: ProcessStartMode.detached);
+    // The running binary is not locked on Linux (unlike Windows, which
+    // needs the deferred, detached dance in WindowsPlatformOps), so this
+    // deletes synchronously: uninstall must not report success, or a
+    // swallowed failure, before the directory is actually gone (issue #40).
+    // A previous version spawned a detached `rm -rf` and returned as soon
+    // as it started, which raced `uninstall`'s own success report and lost
+    // any real deletion error (a permission problem, for example) inside
+    // the detached process.
+    try {
+      await Directory(dir).delete(recursive: true);
+    } on PathNotFoundException {
+      // Nothing to remove. Matches the previous `rm -rf` behavior, which
+      // never failed on a directory that was already gone.
+    }
   }
 }

@@ -29,9 +29,7 @@ void main() {
   late Directory tempRoot;
 
   setUp(() {
-    tempRoot = Directory.systemTemp.createTempSync(
-      'mcs_linux_deletion_test_',
-    );
+    tempRoot = Directory.systemTemp.createTempSync('mcs_linux_deletion_test_');
   });
 
   tearDown(() {
