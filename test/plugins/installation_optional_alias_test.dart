@@ -77,27 +77,15 @@ void main() {
 
     test('no alias shim call is made: PlatformOps exposes none for it, '
         'with or without an alias configured', () async {
-      final withAlias = FakePlatformOps();
-      final withoutAlias = FakePlatformOps();
+      final withAlias = await _successfulUpgrade(alias: 'calculatrix');
+      final withoutAlias = await _successfulUpgrade();
 
-      await applyCommand(
-        _upgradeCommand(
-          releases: [_release('v9.9.9', asset: _platformAsset)],
-          platformOps: withAlias,
-          alias: 'calculatrix',
-        ),
-      );
-      await applyCommand(
-        _upgradeCommand(
-          releases: [_release('v9.9.9', asset: _platformAsset)],
-          platformOps: withoutAlias,
-        ),
-      );
-
-      // Same shape of calls either way: nothing alias-specific was ever
-      // called, so an absent alias changes nothing about what PlatformOps is
-      // asked to do.
-      expect(withoutAlias.calls.map(_callName), withAlias.calls.map(_callName));
+      // Both upgrades completed, and PlatformOps was asked for the same
+      // sequence of calls either way: nothing alias-specific was ever
+      // called, so an absent alias changes nothing about what it is asked to
+      // do.
+      expect(withAlias, isNotEmpty);
+      expect(withoutAlias.map(_callName), withAlias.map(_callName));
     });
   });
 
@@ -127,21 +115,11 @@ void main() {
     });
 
     test('no alias shim call is made, with or without an alias', () async {
-      final withAlias = FakePlatformOps();
-      final withoutAlias = FakePlatformOps();
+      final withAlias = await _successfulUninstall(alias: 'calculatrix');
+      final withoutAlias = await _successfulUninstall();
 
-      await applyCommand(
-        _uninstallCommand(
-          installDir: '/fake/dir',
-          platformOps: withAlias,
-          alias: 'calculatrix',
-        ),
-      );
-      await applyCommand(
-        _uninstallCommand(installDir: '/fake/dir', platformOps: withoutAlias),
-      );
-
-      expect(withoutAlias.calls.map(_callName), withAlias.calls.map(_callName));
+      expect(withAlias, contains(startsWith('scheduleDeletion(')));
+      expect(withoutAlias.map(_callName), withAlias.map(_callName));
     });
   });
 
@@ -178,6 +156,57 @@ void main() {
 }
 
 String _callName(String call) => call.split('(').first;
+
+/// Runs an upgrade that completes (a fake download, a real temporary install
+/// directory and running executable), asserts it upgraded, and returns the
+/// PlatformOps calls it made.
+Future<List<String>> _successfulUpgrade({String? alias}) async {
+  final downloader = FakeDownloader();
+  final ops = FakePlatformOps();
+  final installDir = Directory.systemTemp.createTempSync('sdk_upgrade_shim_');
+  addTearDown(() {
+    if (installDir.existsSync()) installDir.deleteSync(recursive: true);
+  });
+  final binary = File(p.join(installDir.path, 'bin', 'cx.exe'))
+    ..createSync(recursive: true)
+    ..writeAsStringSync('outgoing');
+
+  final output = await applyCommand(
+    _upgradeCommand(
+      releases: [_release('v9.9.9', asset: _platformAsset)],
+      downloader: downloader,
+      platformOps: ops,
+      installDir: installDir.path,
+      runningExecutable: binary.path,
+      alias: alias,
+    ),
+  );
+
+  expect(output.upgraded, isTrue);
+  expect(downloader.requested, isNotEmpty);
+  return ops.calls;
+}
+
+/// Runs an uninstall against a real temporary directory and returns the
+/// PlatformOps calls it made.
+Future<List<String>> _successfulUninstall({String? alias}) async {
+  final ops = FakePlatformOps();
+  final installDir = Directory.systemTemp.createTempSync('sdk_uninstall_shim_');
+  addTearDown(() {
+    if (installDir.existsSync()) installDir.deleteSync(recursive: true);
+  });
+
+  await applyCommand(
+    _uninstallCommand(
+      installDir: installDir.path,
+      platformOps: ops,
+      alias: alias,
+    ),
+  );
+
+  expect(ops.calls, contains('scheduleDeletion(${installDir.path})'));
+  return ops.calls;
+}
 
 CliRelease _release(
   String tag, {
