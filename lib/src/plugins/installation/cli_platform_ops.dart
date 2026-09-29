@@ -60,8 +60,9 @@ abstract class PlatformOps {
   /// Schedule deletion of a directory after the current process exits.
   ///
   /// Windows: rename the running exe, spawn a detached `cmd /c` script that
-  /// waits briefly then `rmdir /s /q`s the directory. Linux/macOS: spawn a
-  /// detached `rm -rf`.
+  /// retries the deletion up to 40 times, 250 ms apart, so it succeeds once
+  /// this process has exited. Linux/macOS: delete synchronously and throw on
+  /// a real failure; a directory that is already gone is not an error.
   Future<void> scheduleDeletion(String dir);
 
   /// Returns the implementation for the current OS, configured with
