@@ -72,20 +72,53 @@ class CliReleaseLookupFailure implements Exception {
 /// latest and can belong to a different product tagged in the same
 /// repository.
 class HttpCliReleaseSource implements CliReleaseSource {
-  HttpCliReleaseSource({http.Client? client})
-    : _client = client ?? http.Client();
+  /// [client], when given, belongs to the caller: the source uses it for
+  /// every lookup and never closes it. Otherwise each lookup creates its own
+  /// client through [newClient] (`http.Client.new` by default) and closes it
+  /// when the lookup returns or fails, so no keep-alive connection is left
+  /// to hold the process open for `HttpClient.idleTimeout` after a command
+  /// has finished (issue #44).
+  HttpCliReleaseSource({http.Client? client, http.Client Function()? newClient})
+    : _injectedClient = client,
+      _newClient = newClient ?? http.Client.new;
 
-  final http.Client _client;
+  final http.Client? _injectedClient;
+  final http.Client Function() _newClient;
+
+  /// Runs [lookup] with the injected client, or with a client of its own
+  /// that is closed once [lookup] completes, successfully or not.
+  Future<T> _withClient<T>(
+    Future<T> Function(http.Client client) lookup,
+  ) async {
+    final injected = _injectedClient;
+    if (injected != null) return lookup(injected);
+    final owned = _newClient();
+    try {
+      return await lookup(owned);
+    } finally {
+      owned.close();
+    }
+  }
 
   @override
-  Future<CliRelease?> latestRelease(String repository) async {
+  Future<CliRelease?> latestRelease(String repository) =>
+      _withClient((client) => _latestRelease(client, repository));
+
+  @override
+  Future<List<CliRelease>> listReleases(String repository) =>
+      _withClient((client) => _listReleases(client, repository));
+
+  Future<CliRelease?> _latestRelease(
+    http.Client client,
+    String repository,
+  ) async {
     final uri = Uri.https(
       'api.github.com',
       '/repos/$repository/releases/latest',
     );
     final http.Response response;
     try {
-      response = await _client.get(
+      response = await client.get(
         uri,
         headers: const {
           'Accept': 'application/vnd.github+json',
@@ -120,8 +153,10 @@ class HttpCliReleaseSource implements CliReleaseSource {
     return _releaseFromJson(body);
   }
 
-  @override
-  Future<List<CliRelease>> listReleases(String repository) async {
+  Future<List<CliRelease>> _listReleases(
+    http.Client client,
+    String repository,
+  ) async {
     final releases = <CliRelease>[];
     Uri? uri = Uri.https('api.github.com', '/repos/$repository/releases');
 
@@ -133,7 +168,7 @@ class HttpCliReleaseSource implements CliReleaseSource {
     while (uri != null) {
       final http.Response response;
       try {
-        response = await _client.get(
+        response = await client.get(
           uri,
           headers: const {
             'Accept': 'application/vnd.github+json',
