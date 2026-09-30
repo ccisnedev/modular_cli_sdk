@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.8.3
+
+Issue [#44](https://github.com/macss-dev/modular_cli_sdk/issues/44).
+
+### Fixed
+
+- **A release lookup no longer keeps the process alive for about 15 s.**
+  `HttpCliReleaseSource` created an `http.Client` it never closed, so after
+  `doctor`, `upgrade` or `uninstall` printed their result the keep-alive
+  connection to `api.github.com` held the Dart VM open until
+  `HttpClient.idleTimeout` expired. A client the source creates is now
+  closed when each lookup returns or fails. A client passed in with
+  `client:` still belongs to the caller and is never closed
+
+### Added
+
+- `HttpCliReleaseSource(newClient: ...)`: how the source creates the
+  client each lookup owns. Defaults to `http.Client.new`
+
 ## 0.8.2
 
 Issue [#40](https://github.com/macss-dev/modular_cli_sdk/issues/40).
