@@ -15,8 +15,8 @@ Issue [#47](https://github.com/macss-dev/modular_cli_sdk/issues/47).
   command catalog: the same text and the same `--json` shape as the `help`
   query, exit 0. Before, it printed the contract of the root (an empty
   banner, or the root shortcut's contract). A route's own `--help` is
-  unchanged, a CLI that registers a root route keeps that route's own
-  contract, and a badly typed supplied value still beats `--help`
+  unchanged, a registered root route still runs on a bare invocation but
+  its `--help` is the catalog too, and a badly typed supplied value still beats `--help`
 - **Root `--version` answers as `version`.** `x --version` prints exactly
   what the CLI's own `version` route prints, `--json` included. The SDK has
   no built-in `version` query, so a CLI without a `version` route or

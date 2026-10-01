@@ -169,11 +169,32 @@ void main() {
       expect(result.stdout, isNot(contains('Commands:')));
     });
 
-    test('a root route keeps answering its own --help', () async {
-      final result = await _run(_cli(rootRoute: true), ['--help']);
-      expect(result.exitCode, ExitCode.ok);
-      expect(result.stdout, contains('The dashboard'));
-      expect(result.stdout, isNot(contains('Commands:')));
+    test('a CLI with a root route still gets the catalog', () async {
+      final help = await _run(_cli(rootRoute: true), ['help']);
+      for (final args in [
+        ['--help'],
+        ['-h'],
+        ['--quiet', '--help'],
+      ]) {
+        final result = await _run(_cli(rootRoute: true), args);
+        expect(result.exitCode, ExitCode.ok, reason: '$args');
+        expect(result.stdout, contains('Commands:'), reason: '$args');
+        if (!args.contains('--quiet')) {
+          expect(result.stdout, help.stdout, reason: '$args');
+        }
+      }
+      final quiet = await _run(_cli(rootRoute: true), ['help', '--quiet']);
+      final quietHelp = await _run(_cli(rootRoute: true), ['-q', '--help']);
+      expect(quietHelp.stdout, quiet.stdout);
+
+      final helpJson = await _run(_cli(rootRoute: true), ['help', '--json']);
+      final flagJson = await _run(_cli(rootRoute: true), ['--help', '--json']);
+      expect(jsonDecode(flagJson.stdout), jsonDecode(helpJson.stdout));
+    });
+
+    test('a bare invocation still runs the root route', () async {
+      final result = await _run(_cli(rootRoute: true), []);
+      expect(result.stdout, contains('dashboard'));
     });
   });
 

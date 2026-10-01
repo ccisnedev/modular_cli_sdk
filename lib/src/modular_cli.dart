@@ -671,10 +671,7 @@ class ModularCli {
           _shortcutContractsByExactRoute.containsKey('');
       final dispatchArgs = args.isEmpty && !hasRootRegistration
           ? (helpProvenance == _HelpProvenance.builtin ? null : const ['help'])
-          : _rootAnswer(
-              args,
-              hasRootRegistration: _catalog.forRoute('') != null,
-            );
+          : _rootAnswer(args);
 
       if (dispatchArgs == null) {
         out.writeln(
@@ -723,14 +720,12 @@ class ModularCli {
   /// untouched. The companions are kept, after the query word (the router wants options after it), so
   /// `--json` selects the same output mode as `help --json`.
   ///
-  /// A root route answers its own `--help` (it is a real route with its
-  /// own contract). `--version` is answered only when the CLI has a
+  /// A registered root route (a banner, a dashboard) still runs on a bare
+  /// invocation, but `--help` there is the catalog too: that is what the
+  /// root offers. `--version` is answered only when the CLI has a
   /// `version` route or shortcut: the SDK has no built-in version query,
   /// and without one the option stays unknown, as before.
-  List<String> _rootAnswer(
-    List<String> args, {
-    required bool hasRootRegistration,
-  }) {
+  List<String> _rootAnswer(List<String> args) {
     final helpAsked = args.contains('--help') || args.contains('-h');
     final versionAsked = args.contains('--version');
     if (!helpAsked && !versionAsked) return args;
@@ -746,7 +741,7 @@ class ModularCli {
             .length;
     if (others != 0) return args;
     if (helpAsked) {
-      return hasRootRegistration ? args : ['help', ...companions];
+      return ['help', ...companions];
     }
     final hasVersion =
         _catalog.commands.any(_isNamedVersion) ||
