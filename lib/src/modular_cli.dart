@@ -98,6 +98,11 @@ class ModularCli {
   /// both [name] and [version] were given.
   final CliHostMetadata? hostMetadata;
 
+  /// This CLI's own name, read off [hostMetadata], or `null` when the
+  /// constructor was given none. Threaded into every [HelpRenderer] this
+  /// SDK builds, so a usage line can be prefixed with it (issue #38).
+  String? get _programName => hostMetadata?.name;
+
   static String _requireBoth(String? value, String? other, String label) {
     if (value == null) {
       throw ArgumentError(
@@ -392,6 +397,7 @@ class ModularCli {
     shortcutContractsByPrefix: _shortcutContractsByPrefix,
     approver: _approver,
     planSink: _planSink,
+    programName: _programName,
   );
 
   /// Add a shelf-like middleware to the root router.
@@ -668,7 +674,9 @@ class ModularCli {
           : args;
 
       if (dispatchArgs == null) {
-        out.writeln(HelpRenderer(_catalog).renderCatalog());
+        out.writeln(
+          HelpRenderer(_catalog, programName: _programName).renderCatalog(),
+        );
         return ExitCode.ok;
       }
 
@@ -777,7 +785,9 @@ class ModularCli {
       resolved = _HelpProvenance.builtin;
       query<HelpInput, HelpOutput>(
         'help *',
-        (req) => HelpQuery(HelpInput(_catalog, focus: req.rest)),
+        (req) => HelpQuery(
+          HelpInput(_catalog, focus: req.rest, programName: _programName),
+        ),
         globals: true,
         contract: CliContract.none,
         description: 'Show the commands this CLI accepts',
@@ -958,7 +968,10 @@ class ModularCli {
         out,
         jsonMode: jsonMode,
         json: contract.toJson(),
-        text: HelpRenderer(_catalog).renderCommand(contract),
+        text: HelpRenderer(
+          _catalog,
+          programName: _programName,
+        ).renderCommand(contract),
       );
       return ExitCode.ok;
     }
@@ -975,7 +988,10 @@ class ModularCli {
           'module': module,
           'commands': [for (final c in moduleContracts) c.toJson()],
         },
-        text: HelpRenderer(_catalog).renderModule(module),
+        text: HelpRenderer(
+          _catalog,
+          programName: _programName,
+        ).renderModule(module),
       );
       return ExitCode.ok;
     }
@@ -989,7 +1005,7 @@ class ModularCli {
       json: {
         'commands': [for (final c in scoped.commands) c.toJson()],
       },
-      text: HelpRenderer(scoped).renderCatalog(),
+      text: HelpRenderer(scoped, programName: _programName).renderCatalog(),
     );
     return ExitCode.ok;
   }
@@ -1088,9 +1104,13 @@ class ModularCli {
     } else {
       recordInvocationExtraText(
         contract != null
-            ? HelpRenderer(_catalog).renderCommand(contract)
+            ? HelpRenderer(
+                _catalog,
+                programName: _programName,
+              ).renderCommand(contract)
             : HelpRenderer(
                 completions.isEmpty ? _catalog : _narrowedTo(completions),
+                programName: _programName,
               ).renderCatalog(),
       );
     }
@@ -1410,7 +1430,9 @@ class ModularCli {
         ..writeln(title)
         ..writeln();
     }
-    sink.writeln(HelpRenderer(_catalog).renderCatalog());
+    sink.writeln(
+      HelpRenderer(_catalog, programName: _programName).renderCatalog(),
+    );
   }
 }
 

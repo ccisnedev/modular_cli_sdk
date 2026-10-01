@@ -64,13 +64,15 @@ class ModuleBuilder {
     required Map<String, List<CommandContract>> shortcutContractsByPrefix,
     Approver? approver,
     PlanSink? planSink,
+    String? programName,
   }) : _router = router,
        _catalog = catalog,
        _bodiesByName = bodiesByName,
        _shortcutContractsByExactRoute = shortcutContractsByExactRoute,
        _shortcutContractsByPrefix = shortcutContractsByPrefix,
        _approver = approver,
-       _planSink = planSink;
+       _planSink = planSink,
+       _programName = programName;
 
   /// Name of the module (used as the mount prefix).
   final String moduleName;
@@ -123,6 +125,12 @@ class ModuleBuilder {
   final Map<String, List<CommandContract>> _shortcutContractsByPrefix;
   final Approver? _approver;
   final PlanSink? _planSink;
+
+  /// The host CLI's own name (`ModularCli(name: 'cx')`), or `null` when it
+  /// gave none. Threaded into every [HelpRenderer] this module builds, so a
+  /// usage line in help or a rejection's own contract help can be prefixed
+  /// with it (issue #38).
+  final String? _programName;
 
   /// Register a [Query] — a route that reads and answers.
   ///
@@ -678,7 +686,10 @@ class ModuleBuilder {
       if (req.flagBool('help')) {
         output.writeObject(
           entry.toJson(),
-          textOverride: HelpRenderer(_catalog).renderCommand(entry),
+          textOverride: HelpRenderer(
+            _catalog,
+            programName: _programName,
+          ).renderCommand(entry),
         );
         return ExitCode.ok;
       }
@@ -737,7 +748,9 @@ class ModuleBuilder {
     if (error.extraLines == null &&
         showsContractOnRejection &&
         error.exitCode == ExitCode.validationFailed) {
-      recordInvocationExtraText(HelpRenderer(_catalog).renderCommand(entry));
+      recordInvocationExtraText(
+        HelpRenderer(_catalog, programName: _programName).renderCommand(entry),
+      );
     }
     return error.exitCode;
   }
