@@ -10,9 +10,21 @@ import 'route_pattern.dart';
 /// focused help of a single command or module, and the error path all come
 /// from here, so a user never sees two descriptions of the same CLI.
 class HelpRenderer {
-  HelpRenderer(this.catalog);
+  HelpRenderer(this.catalog, {this.programName});
 
   final CommandCatalog catalog;
+
+  /// The name the host CLI is invoked as (`ModularCli(name: 'cx')`), or
+  /// `null` when the host gave none. Prefixed onto every usage line this
+  /// renderer writes, so a line a user reads can be copied and run as is
+  /// (issue #38). Left `null`, every line this renderer writes is
+  /// byte-identical to before this field existed.
+  final String? programName;
+
+  /// `'cx '`, or `''` when [programName] is `null`: prepended to every
+  /// usage line so the two cases differ only by this prefix, never by
+  /// extra whitespace when there is no name to show.
+  String get _usagePrefix => programName == null ? '' : '$programName ';
 
   /// Every registered route with its description, plus the global options.
   ///
@@ -24,6 +36,10 @@ class HelpRenderer {
   /// noise, and it is the shape of every CLI written before commands existed.
   String renderCatalog() {
     final lines = <String>[
+      if (programName != null) ...[
+        'Usage: $programName <command> [options]',
+        '',
+      ],
       if (catalog.hasBothKinds) ...[
         'Queries:',
         ..._commandLines(catalog.ofKind(CommandKind.query)),
@@ -42,7 +58,7 @@ class HelpRenderer {
 
   /// One command's full contract: how to invoke it and every parameter it takes.
   String renderCommand(CommandContract contract) {
-    final lines = <String>['Usage: ${_usageOf(contract)}'];
+    final lines = <String>['Usage: $_usagePrefix${_usageOf(contract)}'];
     if (contract.description != null) {
       lines
         ..add('')

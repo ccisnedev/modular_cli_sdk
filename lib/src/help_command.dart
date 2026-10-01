@@ -21,18 +21,26 @@ class HelpQuery implements Query<HelpInput, HelpOutput> {
   String? validate() => null;
 
   @override
-  Future<HelpOutput> execute() async =>
-      HelpOutput(input.catalog, focus: input.focus);
+  Future<HelpOutput> execute() async => HelpOutput(
+    input.catalog,
+    focus: input.focus,
+    programName: input.programName,
+  );
 }
 
 class HelpInput extends Input {
-  HelpInput(this.catalog, {this.focus = const []});
+  HelpInput(this.catalog, {this.focus = const [], this.programName});
 
   final CommandCatalog catalog;
 
   /// The command or module help was asked about: `help math add` → the command;
   /// `help math` → the module; empty → the whole CLI.
   final List<String> focus;
+
+  /// The host CLI's own name (`ModularCli(name: 'cx')`), or `null` when it
+  /// gave none. Threaded through to [HelpRenderer] so a usage line can be
+  /// prefixed with it (issue #38).
+  final String? programName;
 
   @override
   Map<String, dynamic> toJson() => {};
@@ -41,10 +49,11 @@ class HelpInput extends Input {
 /// The catalog in whichever form the active output mode asks for: aligned text
 /// for a human, the full contract catalog for `--json` (`help.json`).
 class HelpOutput extends Output {
-  HelpOutput(this.catalog, {this.focus = const []});
+  HelpOutput(this.catalog, {this.focus = const [], this.programName});
 
   final CommandCatalog catalog;
   final List<String> focus;
+  final String? programName;
 
   @override
   Map<String, dynamic> toJson() {
@@ -62,7 +71,7 @@ class HelpOutput extends Output {
 
   @override
   String? toText() {
-    final renderer = HelpRenderer(catalog);
+    final renderer = HelpRenderer(catalog, programName: programName);
     final contract = _focusedCommand;
     if (contract != null) return renderer.renderCommand(contract);
     if (_focusedModuleCommands != null) {
