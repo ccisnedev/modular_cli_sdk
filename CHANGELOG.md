@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.8.4
+
+Issue [#38](https://github.com/macss-dev/modular_cli_sdk/issues/38).
+
+### Fixed
+
+- **Usage lines never named the program.** `ModularCli(name: 'cx')` stored
+  the name in `hostMetadata`, but `HelpRenderer` had no way to receive it,
+  so `cx --help` printed a root listing with no usage line at all, and
+  every command's own usage line read `Usage: math add ...` instead of
+  `Usage: cx math add ...`, in both help and a rejection's own contract
+  help (unknown option, misplaced option, missing operand). `HelpRenderer`
+  now takes an optional `programName`, threaded from `ModularCli.name`
+  through every place it builds help text; root help gains a
+  `Usage: cx <command> [options]` line, and every command usage line is
+  prefixed with the name. With no name given, output stays byte-identical
+  to 0.8.3
+
 ## 0.8.3
 
 Issue [#44](https://github.com/macss-dev/modular_cli_sdk/issues/44).
