@@ -26,6 +26,7 @@ class CommandContract {
     required this.globals,
     this.kind = CommandKind.command,
     this.description,
+    this.shortcutTarget,
   });
 
   /// Full route as registered, mount prefix and positionals included:
@@ -61,6 +62,11 @@ class CommandContract {
   final CommandKind kind;
 
   final String? description;
+
+  /// For a shortcut, the full name of the route it runs (`eval rpn`); `null`
+  /// for an ordinary route. Not part of [toJson]: a shortcut's own contract
+  /// is published unchanged, and the target is shown by the catalog.
+  final String? shortcutTarget;
 
   /// Whether this route accepts the global options (`--json`, `--quiet`,
   /// `--help`) alongside its own declared contract. Stored here, not just
@@ -106,6 +112,16 @@ class CommandCatalog {
   List<CommandContract> get commands => List.unmodifiable(_contracts);
 
   void register(CommandContract contract) => _contracts.add(contract);
+
+  final List<CommandContract> _rootShortcuts = [];
+
+  /// The shortcuts that hang straight off the root (`<program>`): not
+  /// commands, so they stay out of [commands], but the one line of the
+  /// first screen that says how to pass a program (issue #47).
+  List<CommandContract> get rootShortcuts => List.unmodifiable(_rootShortcuts);
+
+  void registerRootShortcut(CommandContract contract) =>
+      _rootShortcuts.add(contract);
 
   /// The contract for an exact route, matched against [routerPattern]:
   /// `cli_router`'s own [CliRoute.pattern] never includes a trailing

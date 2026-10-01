@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.9.0
+
+Issue [#47](https://github.com/macss-dev/modular_cli_sdk/issues/47).
+
+### Changed
+
+- **Root `--help` and `-h` answer as `help`.** An invocation made only of
+  `--help` / `-h` and the output flags (`--json`, `--quiet`) now prints the
+  command catalog: the same text and the same `--json` shape as the `help`
+  query, exit 0. Before, it printed the contract of the root (an empty
+  banner, or the root shortcut's contract). A route's own `--help` is
+  unchanged, a registered root route still runs on a bare invocation but
+  its `--help` is the catalog too, and a badly typed supplied value still beats `--help`
+- **Root `--version` answers as `version`.** `x --version` prints exactly
+  what the CLI's own `version` route prints, `--json` included. The SDK has
+  no built-in `version` query, so a CLI without a `version` route or
+  shortcut still gets `unknown-option`, as before. Only the long form is
+  reserved: `-v` stays free
+- **The catalog shows root shortcuts.** A shortcut registered at the root
+  (`cx <program>` for `eval rpn`) is now listed under `Shortcuts:` with its
+  target, has a second usage line, and appears under `shortcuts` in
+  `help --json`. Named shortcuts stay out of the catalog
+
+### Breaking
+
+- `--version` is reserved at the root. A CLI that declares its own `--version`
+  option on a root route or root shortcut (one with no literal word before
+  its first positional) now fails at registration with an `ArgumentError`.
+  Rename the option or register the route under a word
+
 ## 0.8.4
 
 Issue [#38](https://github.com/macss-dev/modular_cli_sdk/issues/38).
