@@ -66,6 +66,11 @@ class HelpOutput extends Output {
           .map((c) => c.toJson())
           .toList(),
       'globalOptions': globalOptions.map((o) => o.toJson()).toList(),
+      if (moduleCommands == null && catalog.rootShortcuts.isNotEmpty)
+        'shortcuts': [
+          for (final s in catalog.rootShortcuts)
+            {...s.toJson(), 'target': s.shortcutTarget},
+        ],
     };
   }
 

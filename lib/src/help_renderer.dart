@@ -38,6 +38,8 @@ class HelpRenderer {
     final lines = <String>[
       if (programName != null) ...[
         'Usage: $programName <command> [options]',
+        for (final s in catalog.rootShortcuts)
+          '       $programName ${_usageOf(s).trim()}'.trimRight(),
         '',
       ],
       if (catalog.hasBothKinds) ...[
@@ -49,6 +51,11 @@ class HelpRenderer {
       ] else ...[
         'Commands:',
         ..._commandLines(catalog.commands),
+      ],
+      if (catalog.rootShortcuts.isNotEmpty) ...[
+        '',
+        'Shortcuts:',
+        ..._shortcutLines(catalog.rootShortcuts),
       ],
       '',
     ];
@@ -119,6 +126,18 @@ class HelpRenderer {
     return [
       for (final contract in contracts)
         '  ${names[contract]!.padRight(width)}  ${contract.description ?? ''}'
+            .trimRight(),
+    ];
+  }
+
+  List<String> _shortcutLines(List<CommandContract> shortcuts) {
+    final names = {for (final s in shortcuts) s: _listingNameOf(s)};
+    final width = _widestOf(names.values);
+    return [
+      for (final s in shortcuts)
+        '  ${names[s]!.padRight(width)}  '
+                '${s.description == null ? '' : '${s.description} '}'
+                '(same as: ${s.shortcutTarget})'
             .trimRight(),
     ];
   }

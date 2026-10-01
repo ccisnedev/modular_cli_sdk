@@ -336,7 +336,12 @@ class ModuleBuilder {
       description: description,
       contract: shortcutContract,
       globals: globals,
+      shortcutTarget: targetEntry.name,
     );
+    _rejectReservedRootOptions(pattern, shortcutContract);
+    if (moduleName.isEmpty && routePattern.literalPrefix.isEmpty) {
+      _catalog.registerRootShortcut(entry);
+    }
 
     // Not registered with [_catalog] (see this method's own doc comment,
     // "deliberately not given its own CommandCatalog entry"), but kept
@@ -593,6 +598,23 @@ class ModuleBuilder {
 
   // ── Registration plumbing, shared by both kinds ───────────────────────────
 
+  /// `--version` at the root answers as the `version` query (issue #47), so
+  /// a route that is itself the root (no literal word before its first
+  /// positional) cannot declare an option of that name: `x --version` would
+  /// mean two things. Only the long form is reserved.
+  void _rejectReservedRootOptions(String route, CliContract contract) {
+    if (moduleName.isNotEmpty || RoutePattern(route).literalPrefix.isNotEmpty) {
+      return;
+    }
+    if (contract.options.any((o) => o.name == 'version')) {
+      throw ArgumentError(
+        'route("$route") declares the option --version, which is reserved '
+        'at the root: `--version` there answers as the `version` query. '
+        'Rename the option, or register the route under a word.',
+      );
+    }
+  }
+
   CommandContract _register(
     String route, {
     required CommandKind kind,
@@ -605,6 +627,7 @@ class ModuleBuilder {
     // authoring mistake, caught the moment the route is declared, not
     // something a caller could ever trigger by what they typed.
     validateContractPositionals(route, contract);
+    _rejectReservedRootOptions(route, contract);
     final entry = CommandContract(
       route: moduleName.isEmpty ? route : '$moduleName $route',
       module: moduleName,

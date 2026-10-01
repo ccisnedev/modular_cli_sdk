@@ -671,7 +671,10 @@ class ModularCli {
           _shortcutContractsByExactRoute.containsKey('');
       final dispatchArgs = args.isEmpty && !hasRootRegistration
           ? (helpProvenance == _HelpProvenance.builtin ? null : const ['help'])
-          : args;
+          : _rootAnswer(
+              args,
+              hasRootRegistration: _catalog.forRoute('') != null,
+            );
 
       if (dispatchArgs == null) {
         out.writeln(
@@ -706,6 +709,49 @@ class ModularCli {
       }
       return exitCode;
     });
+  }
+
+  /// Global options that may accompany a root `--help` or `--version`
+  /// without turning the invocation into anything but that request.
+  static const _rootCompanions = {'--json', '--quiet', '-q'};
+
+  /// Issue #47: at the root, `--help` / `-h` answer as the `help` query and
+  /// `--version` as the `version` query. Only an invocation made of nothing
+  /// but those tokens and the output-mode flags counts; anything else (a
+  /// route, a value, another option) goes through unchanged, so a route's
+  /// own `--help` and the precedence rules of issue #27 section 5 are
+  /// untouched. The companions are kept, after the query word (the router wants options after it), so
+  /// `--json` selects the same output mode as `help --json`.
+  ///
+  /// A root route answers its own `--help` (it is a real route with its
+  /// own contract). `--version` is answered only when the CLI has a
+  /// `version` route or shortcut: the SDK has no built-in version query,
+  /// and without one the option stays unknown, as before.
+  List<String> _rootAnswer(
+    List<String> args, {
+    required bool hasRootRegistration,
+  }) {
+    final helpAsked = args.contains('--help') || args.contains('-h');
+    final versionAsked = args.contains('--version');
+    if (!helpAsked && !versionAsked) return args;
+    final companions = [
+      for (final a in args)
+        if (_rootCompanions.contains(a)) a,
+    ];
+    final others =
+        args.length -
+        companions.length -
+        args
+            .where((a) => a == '--help' || a == '-h' || a == '--version')
+            .length;
+    if (others != 0) return args;
+    if (helpAsked) {
+      return hasRootRegistration ? args : ['help', ...companions];
+    }
+    final hasVersion =
+        _catalog.commands.any(_isNamedVersion) ||
+        _shortcutContractsByExactRoute.values.any(_isNamedVersion);
+    return hasVersion ? ['version', ...companions] : args;
   }
 
   /// Where this CLI's own `help` command comes from: a developer's own
@@ -1462,3 +1508,7 @@ enum _HelpProvenance {
 /// regardless of which of the two registered it or what cardinality its
 /// own positional declares.
 bool _isNamedHelp(CommandContract contract) => contract.name == 'help';
+
+/// Whether [contract] is named `version`: how `--version` at the root finds
+/// the query it answers as (issue #47).
+bool _isNamedVersion(CommandContract contract) => contract.name == 'version';
