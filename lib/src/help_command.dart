@@ -25,11 +25,17 @@ class HelpQuery implements Query<HelpInput, HelpOutput> {
     input.catalog,
     focus: input.focus,
     programName: input.programName,
+    epilog: input.epilog,
   );
 }
 
 class HelpInput extends Input {
-  HelpInput(this.catalog, {this.focus = const [], this.programName});
+  HelpInput(
+    this.catalog, {
+    this.focus = const [],
+    this.programName,
+    this.epilog,
+  });
 
   final CommandCatalog catalog;
 
@@ -42,6 +48,9 @@ class HelpInput extends Input {
   /// prefixed with it (issue #38).
   final String? programName;
 
+  /// The host CLI's help epilog (issue #50), or `null`.
+  final String? epilog;
+
   @override
   Map<String, dynamic> toJson() => {};
 }
@@ -49,11 +58,19 @@ class HelpInput extends Input {
 /// The catalog in whichever form the active output mode asks for: aligned text
 /// for a human, the full contract catalog for `--json` (`help.json`).
 class HelpOutput extends Output {
-  HelpOutput(this.catalog, {this.focus = const [], this.programName});
+  HelpOutput(
+    this.catalog, {
+    this.focus = const [],
+    this.programName,
+    this.epilog,
+  });
 
   final CommandCatalog catalog;
   final List<String> focus;
   final String? programName;
+
+  /// Printed after the full catalog only, never after focused or module help.
+  final String? epilog;
 
   @override
   Map<String, dynamic> toJson() {
@@ -71,6 +88,7 @@ class HelpOutput extends Output {
           for (final s in catalog.rootShortcuts)
             {...s.toJson(), 'target': s.shortcutTarget},
         ],
+      if (moduleCommands == null && epilog != null) 'epilog': epilog,
     };
   }
 
@@ -82,7 +100,7 @@ class HelpOutput extends Output {
     if (_focusedModuleCommands != null) {
       return renderer.renderModule(_focusName);
     }
-    return renderer.renderCatalog();
+    return renderer.renderCatalog(epilog: epilog);
   }
 
   @override
