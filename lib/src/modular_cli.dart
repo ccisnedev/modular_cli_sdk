@@ -1183,8 +1183,12 @@ class ModularCli {
                 _catalog,
                 programName: _programName,
               ).renderCommand(contract)
+            : completions.isEmpty
+            ? (_programName == null
+                  ? 'Run with --help to see every command.'
+                  : 'Run "$_programName --help" to see every command.')
             : HelpRenderer(
-                completions.isEmpty ? _catalog : _narrowedTo(completions),
+                _narrowedTo(completions),
                 programName: _programName,
               ).renderCatalog(),
       );

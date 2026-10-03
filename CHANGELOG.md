@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.11.0
+
+Issue [#52](https://github.com/macss-dev/modular_cli_sdk/issues/52).
+
+### Changed
+
+- **A hint line instead of the whole catalog on errors.** In text mode, a
+  rejection with neither a contract nor completions (an unknown command with
+  no route continuing it, or an option error where the root is ambiguous)
+  now prints the error line, one empty line and `Run "<name> --help" to see
+  every command.` (`Run with --help to see every command.` when the CLI has no
+  name) instead of the whole catalog. The contract of a command one flag
+  away, the narrowed catalog of a prefix, JSON errors, exit codes and the
+  help epilog are unchanged
+
 ## 0.10.0
 
 Issue [#50](https://github.com/macss-dev/modular_cli_sdk/issues/50).
