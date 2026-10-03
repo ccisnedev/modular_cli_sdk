@@ -398,7 +398,7 @@ mycli greetings hello -h   #          → only that command's contract, exit 0
 mycli greetings --help     #          → every command in the module, exit 0
 mycli help --json          #          → the full contract catalog (help.json), exit 0
 
-mycli bogus                # unknown  → error + catalog on stderr, exit 64
+mycli bogus                # unknown  → error + a hint line on stderr, exit 64
 mycli math add --b 7       # rejected → error + that command's usage on stderr, exit 7
 ```
 

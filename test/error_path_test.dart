@@ -105,12 +105,15 @@ void main() {
       expect(result.stderr, contains('bogus'));
     });
 
-    test('renders the SDK catalog, not the router listing', () async {
+    test('prints a hint line, not the catalog or the router listing', () async {
       final result = await _run(['bogus']);
 
-      expect(result.stderr, contains('math add'));
-      expect(result.stderr, contains('Add two numbers'));
-      expect(result.stderr, contains('Global options'));
+      expect(
+        result.stderr,
+        endsWith('\n\nRun with --help to see every command.\n'),
+      );
+      expect(result.stderr, isNot(contains('math add')));
+      expect(result.stderr, isNot(contains('Global options')));
       expect(
         result.stderr,
         isNot(contains('Command not found or invalid usage.')),
@@ -118,14 +121,13 @@ void main() {
       );
     });
 
-    test('shows the same commands the successful help shows', () async {
+    test('the hint line points at the help that shows every command', () async {
       final error = await _run(['bogus']);
       final help = await _run(['help']);
 
-      for (final route in ['math add', 'help']) {
-        expect(help.stdout, contains(route));
-        expect(error.stderr, contains(route));
-      }
+      expect(error.stderr, contains('--help'));
+      expect(help.stdout, contains('math add'));
+      expect(error.stderr, isNot(contains('math add')));
     });
 
     test('an unknown command inside a module is caught too', () async {
@@ -196,12 +198,15 @@ void main() {
       },
     );
 
-    test('a name that begins no route keeps the full catalog', () async {
+    test('a name that begins no route gets the hint line', () async {
       final result = await _run(['bogus']);
 
       expect(result.stderr, isNot(contains('not a complete command')));
-      expect(result.stderr, contains('math add'));
-      expect(result.stderr, contains('graphql compile'));
+      expect(
+        result.stderr,
+        endsWith('\n\nRun with --help to see every command.\n'),
+      );
+      expect(result.stderr, isNot(contains('math add')));
     });
 
     test('a real route still runs', () async {

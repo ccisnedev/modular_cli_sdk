@@ -198,7 +198,10 @@ ModularCli _cliRunningAFailingNestedInvocationInsideAnActiveAttempt(
   // A passthrough middleware, registered purely to give the dispatch an
   // active attempt (InvocationOutcome.runAttempt) around the handler above,
   // exactly as any ModularCli.use() middleware does.
-  cli.use((next) => (req) => next(req));
+  cli.use(
+    (next) =>
+        (req) => next(req),
+  );
   return cli;
 }
 
@@ -306,10 +309,10 @@ void main() {
       'top-level word', () {
     test('in --json mode, the error envelope carries no contract field at '
         'all for an unknown top-level word', () async {
-      final result = await _runWith(
-        _cliWithBareRootRouteAndASiblingCommand(),
-        ['--json', 'bogus'],
-      );
+      final result = await _runWith(_cliWithBareRootRouteAndASiblingCommand(), [
+        '--json',
+        'bogus',
+      ]);
 
       expect(result.exitCode, equals(ExitCode.invalidUsage));
       final envelope = jsonDecode(result.stderr) as Map<String, dynamic>;
@@ -318,15 +321,18 @@ void main() {
       expect(error.containsKey('contract'), isFalse);
     });
 
-    test('in text mode, the same rejection prints the full command catalog, '
-        "never the root route's own usage alone", () async {
-      final result = await _runWith(
-        _cliWithBareRootRouteAndASiblingCommand(),
-        ['bogus'],
-      );
+    test('in text mode, the same rejection prints the hint line, '
+        "never the root route's own usage", () async {
+      final result = await _runWith(_cliWithBareRootRouteAndASiblingCommand(), [
+        'bogus',
+      ]);
 
       expect(result.exitCode, equals(ExitCode.invalidUsage));
-      expect(result.stderr, contains('other'));
+      expect(
+        result.stderr,
+        endsWith('\n\nRun with --help to see every command.\n'),
+      );
+      expect(result.stderr, isNot(contains('other')));
     });
   });
 }
