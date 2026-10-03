@@ -73,15 +73,25 @@ class ModularCli {
   /// compares an installed version against a release has to be told both.
   /// Left null, [hostMetadata] is null and such a plugin's [setup] throws
   /// rather than reporting a name or version nobody gave it.
+  ///
+  /// [helpEpilog] is free text printed once, after the full catalog that
+  /// `help`, root `--help` / `-h`, a bare invocation with no root route and
+  /// [printHelp] write (issue #50), and given as `epilog` in the catalog's
+  /// `--json`. Stored with trailing whitespace removed, nothing else changed.
+  /// Never printed by module or focused help, a narrowed catalog or an
+  /// error. Null (the default) leaves every output unchanged; a value that
+  /// is empty after trimming throws [ArgumentError].
   ModularCli({
     Approver? approver,
     PlanSink? planSink,
     required int suggestionDistance,
     String? name,
     String? version,
+    String? helpEpilog,
   }) : _approver = approver,
        _planSink = planSink,
        _suggestionDistance = suggestionDistance,
+       _helpEpilog = _checkedEpilog(helpEpilog),
        hostMetadata = name == null && version == null
            ? null
            : CliHostMetadata(
@@ -90,6 +100,22 @@ class ModularCli {
              );
 
   final Approver? _approver;
+
+  /// The help epilog, already trimmed on the right, or null.
+  final String? _helpEpilog;
+
+  static String? _checkedEpilog(String? epilog) {
+    if (epilog == null) return null;
+    if (epilog.trim().isEmpty) {
+      throw ArgumentError.value(
+        epilog,
+        'helpEpilog',
+        'must not be empty or only whitespace; give null for no epilog',
+      );
+    }
+    return epilog.trimRight();
+  }
+
   final PlanSink? _planSink;
   final int _suggestionDistance;
 
@@ -675,7 +701,10 @@ class ModularCli {
 
       if (dispatchArgs == null) {
         out.writeln(
-          HelpRenderer(_catalog, programName: _programName).renderCatalog(),
+          HelpRenderer(
+            _catalog,
+            programName: _programName,
+          ).renderCatalog(epilog: _helpEpilog),
         );
         return ExitCode.ok;
       }
@@ -827,7 +856,12 @@ class ModularCli {
       query<HelpInput, HelpOutput>(
         'help *',
         (req) => HelpQuery(
-          HelpInput(_catalog, focus: req.rest, programName: _programName),
+          HelpInput(
+            _catalog,
+            focus: req.rest,
+            programName: _programName,
+            epilog: _helpEpilog,
+          ),
         ),
         globals: true,
         contract: CliContract.none,
@@ -1472,7 +1506,10 @@ class ModularCli {
         ..writeln();
     }
     sink.writeln(
-      HelpRenderer(_catalog, programName: _programName).renderCatalog(),
+      HelpRenderer(
+        _catalog,
+        programName: _programName,
+      ).renderCatalog(epilog: _helpEpilog),
     );
   }
 }

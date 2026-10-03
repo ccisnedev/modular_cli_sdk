@@ -409,6 +409,39 @@ agent tells a reader from a writer without running either.
 
 A `help` command you register yourself always wins over the built-in one.
 
+### Help epilog
+
+A route description is one cell of the catalog table, so it is the wrong place
+for examples or usage hints. Give them once as `helpEpilog`:
+
+```dart
+final cli = ModularCli(
+  suggestionDistance: 2,
+  name: 'cx',
+  version: '1.0.0',
+  helpEpilog: 'Examples:
+  cx eval rpn "1 2 +"',
+);
+```
+
+```text
+...
+Global options:
+      --json   Emit machine-readable JSON
+  -q, --quiet  Suppress non-essential output
+  -h, --help   Show this contract
+
+Examples:
+  cx eval rpn "1 2 +"
+```
+
+The text is printed verbatim after the full catalog (`help`, root `--help` /
+`-h`, a bare invocation with no root route, `printHelp`) and nowhere else:
+not in module or focused help, a narrowed catalog or an error. `help --json`
+gains an `epilog` key with the text. Trailing whitespace is dropped; a value
+that is empty after trimming throws `ArgumentError`. Left `null`, nothing
+changes.
+
 ---
 
 ## Plugins

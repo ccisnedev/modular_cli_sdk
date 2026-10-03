@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.10.0
+
+Issue [#50](https://github.com/macss-dev/modular_cli_sdk/issues/50).
+
+### Added
+
+- **Help epilog.** `ModularCli(helpEpilog: ...)` gives free text, once, that
+  is printed after the full catalog: `help`, root `--help` / `-h`, a bare
+  invocation with no root route or shortcut, and `printHelp`. `help --json`
+  and `--help --json` gain an `epilog` key. Module help, focused help, a
+  narrowed catalog and errors never carry it. Trailing whitespace is
+  removed; a value empty after trimming throws `ArgumentError`. Left `null`
+  (the default), every output is byte-identical to 0.9.0
+
 ## 0.9.0
 
 Issue [#47](https://github.com/macss-dev/modular_cli_sdk/issues/47).

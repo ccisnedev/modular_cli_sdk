@@ -34,7 +34,11 @@ class HelpRenderer {
   ///
   /// A CLI of a single kind keeps one list. Two headings over one list would be
   /// noise, and it is the shape of every CLI written before commands existed.
-  String renderCatalog() {
+  ///
+  /// [epilog], when given, is written last: one empty line, then its lines
+  /// exactly as given (issue #50). Only the full catalog takes one; callers
+  /// that print a narrowed catalog pass none.
+  String renderCatalog({String? epilog}) {
     final lines = <String>[
       if (programName != null) ...[
         'Usage: $programName <command> [options]',
@@ -60,6 +64,11 @@ class HelpRenderer {
       '',
     ];
     lines.addAll(_globalOptionsSection());
+    if (epilog != null) {
+      lines
+        ..add('')
+        ..add(epilog);
+    }
     return lines.join('\n');
   }
 
