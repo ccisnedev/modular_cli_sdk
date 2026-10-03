@@ -419,8 +419,8 @@ final cli = ModularCli(
   suggestionDistance: 2,
   name: 'cx',
   version: '1.0.0',
-  helpEpilog: 'Examples:
-  cx eval rpn "1 2 +"',
+  helpEpilog: 'Examples:\n'
+      '  cx eval rpn "1 2 +"',
 );
 ```
 
