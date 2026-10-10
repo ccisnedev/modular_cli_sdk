@@ -461,17 +461,28 @@ class ModuleBuilder {
   ) async {
     const executor = PreviewExecutor();
 
-    final steps = await unit.steps();
-    final plan = PlanDocument(
-      route: entry.name,
-      previews: executor.preview(steps),
-      // Read after steps(), which is where a command works out that it has
-      // nothing to do and why. Consulted whatever the mode: the reason belongs
-      // to --plan exactly as much as to --apply.
-      nothingToDo: unit is ExplainsNothingToDo
-          ? (unit as ExplainsNothingToDo).nothingToDo
-          : null,
-    );
+    // A throw while the plan is being worked out happens before anything ran,
+    // and the error says so. A CommandException is the command's own, already
+    // legible answer and passes through untouched.
+    final List<Step> steps;
+    final PlanDocument plan;
+    try {
+      steps = await unit.steps();
+      plan = PlanDocument(
+        route: entry.name,
+        previews: executor.preview(steps),
+        // Read after steps(), which is where a command works out that it has
+        // nothing to do and why. Consulted whatever the mode: the reason
+        // belongs to --plan exactly as much as to --apply.
+        nothingToDo: unit is ExplainsNothingToDo
+            ? (unit as ExplainsNothingToDo).nothingToDo
+            : null,
+      );
+    } on CommandException {
+      rethrow;
+    } catch (e) {
+      throw _unexpected(e, 'Nothing was changed.');
+    }
 
     if (flags.mode == ChangeMode.plan) {
       final filed = _planSink?.call(plan);
@@ -505,8 +516,21 @@ class ModuleBuilder {
       }
     }
 
-    final execution = await executor.perform(steps);
-    final result = unit.describe(execution);
+    // From here on the plan was approved: a throw that is not a step's own
+    // failure (those are in the Execution) says the change may be in progress.
+    final Execution execution;
+    final Output result;
+    try {
+      execution = await executor.perform(steps);
+      result = unit.describe(execution);
+    } on CommandException {
+      rethrow;
+    } catch (e) {
+      throw _unexpected(
+        e,
+        'The plan had been approved, so part of it may have been applied.',
+      );
+    }
     final discrepancies = execution.discrepancies;
     final succeeded = execution.failure == null;
 
@@ -727,6 +751,16 @@ class ModuleBuilder {
           entry,
           showsContractOnRejection: !isJsonMode,
         );
+      } catch (e) {
+        // The floor under every command: whatever else was thrown is answered
+        // as an error with an exit code, never as a stack trace out of run().
+        return _reject(
+          _unexpected(e),
+          req,
+          output,
+          entry,
+          showsContractOnRejection: false,
+        );
       }
     }
 
@@ -738,6 +772,17 @@ class ModuleBuilder {
       description: entry.description,
     );
   }
+
+  /// What a throw that is not a [CommandException] becomes: exit code 1 and
+  /// a fixed id, carrying the thrown object's own text. [consequence] says
+  /// what state the throw left things in, when the lifecycle knows. The stack
+  /// trace is deliberately not part of the answer.
+  CommandException _unexpected(Object error, [String? consequence]) =>
+      CommandException(
+        id: 'unexpected-error',
+        message: consequence == null ? '$error' : '$error. $consequence',
+        exitCode: ExitCode.genericError,
+      );
 
   CommandException _rejection(String message) => CommandException(
     id: 'validation-failed',
