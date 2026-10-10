@@ -3,11 +3,11 @@ description: >
   Command-centric SDK for building modular CLIs with Dart —
   Command/Input/Output contract, structured errors, output formatting,
   and automatic TTY detection. Built on cli_router.
-version: 0.11.0
+version: 0.11.1
 
-repository: https://github.com/macss-dev/modular_cli_sdk
-homepage: https://github.com/macss-dev/modular_cli_sdk
-issue_tracker: https://github.com/macss-dev/modular_cli_sdk/issues
+repository: https://github.com/ccisnedev/modular_cli_sdk
+homepage: https://github.com/ccisnedev/modular_cli_sdk
+issue_tracker: https://github.com/ccisnedev/modular_cli_sdk/issues
 documentation: https://pub.dev/documentation/modular_cli_sdk/latest
 
 environment:
