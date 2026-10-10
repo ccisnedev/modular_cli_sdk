@@ -236,12 +236,14 @@ class HelpRenderer {
     // rather than the more familiar `<name> [options]` a reader might
     // expect from other CLIs, to avoid showing an invocation the router
     // would then reject.
+    // A root route has nothing left of it once its positionals are
+    // stripped; an empty part is left out, not joined as a double space.
     return [
       route,
       if (contract.options.isNotEmpty) '[options]',
       if (positionals.isNotEmpty) positionals,
       if (hasWildcard) '*',
-    ].join(' ');
+    ].where((part) => part.isNotEmpty).join(' ');
   }
 
   int _widestOf(Iterable<String> values) => values.fold<int>(

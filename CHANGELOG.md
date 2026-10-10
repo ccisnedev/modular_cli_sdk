@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.11.1
+
+Issues [#54](https://github.com/ccisnedev/modular_cli_sdk/issues/54),
+[#43](https://github.com/ccisnedev/modular_cli_sdk/issues/43) and
+[#18](https://github.com/ccisnedev/modular_cli_sdk/issues/18).
+
+### Fixed
+
+- **No double space in the usage line of a root route with a positional.**
+  A route registered at the root as `'<program>'` printed
+  `Usage: cx  [options] <program>`, because stripping the positionals out
+  of the route left an empty part that was still joined. Empty parts are
+  now left out: `Usage: cx [options] <program>`, and `Usage: [options]
+  <program>` when the CLI has no name. Every other usage line is unchanged
+- **`ExactlyOne` and `MutuallyExclusive` name a positional as `<name>`.**
+  Every field was rendered as `--name`, so a rejection named an option that
+  does not exist (`Choose one of: --program, --file, --stdin`, when
+  `program` is a positional). A positional now renders as `<name>` and an
+  option as `--name`, in declared order, in both the "choose" and the "got"
+  parts: `Choose one of: <program>, --file, --stdin`. Constraints over
+  options only, the `validation-failed` code, exit code 7 and `toJson()`
+  are unchanged. `CliConstraint` gains `checkWithin(present, positionals)`,
+  which defaults to `check`, so existing constraints keep working
+- **`pubspec.yaml` and the README no longer depend on the deleted
+  `macss-dev` organization or on relative links.** `repository`, `homepage`
+  and `issue_tracker` point at `github.com/ccisnedev/modular_cli_sdk`, and
+  the README's links to repository files are absolute GitHub URLs, because
+  pub.dev strips relative links instead of resolving them
+
 ## 0.11.0
 
 Issue [#52](https://github.com/macss-dev/modular_cli_sdk/issues/52).
