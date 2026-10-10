@@ -18,8 +18,22 @@ abstract class CliConstraint {
   /// `null` when it is satisfied.
   String? check(Set<String> present);
 
+  /// Like [check], for a contract that also declares [positionals]: the
+  /// names of its positionals, so a message can name each field by its
+  /// declared kind (`<name>` for a positional, `--name` for an option).
+  ///
+  /// Defaults to [check], so a constraint that does not render field names
+  /// need not override it.
+  String? checkWithin(Set<String> present, Set<String> positionals) =>
+      check(present);
+
   Map<String, dynamic> toJson();
 }
+
+/// A field as the usage line writes it: `<name>` for a positional,
+/// `--name` for an option.
+String _fieldLabel(String field, Set<String> positionals) =>
+    positionals.contains(field) ? '<$field>' : '--$field';
 
 /// Exactly one of [fields] must be present: used for a command that only
 /// makes sense given one mode, such as `--plan` or `--apply`.
@@ -29,14 +43,18 @@ class ExactlyOne extends CliConstraint {
   final List<String> fields;
 
   @override
-  String? check(Set<String> present) {
+  String? check(Set<String> present) => checkWithin(present, const {});
+
+  @override
+  String? checkWithin(Set<String> present, Set<String> positionals) {
+    String label(String f) => _fieldLabel(f, positionals);
     final given = fields.where(present.contains).toList();
     if (given.isEmpty) {
-      return 'Choose one of: ${fields.map((f) => '--$f').join(', ')}';
+      return 'Choose one of: ${fields.map(label).join(', ')}';
     }
     if (given.length > 1) {
-      return 'Choose one of: ${fields.map((f) => '--$f').join(', ')}, '
-          'got ${given.map((f) => '--$f').join(', ')}';
+      return 'Choose one of: ${fields.map(label).join(', ')}, '
+          'got ${given.map(label).join(', ')}';
     }
     return null;
   }
@@ -53,11 +71,15 @@ class MutuallyExclusive extends CliConstraint {
   final List<String> fields;
 
   @override
-  String? check(Set<String> present) {
+  String? check(Set<String> present) => checkWithin(present, const {});
+
+  @override
+  String? checkWithin(Set<String> present, Set<String> positionals) {
+    String label(String f) => _fieldLabel(f, positionals);
     final given = fields.where(present.contains).toList();
     if (given.length > 1) {
-      return '${fields.map((f) => '--$f').join(' and ')} cannot be combined, '
-          'got ${given.map((f) => '--$f').join(', ')}';
+      return '${fields.map(label).join(' and ')} cannot be combined, '
+          'got ${given.map(label).join(', ')}';
     }
     return null;
   }
@@ -107,8 +129,9 @@ class CliContract {
   /// Validate [present] against every declared constraint, throwing the
   /// first violation found.
   void validateConstraints(Set<String> present) {
+    final positionalNames = {for (final p in positionals) p.name};
     for (final constraint in constraints) {
-      final violation = constraint.check(present);
+      final violation = constraint.checkWithin(present, positionalNames);
       if (violation != null) {
         throw CommandException(
           id: 'validation-failed',
