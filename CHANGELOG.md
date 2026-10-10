@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.11.2
+
+Issue [#25](https://github.com/macss-dev/modular_cli_sdk/issues/25).
+
+### Fixed
+
+- **An unexpected throw no longer escapes `run()` as a stack trace.** Anything
+  a command or query throws that is not a `CommandException` (a
+  `SocketException`, a `FormatException`, a `TypeError`...) is now answered
+  like any other error: the thrown object's text on stderr, exit code `1`
+  (`ExitCode.genericError`), and under `--json` the usual error envelope with
+  the id `unexpected-error`. The stack trace is not printed. A throw while
+  the plan is being worked out (`steps()`) ends with `Nothing was changed.`;
+  a throw after the plan was approved (building the result) ends with `The
+  plan had been approved, so part of it may have been applied.` A step that
+  throws inside `--apply` is unchanged (`step-failed`)
+
 ## 0.11.0
 
 Issue [#52](https://github.com/macss-dev/modular_cli_sdk/issues/52).
