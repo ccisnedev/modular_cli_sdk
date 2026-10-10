@@ -1,5 +1,5 @@
 [![pub package](https://img.shields.io/pub/v/modular_cli_sdk.svg)](https://pub.dev/packages/modular_cli_sdk)
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/ccisnedev/modular_cli_sdk/blob/main/LICENSE)
 
 # modular_cli_sdk
 
@@ -75,7 +75,7 @@ dart run bin/main.dart notes write --plan today
 # Nothing was changed. Re-run with --apply to carry this out.
 ```
 
-See [`example/`](example/) for a full working example: three read-only modules and one that writes.
+See [`example/`](https://github.com/ccisnedev/modular_cli_sdk/tree/main/example) for a full working example: three read-only modules and one that writes.
 
 ---
 
@@ -172,7 +172,7 @@ ModularCli(
 
 `--plan` produces a **report**, not an executable plan. Nothing reads it back:
 `--apply` re-previews immediately before it acts, so there is no saved plan that
-can go stale. See [ADR 0002](docs/adr/0002-a-command-previews-through-a-separate-method.md).
+can go stale. See [ADR 0002](https://github.com/ccisnedev/modular_cli_sdk/blob/main/docs/adr/0002-a-command-previews-through-a-separate-method.md).
 
 ## Testing a command
 
@@ -215,7 +215,7 @@ post-install child process, and every message that tells a user to *run*
 something. None of those breaks the build.
 
 Two hosts have made this migration.
-[ADR 0003](docs/adr/0003-adopting-commands-changes-everything-that-ever-typed-them.md)
+[ADR 0003](https://github.com/ccisnedev/modular_cli_sdk/blob/main/docs/adr/0003-adopting-commands-changes-everything-that-ever-typed-them.md)
 records what it cost them and the three obligations that follow, including a
 test that sweeps your own sources for messages naming a command without a mode
 — derived from the catalog, so it cannot drift from your registrations:
@@ -240,7 +240,7 @@ have to resolve to your development folder, not to the real installation — and
 the way to get that is a **dev build**: the compiled binary placed where the CLI
 will actually live, with its assets beside it.
 
-[`example/beside_executable.dart`](example/beside_executable.dart) exists to show
+[`example/beside_executable.dart`](https://github.com/ccisnedev/modular_cli_sdk/blob/main/example/beside_executable.dart) exists to show
 the difference. Built into the layout an installed CLI has — the binary in
 `bin/`, `assets/` beside it — it works:
 
@@ -528,7 +528,7 @@ extracts or touches a real PATH.
 
 `InstallationPlugin` is extracted from macss's and inquiry's own
 `upgrade`/`uninstall` commands (see
-[`docs/installation-parity.md`](docs/installation-parity.md) for what each
+[`docs/installation-parity.md`](https://github.com/ccisnedev/modular_cli_sdk/blob/main/docs/installation-parity.md) for what each
 CLI did before, and what it does through this plugin now). Only Windows and
 Linux are supported; macOS is not, and `PlatformOps.current()` throws
 `UnsupportedError` there, the same as both source CLIs. Adopting it means
@@ -602,7 +602,7 @@ so there was no precedent to extract. See
 [issue #34](https://github.com/ccisnedev/modular_cli_sdk/issues/34) if you
 need them back. `MacosPlatformOps` was removed the same way, for the same
 reason: see the macOS row in
-[`docs/installation-parity.md`](docs/installation-parity.md).
+[`docs/installation-parity.md`](https://github.com/ccisnedev/modular_cli_sdk/blob/main/docs/installation-parity.md).
 
 **Breaking, from 0.7.0.** Every 0.7.0 installation type (`CliFileSystem`,
 `CliPlatform`, `CliProcessLauncher`, the cleanup-worker machinery behind
@@ -774,10 +774,10 @@ ModularCli → Module → Query   → Business Logic  → Output → formatted t
 ## Documentation
 
 - [API reference](https://pub.dev/documentation/modular_cli_sdk/latest/) — generated dartdoc on pub.dev
-- [docs/architecture.md](docs/architecture.md) — the stack, the command lifecycle, the conventions, and the symmetry with modular_api
-- [docs/roadmap.md](docs/roadmap.md) — what has shipped, and what is being considered
-- [docs/adr/](docs/adr/) — architecture decision records
-- [CHANGELOG.md](CHANGELOG.md) — the record of every release
+- [docs/architecture.md](https://github.com/ccisnedev/modular_cli_sdk/blob/main/docs/architecture.md) — the stack, the command lifecycle, the conventions, and the symmetry with modular_api
+- [docs/roadmap.md](https://github.com/ccisnedev/modular_cli_sdk/blob/main/docs/roadmap.md) — what has shipped, and what is being considered
+- [docs/adr/](https://github.com/ccisnedev/modular_cli_sdk/tree/main/docs/adr) — architecture decision records
+- [CHANGELOG.md](https://github.com/ccisnedev/modular_cli_sdk/blob/main/CHANGELOG.md) — the record of every release
 
 ---
 
